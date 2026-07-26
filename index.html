@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Daily Trade Assistant</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+          colors: {
+            surface: { 800: '#1a1d24', 900: '#12141a', 700: '#22262f' },
+            accent: { DEFAULT: '#3b82f6', soft: '#1e3a5f' },
+            profit: '#22c55e',
+            loss: '#ef4444'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { background: #0d0f14; }
+    .card { background: #1a1d24; border: 1px solid #2a2f3a; }
+    .checklist-item:checked + label { text-decoration: line-through; opacity: 0.6; }
+    input[type="checkbox"] { accent-color: #3b82f6; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #12141a; }
+    ::-webkit-scrollbar-thumb { background: #3a4050; border-radius: 3px; }
+  </style>
+</head>
+<body class="font-sans text-gray-200 min-h-screen">
+  <!-- Header -->
+  <header class="border-b border-gray-800 bg-surface-900 sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-accent flex items-center justify-center font-bold text-white text-sm">DT</div>
+        <div>
+          <h1 class="text-lg font-semibold tracking-tight">Daily Trade Assistant</h1>
+          <p class="text-xs text-gray-500" id="market-status">Checking market status…</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-4 text-sm">
+        <div class="text-right">
+          <div class="text-gray-400 text-xs">Today's P&L</div>
+          <div id="today-pnl" class="font-semibold text-lg">$0.00</div>
+        </div>
+        <button onclick="exportData()" class="px-3 py-1.5 rounded-md bg-surface-700 hover:bg-gray-700 text-xs transition">Export</button>
+        <button onclick="resetAllData()" class="px-3 py-1.5 rounded-md bg-surface-700 hover:bg-red-900/50 text-xs transition text-red-400">Reset</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Navigation -->
+  <nav class="border-b border-gray-800 bg-surface-900">
+    <div class="max-w-6xl mx-auto px-4 flex gap-1 overflow-x-auto">
+      <button data-tab="pre" class="tab-btn active px-4 py-3 text-sm font-medium border-b-2 border-accent text-white whitespace-nowrap">Pre-Market</button>
+      <button data-tab="open" class="tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-white whitespace-nowrap">Market Open</button>
+      <button data-tab="post" class="tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-white whitespace-nowrap">Post-Market</button>
+      <button data-tab="perf" class="tab-btn px-4 py-3 text-sm font-medium border-b-2 border-transparent text-gray-400 hover:text-white whitespace-nowrap">Performance</button>
+    </div>
+  </nav>
+
+  <main class="max-w-6xl mx-auto px-4 py-6">
+    <!-- PRE-MARKET -->
+    <section id="tab-pre" class="tab-content space-y-6">
+      <div class="grid md:grid-cols-2 gap-6">
+        <!-- Checklist -->
+        <div class="card rounded-xl p-5">
+          <h2 class="text-base font-semibold mb-4 flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-blue-400"></span> Pre-Market Checklist
+          </h2>
+          <div id="pre-checklist" class="space-y-3"></div>
+        </div>
+
+        <!-- Watchlist & Levels -->
+        <div class="card rounded-xl p-5">
+          <h2 class="text-base font-semibold mb-4">Watchlist & Key Levels</h2>
+          <textarea id="watchlist" rows="6" placeholder="Tickers + levels&#10;AAPL  185 / 190&#10;TSLA  240 support&#10;SPY  gap fill 512..."
+            class="w-full bg-surface-900 border border-gray-700 rounded-lg p-3 text-sm focus:outline-none focus:border-accent resize-none"></textarea>
+          <button onclick="saveNotes()" class="mt-3 px-4 py-2 bg-accent hover:bg-blue-600 rounded-lg text-sm font-medium transition">Save</button>
+        </div>
+      </div>
+
+      <div class="card rounded-xl p-5">
+        <h2 class="text-base font-semibold mb-3">Pre-Market Notes / Plan</h2>
+        <textarea id="pre-notes" rows="4" placeholder="Bias for the day, key catalysts, risk parameters..."
+          class="w-full bg-surface-900 border border-gray-700 rounded-lg p-3 text-sm focus:outline-none focus:border-accent resize-none"></textarea>
+        <button onclick="saveNotes()" class="mt-3 px-4 py-2 bg-accent hover:bg-blue-600 rounded-lg text-sm font-medium transition">Save Notes</button>
+      </div>
+    </section>
+
+    <!-- MARKET OPEN -->
+    <section id="tab-open" class="tab-content hidden space-y-6">
+      <!-- Quick Trade Form -->
+      <div class="card rounded-xl p-5">
+        <h2 class="text-base font-semibold mb-4">Log Trade</h2>
+        <div class="grid grid-cols-2 md:grid-cols-6 gap-3">
+          <div>
+            <label class="text-xs text-gray-400">Ticker</label>
+            <input id="t-ticker" type="text" placeholder="AAPL" class="w-full mt-1 bg-surface-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent uppercase" />
+          </div>
+          <div>
+            <label class="text-xs text-gray-400">Side</label>
+            <select id="t-side" class="w-full mt-1 bg-surface-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent">
+              <option value="long">Long</option>
+              <option value="short">Short</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-400">Shares</label>
+            <input id="t-shares" type="number" placeholder="100" class="w-full mt-1 bg-surface-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent" />
+          </div>
+          <div>
+            <label class="text-xs text-gray-400">Entry $</label>
+            <input id="t-entry" type="number" step="0.01" placeholder="185.50" class="w-full mt-1 bg-surface-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent" />
+          </div>
+          <div>
+            <label class="text-xs text-gray-400">Exit $</label>
+            <input id="t-exit" type="number" step="0.01" placeholder="187.20" class="w-full mt-1 bg-surface-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent" />
+          </div>
+          <div class="flex items-end">
+            <button onclick="addTrade()" class="w-full py-2 bg-profit hover:bg-green-600 rounded-lg text-sm font-medium text-white transition">Add Trade</button>
+          </div>
+        </div>
+        <div class="mt-3">
+          <label class="text-xs text-gray-400">Notes (optional)</label>
+          <input id="t-notes" type="text" placeholder="Setup, reason, emotion..." class="w-full mt-1 bg-surface-900 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent" />
+        </div>
+      </div>
+
+      <!-- Open Positions (simple list of recent trades that are open conceptually) -->
+      <div class="card rounded-xl p-5">
+        <h2 class="text-base font-semibold mb-3">Today's Trades</h2>
+        <div id="today-trades" class="space-y-2 text-sm">
+          <p class="text-gray-500">No trades logged yet.</p>
+        </div>
+      </div>
+
+      <div class="card rounded-xl p-5">
+        <h2 class="text-base font-semibold mb-3">Session Notes</h2>
+        <textarea id="session-notes" rows="3" placeholder="Observations while the market is open..."
+          class="w-full bg-surface-900 border border-gray-700 rounded-lg p-3 text-sm focus:outline-none focus:border-accent resize-none"></textarea>
+        <button onclick="saveNotes()" class="mt-3 px-4 py-2 bg-accent hover:bg-blue-600 rounded-lg text-sm font-medium transition">Save</button>
+      </div>
+    </section>
+
+    <!-- POST-MARKET -->
+    <section id="tab-post" class="tab-content hidden space-y-6">
+      <div class="grid md:grid-cols-2 gap-6">
+        <div class="card rounded-xl p-5">
+          <h2 class="text-base font-semibold mb-4 flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-purple-400"></span> Post-Market Checklist
+          </h2>
+          <div id="post-checklist" class="space-y-3"></div>
+        </div>
+
+        <div class="card rounded-xl p-5">
+          <h2 class="text-base font-semibold mb-3">Daily Summary</h2>
+          <textarea id="post-notes" rows="8" placeholder="What worked? What didn't? Lessons? Plan for tomorrow..."
+            class="w-full bg-surface-900 border border-gray-700 rounded-lg p-3 text-sm focus:outline-none focus:border-accent resize-none"></textarea>
+          <button onclick="saveNotes()" class="mt-3 px-4 py-2 bg-accent hover:bg-blue-600 rounded-lg text-sm font-medium transition">Save Summary</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- PERFORMANCE -->
+    <section id="tab-perf" class="tab-content hidden space-y-6">
+      <!-- Stats Cards -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="card rounded-xl p-4">
+          <div class="text-xs text-gray-400 mb-1">Total Trades</div>
+          <div id="stat-trades" class="text-2xl font-semibold">0</div>
+        </div>
+        <div class="card rounded-xl p-4">
+          <div class="text-xs text-gray-400 mb-1">Win Rate</div>
+          <div id="stat-winrate" class="text-2xl font-semibold">—</div>
+        </div>
+        <div class="card rounded-xl p-4">
+          <div class="text-xs text-gray-400 mb-1">Total P&L</div>
+          <div id="stat-pnl" class="text-2xl font-semibold">$0.00</div>
+        </div>
+        <div class="card rounded-xl p-4">
+          <div class="text-xs text-gray-400 mb-1">Avg Win / Loss</div>
+          <div id="stat-avg" class="text-2xl font-semibold text-sm leading-tight">—</div>
+        </div>
+      </div>
+
+      <!-- Chart -->
+      <div class="card rounded-xl p-5">
+        <h2 class="text-base font-semibold mb-4">Cumulative P&L</h2>
+        <div class="h-64">
+          <canvas id="pnlChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Trade Log -->
+      <div class="card rounded-xl p-5 overflow-x-auto">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-base font-semibold">Trade Log</h2>
+          <button onclick="clearTrades()" class="text-xs text-red-400 hover:text-red-300">Clear all trades</button>
+        </div>
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-gray-400 border-b border-gray-700">
+              <th class="pb-2 pr-4">Date</th>
+              <th class="pb-2 pr-4">Ticker</th>
+              <th class="pb-2 pr-4">Side</th>
+              <th class="pb-2 pr-4">Shares</th>
+              <th class="pb-2 pr-4">Entry</th>
+              <th class="pb-2 pr-4">Exit</th>
+              <th class="pb-2 pr-4">P&L</th>
+              <th class="pb-2">Notes</th>
+            </tr>
+          </thead>
+          <tbody id="trade-log"></tbody>
+        </table>
+        <p id="no-trades" class="text-gray-500 py-6 text-center">No trades yet. Log some from the Market Open tab.</p>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // ========== DATA ==========
+    const DEFAULT_PRE = [
+      "Review overnight news, futures & global markets",
+      "Update watchlist and mark key levels / gaps",
+      "Define max risk for the day & position sizing",
+      "Check economic calendar for scheduled events",
+      "Mental check: rules, bias, emotional state"
+    ];
+    const DEFAULT_POST = [
+      "Close or manage any remaining positions",
+      "Log all trades with accurate P&L",
+      "Journal: what worked and what didn't",
+      "Review emotional discipline score (1-10)",
+      "Write plan / bias for tomorrow"
+    ];
+
+    let state = {
+      preChecklist: {},
+      postChecklist: {},
+      watchlist: "",
+      preNotes: "",
+      sessionNotes: "",
+      postNotes: "",
+      trades: []
+    };
+
+    let chart = null;
+
+    // ========== INIT ==========
+    function loadState() {
+      const saved = localStorage.getItem("dta-state");
+      if (saved) {
+        try { state = JSON.parse(saved); } catch(e) {}
+      }
+      // ensure checklist objects exist
+      if (!state.preChecklist) state.preChecklist = {};
+      if (!state.postChecklist) state.postChecklist = {};
+      if (!state.trades) state.trades = [];
+    }
+
+    function saveState() {
+      localStorage.setItem("dta-state", JSON.stringify(state));
+    }
+
+    function saveNotes() {
+      state.watchlist = document.getElementById("watchlist").value;
+      state.preNotes = document.getElementById("pre-notes").value;
+      state.sessionNotes = document.getElementById("session-notes").value;
+      state.postNotes = document.getElementById("post-notes").value;
+      saveState();
+      // subtle feedback
+      event.target.textContent = "Saved ✓";
+      setTimeout(() => event.target.textContent = event.target.textContent.includes("Notes") ? "Save Notes" : "Save", 1200);
+    }
+
+    // ========== CHECKLISTS ==========
+    function renderChecklist(containerId, items, key) {
+      const el = document.getElementById(containerId);
+      el.innerHTML = items.map((text, i) => {
+        const id = `${key}-${i}`;
+        const checked = state[key][i] ? "checked" : "";
+        return `
+          <label class="flex items-start gap-3 cursor-pointer group">
+            <input type="checkbox" id="${id}" ${checked} onchange="toggleCheck('${key}', ${i})"
+              class="mt-1 w-4 h-4 rounded border-gray-600">
+            <span class="text-sm leading-snug group-hover:text-white transition">${text}</span>
+          </label>`;
+      }).join("");
+    }
+
+    function toggleCheck(key, index) {
+      state[key][index] = !state[key][index];
+      saveState();
+    }
+
+    // ========== TRADES ==========
+    function addTrade() {
+      const ticker = document.getElementById("t-ticker").value.trim().toUpperCase();
+      const side = document.getElementById("t-side").value;
+      const shares = parseFloat(document.getElementById("t-shares").value);
+      const entry = parseFloat(document.getElementById("t-entry").value);
+      const exit = parseFloat(document.getElementById("t-exit").value);
+      const notes = document.getElementById("t-notes").value.trim();
+
+      if (!ticker || !shares || isNaN(entry) || isNaN(exit)) {
+        alert("Please fill Ticker, Shares, Entry and Exit.");
+        return;
+      }
+
+      const pnl = side === "long"
+        ? (exit - entry) * shares
+        : (entry - exit) * shares;
+
+      const trade = {
+        id: Date.now(),
+        date: new Date().toISOString().slice(0, 10),
+        ticker, side, shares, entry, exit, pnl, notes
+      };
+
+      state.trades.unshift(trade);
+      saveState();
+
+      // clear form
+      document.getElementById("t-ticker").value = "";
+      document.getElementById("t-shares").value = "";
+      document.getElementById("t-entry").value = "";
+      document.getElementById("t-exit").value = "";
+      document.getElementById("t-notes").value = "";
+
+      renderTrades();
+      updateStats();
+      updateTodayPnL();
+    }
+
+    function renderTrades() {
+      const today = new Date().toISOString().slice(0, 10);
+      const todayTrades = state.trades.filter(t => t.date === today);
+      const container = document.getElementById("today-trades");
+
+      if (todayTrades.length === 0) {
+        container.innerHTML = `<p class="text-gray-500">No trades logged yet today.</p>`;
+      } else {
+        container.innerHTML = todayTrades.map(t => {
+          const color = t.pnl >= 0 ? "text-profit" : "text-loss";
+          return `
+            <div class="flex items-center justify-between py-2 border-b border-gray-800 last:border-0">
+              <div class="flex items-center gap-3">
+                <span class="font-medium">${t.ticker}</span>
+                <span class="text-xs px-1.5 py-0.5 rounded ${t.side === 'long' ? 'bg-green-900/40 text-green-400' : 'bg-red-900/40 text-red-400'}">${t.side}</span>
+                <span class="text-gray-400 text-xs">${t.shares} @ ${t.entry} → ${t.exit}</span>
+              </div>
+              <span class="font-medium ${color}">${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</span>
+            </div>`;
+        }).join("");
+      }
+
+      // full log
+      const log = document.getElementById("trade-log");
+      const noTrades = document.getElementById("no-trades");
+      if (state.trades.length === 0) {
+        log.innerHTML = "";
+        noTrades.classList.remove("hidden");
+      } else {
+        noTrades.classList.add("hidden");
+        log.innerHTML = state.trades.map(t => {
+          const color = t.pnl >= 0 ? "text-profit" : "text-loss";
+          return `<tr class="border-b border-gray-800/60 hover:bg-surface-700/30">
+            <td class="py-2.5 pr-4 text-gray-400">${t.date}</td>
+            <td class="py-2.5 pr-4 font-medium">${t.ticker}</td>
+            <td class="py-2.5 pr-4 capitalize">${t.side}</td>
+            <td class="py-2.5 pr-4">${t.shares}</td>
+            <td class="py-2.5 pr-4">${t.entry}</td>
+            <td class="py-2.5 pr-4">${t.exit}</td>
+            <td class="py-2.5 pr-4 font-medium ${color}">${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</td>
+            <td class="py-2.5 text-gray-400 max-w-xs truncate">${t.notes || "—"}</td>
+          </tr>`;
+        }).join("");
+      }
+    }
+
+    function updateStats() {
+      const trades = state.trades;
+      const total = trades.length;
+      document.getElementById("stat-trades").textContent = total;
+
+      if (total === 0) {
+        document.getElementById("stat-winrate").textContent = "—";
+        document.getElementById("stat-pnl").textContent = "$0.00";
+        document.getElementById("stat-avg").textContent = "—";
+        updateChart([]);
+        return;
+      }
+
+      const wins = trades.filter(t => t.pnl > 0);
+      const losses = trades.filter(t => t.pnl < 0);
+      const winRate = ((wins.length / total) * 100).toFixed(1);
+      const totalPnL = trades.reduce((s, t) => s + t.pnl, 0);
+      const avgWin = wins.length ? (wins.reduce((s, t) => s + t.pnl, 0) / wins.length) : 0;
+      const avgLoss = losses.length ? (losses.reduce((s, t) => s + t.pnl, 0) / losses.length) : 0;
+
+      document.getElementById("stat-winrate").textContent = winRate + "%";
+      const pnlEl = document.getElementById("stat-pnl");
+      pnlEl.textContent = (totalPnL >= 0 ? "+" : "") + "$" + totalPnL.toFixed(2);
+      pnlEl.className = "text-2xl font-semibold " + (totalPnL >= 0 ? "text-profit" : "text-loss");
+
+      document.getElementById("stat-avg").innerHTML =
+        `<span class="text-profit">+${avgWin.toFixed(0)}</span> / <span class="text-loss">${avgLoss.toFixed(0)}</span>`;
+
+      // cumulative for chart (oldest first)
+      const sorted = [...trades].reverse();
+      let cum = 0;
+      const points = sorted.map(t => { cum += t.pnl; return cum; });
+      updateChart(points);
+    }
+
+    function updateTodayPnL() {
+      const today = new Date().toISOString().slice(0, 10);
+      const todayPnL = state.trades
+        .filter(t => t.date === today)
+        .reduce((s, t) => s + t.pnl, 0);
+      const el = document.getElementById("today-pnl");
+      el.textContent = (todayPnL >= 0 ? "+" : "") + "$" + todayPnL.toFixed(2);
+      el.className = "font-semibold text-lg " + (todayPnL >= 0 ? "text-profit" : "text-loss");
+    }
+
+    function updateChart(data) {
+      const ctx = document.getElementById("pnlChart").getContext("2d");
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: data.map((_, i) => i + 1),
+          datasets: [{
+            label: "Cumulative P&L",
+            data: data,
+            borderColor: "#3b82f6",
+            backgroundColor: "rgba(59,130,246,0.1)",
+            fill: true,
+            tension: 0.3,
+            pointRadius: data.length > 30 ? 0 : 3
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { display: false },
+            y: {
+              grid: { color: "#2a2f3a" },
+              ticks: { color: "#9ca3af", callback: v => "$" + v }
+            }
+          }
+        }
+      });
+    }
+
+    function clearTrades() {
+      if (confirm("Delete all logged trades? This cannot be undone.")) {
+        state.trades = [];
+        saveState();
+        renderTrades();
+        updateStats();
+        updateTodayPnL();
+      }
+    }
+
+    // ========== MARKET STATUS ==========
+    function updateMarketStatus() {
+      const now = new Date();
+      // Convert to Eastern Time roughly (for prototype)
+      const etOffset = -4; // EDT approximation; real would use proper TZ
+      const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+      const et = new Date(utc + (3600000 * etOffset));
+      const h = et.getHours();
+      const m = et.getMinutes();
+      const day = et.getDay(); // 0=Sun
+
+      let status = "";
+      let color = "text-gray-400";
+
+      if (day === 0 || day === 6) {
+        status = "Weekend — Market closed";
+      } else if (h < 4) {
+        status = "Overnight — Pre-market opens ~4:00 AM ET";
+      } else if (h < 9 || (h === 9 && m < 30)) {
+        status = "Pre-Market (4:00 – 9:30 AM ET)";
+        color = "text-blue-400";
+      } else if (h < 16) {
+        status = "Market Open (9:30 AM – 4:00 PM ET)";
+        color = "text-profit";
+      } else if (h < 20) {
+        status = "After-Hours (until ~8:00 PM ET)";
+        color = "text-purple-400";
+      } else {
+        status = "Market closed";
+      }
+
+      const el = document.getElementById("market-status");
+      el.textContent = status;
+      el.className = "text-xs " + color;
+    }
+
+    // ========== TABS ==========
+    document.querySelectorAll(".tab-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".tab-btn").forEach(b => {
+          b.classList.remove("active", "border-accent", "text-white");
+          b.classList.add("border-transparent", "text-gray-400");
+        });
+        btn.classList.add("active", "border-accent", "text-white");
+        btn.classList.remove("border-transparent", "text-gray-400");
+
+        document.querySelectorAll(".tab-content").forEach(s => s.classList.add("hidden"));
+        document.getElementById("tab-" + btn.dataset.tab).classList.remove("hidden");
+      });
+    });
+
+    // ========== UTIL ==========
+    function exportData() {
+      const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `trade-assistant-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function resetAllData() {
+      if (confirm("Reset ALL data (checklists, notes, trades)? This cannot be undone.")) {
+        localStorage.removeItem("dta-state");
+        location.reload();
+      }
+    }
+
+    // ========== BOOT ==========
+    loadState();
+    renderChecklist("pre-checklist", DEFAULT_PRE, "preChecklist");
+    renderChecklist("post-checklist", DEFAULT_POST, "postChecklist");
+
+    document.getElementById("watchlist").value = state.watchlist || "";
+    document.getElementById("pre-notes").value = state.preNotes || "";
+    document.getElementById("session-notes").value = state.sessionNotes || "";
+    document.getElementById("post-notes").value = state.postNotes || "";
+
+    renderTrades();
+    updateStats();
+    updateTodayPnL();
+    updateMarketStatus();
+    setInterval(updateMarketStatus, 60000);
+  </script>
+</body>
+</html>
