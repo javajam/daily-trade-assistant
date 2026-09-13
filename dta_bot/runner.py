@@ -13,13 +13,21 @@ from dta_bot.engine import cooldown_key, evaluate_all, fire_key
 from dta_bot.killswitch import is_active, reason as kill_reason
 from dta_bot.market_data import MarketData
 from dta_bot.models import EvalResult, Position
+from dta_bot.orb_config import OrbBotConfig
+from dta_bot.orb_engine import (
+    RULE_ID as ORB_RULE_ID,
+    build_orb_order,
+    evaluate_orb,
+    position_blocks_entry,
+    setup_from_eval,
+)
 from dta_bot.sizing import build_order
 from dta_bot.state import BotState, save_state
 
 log = logging.getLogger("dta_bot.runner")
 
 
-def fetch_bars(config: BotConfig, data: MarketData) -> dict[tuple[str, str], list]:
+def fetch_bars(config: BotConfig | OrbBotConfig, data: MarketData) -> dict[tuple[str, str], list]:
     bars: dict[tuple[str, str], list] = {}
     for symbol, tf in sorted(config.all_symbol_timeframes()):
         try:
@@ -200,6 +208,152 @@ def run_loop(
             run_once(config, broker=broker, data=data, state=state, dry_run=dry_run)
         except Exception:
             log.exception("Cycle failed")
+        if once:
+            return
+        elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+        sleep_for = max(1.0, interval - elapsed)
+        log.info("Sleeping %.1fs until next cycle", sleep_for)
+        time.sleep(sleep_for)
+
+
+def execute_orb_decision(
+    *,
+    ev: EvalResult,
+    config: OrbBotConfig,
+    broker: Broker,
+    bars,
+    state: BotState,
+    dry_run: bool,
+) -> None:
+    kill_file = config.settings.kill_switch_file
+    if is_active(kill_file):
+        log.warning(
+            "[BLOCKED] %s %s %s — %s — would have acted on: %s",
+            ev.symbol,
+            ev.action_type,
+            ev.rule_id,
+            kill_reason(kill_file),
+            ev.explain(),
+        )
+        return
+
+    setup = setup_from_eval(ev, bars, config)
+    if setup is None:
+        log.error("Could not rebuild ORB setup for %s / %s", ev.symbol, ev.rule_id)
+        return
+
+    account = broker.get_account()
+    positions = _position_map(broker.get_positions())
+    blocked = position_blocks_entry(setup, positions, config)
+    if blocked:
+        log.info("[SKIP] %s / %s — %s", ev.symbol, ev.rule_id, blocked)
+        return
+    if ev.action_type != "close" and len(positions) >= config.settings.max_open_positions:
+        if ev.symbol not in positions:
+            log.warning(
+                "[BLOCKED] %s / %s — max_open_positions=%s reached",
+                ev.symbol,
+                ev.rule_id,
+                config.settings.max_open_positions,
+            )
+            return
+
+    if ev.symbol in positions and config.orb.on_open_position == "replace":
+        log.info("ORB replace: closing existing %s before new %s", ev.symbol, setup.side)
+        broker.close_position(ev.symbol)
+
+    last = setup.reversal.close
+    order = build_orb_order(setup, account=account, config=config, last_price=last)
+    if order is None:
+        log.error("Could not build ORB order for %s", ev.symbol)
+        return
+    log.info(
+        "DECISION %s %s x%s %s last=%.4f stop=%s take=%s | %s | why: %s",
+        order.side.upper(),
+        order.symbol,
+        order.qty,
+        order.order_type,
+        last,
+        f"{order.stop_loss_price:.4f}" if order.stop_loss_price else "-",
+        f"{order.take_profit_price:.4f}" if order.take_profit_price else "-",
+        ev.rule_id,
+        ev.explain(),
+    )
+    broker.submit_order(order)
+
+    if ev.signal_bar_ts is not None:
+        state.mark_fired(
+            fire_key(ORB_RULE_ID, ev.symbol, ev.signal_bar_ts),
+            cooldown_key(ORB_RULE_ID, ev.symbol),
+            config.orb.cooldown_minutes,
+        )
+        save_state(config.settings.state_file, state)
+    if dry_run:
+        log.info("DRY-RUN: order was not sent to Alpaca")
+
+
+def run_orb_once(
+    config: OrbBotConfig,
+    *,
+    broker: Broker,
+    data: MarketData,
+    state: BotState,
+    dry_run: bool,
+    scan_all: bool = False,
+) -> list[EvalResult]:
+    log.info(
+        "ORB cycle start paper=%s dry_run=%s broker=%s kill=%s scan_all=%s",
+        config.settings.paper,
+        dry_run,
+        getattr(broker, "mode", "?"),
+        kill_reason(config.settings.kill_switch_file) or "off",
+        scan_all,
+    )
+    bars = fetch_bars(config, data)
+    results = evaluate_orb(config, bars, state, scan_all=scan_all)
+    fired = [ev for ev in results if ev.matched]
+    for ev in results:
+        # Always echo the decision line so `evaluate` is readable without log filters.
+        print(ev.explain(), flush=True)
+    log.info("ORB cycle summary: %s evaluations, %s fires", len(results), len(fired))
+    if scan_all:
+        return results
+    for ev in fired:
+        execute_orb_decision(
+            ev=ev,
+            config=config,
+            broker=broker,
+            bars=bars,
+            state=state,
+            dry_run=dry_run,
+        )
+    return results
+
+
+def run_orb_loop(
+    config: OrbBotConfig,
+    *,
+    broker: Broker,
+    data: MarketData,
+    state: BotState,
+    dry_run: bool,
+    once: bool = False,
+    scan_all: bool = False,
+) -> None:
+    interval = config.settings.poll_interval_seconds
+    while True:
+        started = datetime.now(timezone.utc)
+        try:
+            run_orb_once(
+                config,
+                broker=broker,
+                data=data,
+                state=state,
+                dry_run=dry_run,
+                scan_all=scan_all,
+            )
+        except Exception:
+            log.exception("ORB cycle failed")
         if once:
             return
         elapsed = (datetime.now(timezone.utc) - started).total_seconds()

@@ -9,13 +9,15 @@ from pathlib import Path
 
 from dta_bot.backtest import format_report_md, restrict_config, run_backtest, write_results_json
 from dta_bot.broker import build_broker, resolve_api_keys, resolve_trading_url
-from dta_bot.config import load_config
+from dta_bot.config import BotConfig, load_config
 from dta_bot.history import download_pairs, drop_empty_prints, drop_still_forming, series_span
 from dta_bot.killswitch import is_active, pause, reason as kill_reason, resume
 from dta_bot.logging_setup import setup_logging
 from dta_bot.market_data import FixtureMarketData, build_market_data
+from dta_bot.orb_backtest import run_orb_backtest
+from dta_bot.orb_config import OrbBotConfig, load_orb_config, peek_config_kind
 from dta_bot.patterns import PATTERN_NAMES
-from dta_bot.runner import run_loop
+from dta_bot.runner import run_loop, run_orb_loop
 from dta_bot.state import load_state
 
 
@@ -97,11 +99,28 @@ def _dry_run_flag(args: argparse.Namespace, config_dry: bool) -> bool:
     return config_dry
 
 
+def _load_any(path: str) -> tuple[str, BotConfig | OrbBotConfig]:
+    kind = peek_config_kind(path)
+    if kind == "orb":
+        return kind, load_orb_config(path)
+    return kind, load_config(path)
+
+
 def cmd_validate(args: argparse.Namespace) -> int:
-    cfg = load_config(args.config)
-    print(f"Loaded {args.config}")
+    kind, cfg = _load_any(args.config)
+    print(f"Loaded {args.config} ({kind})")
     print(f"  settings.paper={cfg.settings.paper} allow_live={cfg.settings.allow_live} dry_run={cfg.settings.dry_run}")
     print(f"  universe={cfg.universe or '(per-rule)'}")
+    if isinstance(cfg, OrbBotConfig):
+        print(
+            f"  orb_timeframe={cfg.orb.orb_timeframe} signal_timeframe={cfg.orb.signal_timeframe} "
+            f"edge_pct={cfg.orb.edge_pct} session={cfg.orb.session_open} {cfg.orb.session_timezone}"
+        )
+        print(
+            f"  on_open_position={cfg.orb.on_open_position} take_profit={cfg.orb.take_profit} "
+            f"sizing={cfg.sizing.type} {cfg.sizing.value}"
+        )
+        return 0
     print(f"  rules={len(cfg.rules)}")
     for rule in cfg.rules:
         syms = cfg.symbols_for(rule)
@@ -113,10 +132,10 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    cfg = load_config(args.config)
+    kind, cfg = _load_any(args.config)
     url, mode = resolve_trading_url(allow_live=cfg.settings.allow_live)
     key, secret = resolve_api_keys()
-    print(f"config:          {args.config}")
+    print(f"config:          {args.config} ({kind})")
     print(f"trading mode:    {mode} ({url})")
     print(f"allow_live yaml: {cfg.settings.allow_live}")
     print(f"yaml dry_run:    {cfg.settings.dry_run}")
@@ -125,18 +144,23 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(f"kill switch:     {kill_reason(cfg.settings.kill_switch_file) or 'off'}")
     print(f"state file:      {cfg.settings.state_file}")
     print(f"patterns:        {', '.join(PATTERN_NAMES)}")
+    if isinstance(cfg, OrbBotConfig):
+        print(
+            f"orb:             {cfg.orb.orb_timeframe} OR → {cfg.orb.signal_timeframe} signals, "
+            f"edge_pct={cfg.orb.edge_pct}, on_open_position={cfg.orb.on_open_position}"
+        )
     return 0
 
 
 def cmd_pause(args: argparse.Namespace) -> int:
-    cfg = load_config(args.config)
+    _kind, cfg = _load_any(args.config)
     path = pause(cfg.settings.kill_switch_file)
     print(f"Paused. Kill switch file: {path}")
     return 0
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
-    cfg = load_config(args.config)
+    _kind, cfg = _load_any(args.config)
     if resume(cfg.settings.kill_switch_file):
         print("Resumed. Kill switch file removed.")
     else:
@@ -147,7 +171,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
 
 def cmd_backtest(args: argparse.Namespace) -> int:
-    cfg = load_config(args.config)
+    _kind, cfg = _load_any(args.config)
     now = datetime.now(timezone.utc)
     if args.fixture:
         fixture = FixtureMarketData(args.fixture)
@@ -181,6 +205,90 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         print(f"  data {symbol} {tf}: {len(series)} closed bars ({start} → {end})")
 
     friction = f"commission=${args.commission:.2f}/fill, slippage={args.slippage_pct}%"
+    if isinstance(cfg, OrbBotConfig):
+        assumptions = [
+            "Opening range is the first orb_timeframe bar at/after 9:30 America/New_York (configurable).",
+            "After the OR candle is complete, probe/reversal evaluation uses the signal timeframe.",
+            "Probe = signal-bar close inside the 5% (configurable) edge band under the OR high or above the OR low.",
+            "Reversal = the next signal bar, opposite color (top+bearish → short, bottom+bullish → long).",
+            "Entry fills at the open of the bar after the reversal candle.",
+            "Stop is the reversal candle extreme; take-profit is the OR midpoint (v1; A/B tested later).",
+            "Multiple trades are allowed (no daily cap). One open position per symbol; new signals skip while in a position unless on_open_position=replace.",
+            "If stop and take both trade in the fill bar, the stop is assumed to fill first.",
+            "A gap through stop/take fills at that bar's open.",
+            "Open lots still on the last bar are flattened at the last close (exit reason eod).",
+            "Regular-session Yahoo bars when the source is Yahoo (includePrePost=false), unadjusted OHLC.",
+            friction,
+            f"Starting equity ${args.starting_equity:,.2f}.",
+        ]
+        print("\n=== backtest orb_reversal ===")
+        result = run_orb_backtest(
+            cfg,
+            bars,
+            starting_equity=args.starting_equity,
+            commission=args.commission,
+            slippage_pct=args.slippage_pct,
+            label="orb_reversal",
+            data_source=source_label,
+            notes=assumptions,
+        )
+        r = result.report
+        print(
+            f"  signals={r.signals} trades={r.trades} win_rate={r.win_rate_pct} "
+            f"pnl=${r.total_pnl:.2f} ({r.total_pnl_pct:.3f}%) "
+            f"dd=${r.max_drawdown} ({r.max_drawdown_pct})"
+        )
+        for trade in result.trades:
+            print(
+                f"    {trade.side} {trade.symbol} qty={trade.qty:g} "
+                f"in={trade.entry_price:.4f} out={trade.exit_price:.4f} "
+                f"pnl=${trade.pnl:.2f} ({trade.exit_reason})"
+            )
+        payload_run = result.to_dict()
+        payload_run["pattern_hits"] = {"orb_reversal": r.signals}
+        runs = [payload_run]
+        compact_runs = [
+            {
+                "label": payload_run["label"],
+                "report": payload_run["report"],
+                "bars_used": payload_run["bars_used"],
+                "pattern_hits": payload_run.get("pattern_hits"),
+                "trades": payload_run["trades"],
+                "signals": [
+                    {
+                        k: sig[k]
+                        for k in (
+                            "rule_id",
+                            "symbol",
+                            "action_type",
+                            "signal_time",
+                            "accepted",
+                            "skip_reason",
+                        )
+                    }
+                    for sig in payload_run["signals"]
+                ],
+            }
+        ]
+        payload = {
+            "generated_at": now.isoformat().replace("+00:00", "Z"),
+            "config": args.config,
+            "starting_equity": args.starting_equity,
+            "friction": friction,
+            "data_source": source_label,
+            "data_spans": spans,
+            "sources": sources,
+            "assumptions": assumptions,
+            "runs": compact_runs,
+        }
+        write_results_json(args.output, payload)
+        report_path = Path(args.report)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(format_report_md(payload), encoding="utf-8")
+        print(f"\nWrote {args.output}")
+        print(f"Wrote {args.report}")
+        return 0
+
     assumptions = [
         "Signals come from the live evaluate_rule path (same pattern/SMA/RSI/volume detectors).",
         "A rule is evaluated when any of its referenced timeframes prints a newly closed bar.",
@@ -195,6 +303,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         f"Starting equity ${args.starting_equity:,.2f}.",
     ]
 
+    assert isinstance(cfg, BotConfig)
     run_ids: list[list[str] | None]
     if args.combined_only:
         run_ids = [None]
@@ -289,7 +398,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    cfg = load_config(args.config)
+    _kind, cfg = _load_any(args.config)
     dry = _dry_run_flag(args, cfg.settings.dry_run)
     fixture = getattr(args, "fixture", None)
     data = FixtureMarketData(fixture) if fixture else build_market_data(
@@ -298,6 +407,21 @@ def cmd_run(args: argparse.Namespace) -> int:
     broker = build_broker(allow_live=cfg.settings.allow_live, dry_run=dry)
     state = load_state(cfg.settings.state_file)
     once = bool(getattr(args, "once", False) or args.cmd == "evaluate")
+    if isinstance(cfg, OrbBotConfig):
+        # evaluate --fixture scans the whole tape so the demo shows every setup.
+        # live/paper run only fires when the latest closed signal bar is the reversal.
+        scan_all = args.cmd == "evaluate"
+        run_orb_loop(
+            cfg,
+            broker=broker,
+            data=data,
+            state=state,
+            dry_run=dry,
+            once=once,
+            scan_all=scan_all,
+        )
+        return 0
+    assert isinstance(cfg, BotConfig)
     run_loop(cfg, broker=broker, data=data, state=state, dry_run=dry, once=once)
     return 0
 
