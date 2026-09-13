@@ -18,6 +18,8 @@ from dta_bot.orb_engine import (
     RULE_ID as ORB_RULE_ID,
     build_orb_order,
     evaluate_orb,
+    first_profit_flatten_bar,
+    last_reversal_ts,
     position_blocks_entry,
     setup_from_eval,
 )
@@ -292,6 +294,47 @@ def execute_orb_decision(
         log.info("DRY-RUN: order was not sent to Alpaca")
 
 
+def _flatten_first_profit(
+    config: OrbBotConfig,
+    broker: Broker,
+    bars,
+    state: BotState,
+    *,
+    dry_run: bool,
+) -> None:
+    """Close paper/live lots at the first profitable closed signal bar.
+
+    Stop stays on the broker. If we cannot prove the bar is after entry
+    (no fire key), skip flatten so a restart cannot dump a fresh fill.
+    """
+    kill_file = config.settings.kill_switch_file
+    if is_active(kill_file):
+        return
+    positions = _position_map(broker.get_positions())
+    sig_tf = config.orb.signal_timeframe
+    for symbol in config.universe:
+        pos = positions.get(symbol.upper())
+        if pos is None:
+            continue
+        series = bars.get((symbol.upper(), sig_tf), []) or []
+        hit = first_profit_flatten_bar(
+            pos, series, after=last_reversal_ts(state, symbol)
+        )
+        if hit is None:
+            continue
+        log.info(
+            "ORB first-profit flatten %s %s entry=%.4f close=%.4f @%s",
+            pos.side,
+            symbol,
+            pos.avg_entry_price,
+            hit.close,
+            hit.timestamp.isoformat(),
+        )
+        broker.close_position(symbol)
+        if dry_run:
+            log.info("DRY-RUN: first-profit flatten was not sent to Alpaca")
+
+
 def run_orb_once(
     config: OrbBotConfig,
     *,
@@ -310,6 +353,8 @@ def run_orb_once(
         scan_all,
     )
     bars = fetch_bars(config, data)
+    if not scan_all and config.orb.take_profit_mode == "first_profitable_close":
+        _flatten_first_profit(config, broker, bars, state, dry_run=dry_run)
     results = evaluate_orb(config, bars, state, scan_all=scan_all)
     fired = [ev for ev in results if ev.matched]
     for ev in results:

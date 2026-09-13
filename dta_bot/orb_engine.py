@@ -16,6 +16,7 @@ from dta_bot.orb import (
     bar_session_date,
     find_all_setups,
     find_session_setups,
+    first_profitable_close,
     gate_setups,
     live_setup,
     no_setup_reason,
@@ -23,7 +24,7 @@ from dta_bot.orb import (
 )
 from dta_bot.orb_config import OrbBotConfig
 from dta_bot.sizing import shares_for
-from dta_bot.state import BotState, fmt_ts
+from dta_bot.state import BotState, fmt_ts, parse_ts
 
 log = logging.getLogger("dta_bot.orb")
 
@@ -69,6 +70,8 @@ def _eval_from_setup(
             "take": setup.take,
             "stop_mode": setup.stop_mode,
             "probe_mode": setup.probe_mode,
+            "reversal_in_range": setup.reversal_in_range,
+            "take_profit_mode": setup.take_profit_mode,
             "probe": setup.probe.summary(),
             "reversal": setup.reversal.summary(),
             "entry_open": setup.entry_bar.open if setup.entry_bar is not None else None,
@@ -91,6 +94,7 @@ def _eval_miss(
         session_timezone=config.orb.session_timezone,
         session_close=config.orb.session_close,
         probe_mode=config.orb.probe_mode,
+        reversal_in_range=config.orb.reversal_in_range,
     )
     extra: dict = {"strategy": RULE_ID}
     if opening_range is not None:
@@ -280,7 +284,7 @@ def build_orb_order(
         time_in_force=config.order.time_in_force,
         limit_price=limit,
         stop_loss_price=setup.stop,
-        take_profit_price=setup.take,
+        take_profit_price=setup.take if config.orb.take_profit_mode == "or_midpoint" else None,
     )
 
 
@@ -291,6 +295,45 @@ def setup_from_eval(ev: EvalResult, bars_by_key: BarMap, config: OrbBotConfig) -
         if setup.reversal.timestamp == ev.signal_bar_ts:
             return setup
     return None
+
+
+def last_reversal_ts(state: BotState, symbol: str) -> Optional[datetime]:
+    """Latest reversal timestamp we marked as fired for this symbol."""
+    prefix = f"{RULE_ID}:{symbol.upper()}:"
+    times: list[datetime] = []
+    for key in state.fired_keys:
+        if key.startswith(prefix):
+            times.append(parse_ts(key[len(prefix) :]))
+    return max(times) if times else None
+
+
+def first_profit_flatten_bar(
+    position: Position,
+    signal_bars: list[Bar],
+    *,
+    after: Optional[datetime],
+) -> Optional[Bar]:
+    """Latest closed signal bar after entry that is strictly profitable.
+
+    ``after`` is the reversal timestamp (entry is the next bar). If we cannot
+    prove the bar closed after entry, do not flatten — stop still protects.
+    """
+    if after is None or not signal_bars:
+        return None
+    later = [b for b in signal_bars if _aware_ts(b.timestamp) > _aware_ts(after)]
+    if not later:
+        return None
+    last = max(later, key=lambda b: _aware_ts(b.timestamp))
+    side = "buy" if str(position.side).lower() in {"buy", "long"} else "sell"
+    if first_profitable_close(side=side, entry_price=position.avg_entry_price, close=last.close):
+        return last
+    return None
+
+
+def _aware_ts(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def position_blocks_entry(

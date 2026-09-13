@@ -16,14 +16,21 @@
 # 4. Reversal = the next signal bar, opposite color:
 #      top probe + bearish close  → short
 #      bottom probe + bullish close → long
+#    reversal_in_range: close (default) also requires
+#      or_low <= close <= or_high. If the reversal closes outside the OR,
+#      do not enter. body = high and low both inside the OR (stricter
+#      fully-inside mode). off = no in-range filter.
 # 5. Entry fills at the open of the bar after the reversal (one bar later).
 # 6. Stop (stop_mode: orb_extreme, default):
 #      long  → opening-range low  (bottom of the range)
 #      short → opening-range high (top of the range)
 #    Previous behavior is stop_mode: reversal_candle (reversal low/high).
-#    Take profit stays the OR midpoint either way.
-# 7. Take profit (v1): OR midpoint (or_high + or_low) / 2.
-#    Exit strategy will be A/B tested later — do not treat midpoint as final.
+# 7. Take profit (take_profit_mode: first_profitable_close, default):
+#      after entry, exit at the close of the first signal-timeframe bar
+#      that is strictly profitable vs entry (long: close > entry;
+#      short: close < entry). or_midpoint restores the previous
+#      (or_high + or_low) / 2 target. If stop and first-profit (or
+#      midpoint) both trade on the same bar, the stop fills first.
 # 8. Frequency (defaults aimed at fewer late/choppy trades):
 #      entry_cutoff: "10:30"          # session timezone (America/New_York)
 #      max_trades_before_cutoff: 1    # per symbol per session
@@ -67,7 +74,8 @@ orb:
   probe_mode: touch_and_band       # touch_and_band | touch | edge_band
   edge_pct: 0.05                   # used by touch_and_band / edge_band; fraction of OR height (0.05 = 5%)
   on_open_position: skip           # skip | replace
-  take_profit: midpoint            # v1; A/B tested later
+  reversal_in_range: close         # close | body | off  (body = high+low inside OR)
+  take_profit_mode: first_profitable_close  # first_profitable_close | or_midpoint
   stop_mode: orb_extreme           # orb_extreme | reversal_candle
   entry_cutoff: "10:30"            # no new entries at/after this clock (ET)
   max_trades_before_cutoff: 1      # per symbol per session before the cutoff
