@@ -1,8 +1,9 @@
 # 9 EMA trend — August-style 1% risk book with SOXL included.
 #
 # Same locked product as ema9_trend_risk.example.yaml (15m EMA9 + SMA20 +
-# RSI14 < 70, 1.5/3.0 brackets, risk ~1% of equity at the 1.5% stop) plus
-# SOXL. Session gates: no new fills at/after 12:00 ET; flatten_by 15:55.
+# RSI14 < 70, 1.5/3.0 brackets, one-bar BE if close > EMA9, risk ~1% of
+# equity at the 1.5% stop) plus SOXL. Session gates: no new fills at/after
+# 12:00 ET; flatten_by 15:55.
 #
 #   python -m dta_bot backtest --config config/ema9_trend_risk_soxl.example.yaml \
 #     --source yahoo --start 2026-08-01 --end 2026-08-31 --breakout SOXL \
@@ -34,7 +35,7 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT, SOXL]
     cooldown_minutes: 60
-    notes: "15m EMA9 trend + 1% equity risk at a 1.5% stop; 3.0% take. Includes SOXL."
+    notes: "15m EMA9 trend + 1% equity risk at a 1.5% stop; 3.0% take. BE after 1 bar if close > EMA9. Includes SOXL."
     when:
       all:
         - ema_cross:
@@ -59,3 +60,6 @@ rules:
       exit: fixed_bracket
       stop_loss_pct: 1.5
       take_profit_pct: 3.0
+      breakeven_after_bars: 1
+      breakeven_requires_valid: true
+      breakeven_valid: above_ema

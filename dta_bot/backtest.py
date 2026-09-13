@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from dta_bot.config import AnyCondition, BotConfig, GroupCond, RuleSpec
+from dta_bot.config import ActionSpec, AnyCondition, BotConfig, GroupCond, RuleSpec
 from dta_bot.engine import BarMap, cooldown_key, evaluate_rule, fire_key
 from dta_bot.models import Account, Bar
 from dta_bot.orb import ema_cross_exit, ema_through
@@ -75,6 +75,7 @@ class Trade:
     exit_reason: str
     signal_time: Optional[datetime] = None
     entry_rule_id: str = ""
+    breakeven_armed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -122,6 +123,13 @@ class OpenLot:
     tf: str
     exit_mode: str = "fixed_bracket"
     exit_ema_period: int = 9
+    completed_bars: int = 0
+    breakeven_after_bars: int = 0
+    breakeven_requires_valid: bool = True
+    breakeven_valid: str = "above_ema"
+    breakeven_ema_period: int = 9
+    breakeven_armed: bool = False
+    breakeven_checked: bool = False
 
 
 @dataclass
@@ -140,6 +148,10 @@ class PendingOrder:
     entry_rule_id: str = ""
     exit_mode: str = "fixed_bracket"
     exit_ema_period: int = 9
+    breakeven_after_bars: int = 0
+    breakeven_requires_valid: bool = True
+    breakeven_valid: str = "above_ema"
+    breakeven_ema_period: int = 9
 
 
 @dataclass
@@ -167,6 +179,7 @@ class RuleReport:
     skip_reasons: dict[str, int] = field(default_factory=dict)
     signals_by_symbol: dict[str, int] = field(default_factory=dict)
     trades_by_symbol: dict[str, int] = field(default_factory=dict)
+    breakeven_armed: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -262,6 +275,55 @@ def _stop_take_hit(bar: Bar, lot: OpenLot) -> Optional[tuple[str, float]]:
     return None
 
 
+def _breakeven_fields(action: ActionSpec) -> dict[str, Any]:
+    return {
+        "breakeven_after_bars": action.breakeven_after_bars,
+        "breakeven_requires_valid": action.breakeven_requires_valid,
+        "breakeven_valid": action.breakeven_valid,
+        "breakeven_ema_period": action.breakeven_ema_period,
+    }
+
+
+def _breakeven_trade_valid(lot: OpenLot, bar: Bar, series: list[Bar]) -> bool:
+    """True when the evaluation-bar close still qualifies for a BE move.
+
+    Long valid (``above_ema``): close > EMA(period) on this timeframe.
+    Short valid: close < EMA(period). A missing EMA is not valid.
+    ``always`` (or ``breakeven_requires_valid`` off) always qualifies.
+    """
+    if not lot.breakeven_requires_valid or lot.breakeven_valid == "always":
+        return True
+    ema_val = ema_through(series, bar, lot.breakeven_ema_period)
+    if ema_val is None:
+        return False
+    if lot.side == "buy":
+        return bar.close > ema_val
+    return bar.close < ema_val
+
+
+def _maybe_arm_breakeven(lot: OpenLot, bar: Bar, series: list[Bar]) -> None:
+    """After one (or N) complete bars *after* the entry bar, move stop to entry.
+
+    Evaluated at that bar's close, only if the lot is still open. Same-bar
+    stop/take already ran; a BE move applies to later bars only. If the
+    trade is not valid, leave the original stop (do not retry later).
+    """
+    if lot.breakeven_armed or lot.breakeven_checked:
+        return
+    if lot.breakeven_after_bars <= 0:
+        return
+    if _aware(bar.timestamp) == _aware(lot.entry_time):
+        return
+    lot.completed_bars += 1
+    if lot.completed_bars < lot.breakeven_after_bars:
+        return
+    lot.breakeven_checked = True
+    if not _breakeven_trade_valid(lot, bar, series):
+        return
+    lot.stop = lot.entry_price
+    lot.breakeven_armed = True
+
+
 def _close_lot(
     lot: OpenLot,
     *,
@@ -297,6 +359,7 @@ def _close_lot(
         exit_reason=reason,
         signal_time=lot.signal_time,
         entry_rule_id=lot.rule_id,
+        breakeven_armed=lot.breakeven_armed,
     )
     return trade, cash
 
@@ -374,6 +437,7 @@ def summarize(
         skip_reasons=skips,
         signals_by_symbol=by_sig,
         trades_by_symbol=by_tr,
+        breakeven_armed=sum(1 for t in trades if t.breakeven_armed),
     )
 
 
@@ -542,6 +606,10 @@ def run_backtest(
                     tf=order.tf,
                     exit_mode=order.exit_mode,
                     exit_ema_period=order.exit_ema_period,
+                    breakeven_after_bars=order.breakeven_after_bars,
+                    breakeven_requires_valid=order.breakeven_requires_valid,
+                    breakeven_valid=order.breakeven_valid,
+                    breakeven_ema_period=order.breakeven_ema_period,
                 )
             )
             note_open_book()
@@ -563,9 +631,12 @@ def run_backtest(
                     if ema_cross_exit(side=lot.side, close=bar.close, ema_value=ema_val):
                         hit = ("ema_invalid", bar.close)
                 if hit is None:
+                    _maybe_arm_breakeven(lot, bar, series_map.get((symbol, tf), []))
                     survivors.append(lot)
                     continue
                 reason, px = hit
+                if reason == "stop" and lot.breakeven_armed:
+                    reason = "breakeven_stop"
                 trade, cash = _close_lot(
                     lot,
                     when=now,
@@ -655,6 +726,7 @@ def run_backtest(
                                 signal_price=last_price.get(symbol, nxt.open),
                                 exit_mode=rule.action.exit,
                                 exit_ema_period=rule.action.exit_ema_period,
+                                **_breakeven_fields(rule.action),
                             )
                         )
                 elif not allow_pyramid and symbol in symbols_in_position():
@@ -717,6 +789,7 @@ def run_backtest(
                                     signal_price=px,
                                     exit_mode=rule.action.exit,
                                     exit_ema_period=rule.action.exit_ema_period,
+                                    **_breakeven_fields(rule.action),
                                 )
                             )
 
@@ -797,6 +870,35 @@ def run_backtest(
         extra_notes.append(
             f"{session_flats} trade(s) exited as session_flatten "
             f"(time-exit at the flatten bar close; flatten_by {flatten_by} {session_tz})."
+        )
+    be_rules = [
+        r
+        for r in config.rules
+        if r.enabled and r.action.type != "close" and r.action.breakeven_after_bars > 0
+    ]
+    if be_rules:
+        sample = be_rules[0].action
+        valid_txt = (
+            f"close > EMA({sample.breakeven_ema_period}) on that timeframe"
+            if sample.breakeven_valid == "above_ema"
+            else "always"
+        )
+        extra_notes.append(
+            f"Break-even: after {sample.breakeven_after_bars} complete signal-timeframe "
+            f"bar(s) after the entry bar, at that close, if the lot is still open"
+            + (
+                f" and still valid ({valid_txt})"
+                if sample.breakeven_requires_valid
+                else ""
+            )
+            + ", move the stop to entry and leave it there. "
+            "If not valid, keep the original percent stop (do not retry). "
+            "Same-bar stop/take on the evaluation bar still use the original stop."
+        )
+        armed = sum(1 for t in trades if t.breakeven_armed)
+        be_hits = sum(1 for t in trades if t.exit_reason == "breakeven_stop")
+        extra_notes.append(
+            f"{armed} trade(s) armed break-even; {be_hits} exited as breakeven_stop."
         )
     if window_start is not None or window_end is not None:
         extra_notes.append(
@@ -891,6 +993,9 @@ def format_report_md(payload: dict[str, Any]) -> str:
                 f"- Max drawdown: {_fmt_opt_money(r.get('max_drawdown'))} ({_fmt_opt_pct(r.get('max_drawdown_pct'))})",
                 f"- Ending equity: ${r['ending_equity']:,.2f}",
                 f"- Exit reasons: {r.get('exit_reasons')}",
+                f"- Break-even armed: {r.get('breakeven_armed', 0)}"
+                if r.get("breakeven_armed") or (r.get("exit_reasons") or {}).get("breakeven_stop")
+                else "",
                 f"- Skip reasons: {r.get('skip_reasons')}" if r.get("skip_reasons") else "",
             ]
         )
@@ -899,8 +1004,10 @@ def format_report_md(payload: dict[str, Any]) -> str:
             for n in (r.get("notes") or [])
             if n.startswith("Exit-only")
             or n.startswith("Session gates")
+            or n.startswith("Break-even")
             or "entry_cutoff" in n
             or "session_flatten" in n
+            or "armed break-even" in n
         ]
         for note in extra_notes:
             lines.append(f"- {note}")

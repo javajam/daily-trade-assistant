@@ -3,6 +3,8 @@
 # Locked product for the 1%-risk sim:
 #   - 15m bullish EMA(9) cross + close > SMA20 + RSI14 < 70 (long only)
 #   - exit: fixed_bracket — stop 1.5%, take 3.0%
+#   - break-even: after 1 complete 15m bar after the entry bar, if still
+#     valid (close > EMA9), move stop to entry and leave it there
 #   - universe: AAPL + MSFT (no SOXL)
 #   - size: risk ~1% of current equity at the 1.5% stop
 #       shares = floor( (0.01 * equity) / (0.015 * entry_price) )
@@ -41,7 +43,7 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "15m bullish EMA(9) cross while price holds above the 20-SMA and RSI is not overbought. 1% equity risk at a 1.5% stop; 3.0% take."
+    notes: "15m bullish EMA(9) cross while price holds above the 20-SMA and RSI is not overbought. 1% equity risk at a 1.5% stop; 3.0% take. BE after 1 bar if close > EMA9."
     when:
       all:
         - ema_cross:
@@ -66,3 +68,6 @@ rules:
       exit: fixed_bracket
       stop_loss_pct: 1.5
       take_profit_pct: 3.0
+      breakeven_after_bars: 1
+      breakeven_requires_valid: true
+      breakeven_valid: above_ema
