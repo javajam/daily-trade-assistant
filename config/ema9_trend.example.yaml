@@ -1,44 +1,30 @@
-# 9 EMA trend — long-only v1 (paper / dry_run).
+# 9/20 MA-cross — long-only (paper / dry_run).
 #
 # Universe AAPL / MSFT (SOXL is optional: config/ema9_trend_bracket_soxl.example.yaml
-# and config/ema9_trend_risk_soxl.example.yaml). Entry is unchanged: bullish
-# close-across-EMA(9) plus close > SMA20 and RSI14 < 70. Default exit for this
-# experiment is EMA-invalidation — hold until a signal-timeframe bar closes <
-# EMA(9) (equals EMA stays valid) and flatten at that close. No 1.5/3.0 bracket.
-# Optional stop_loss_pct is a catastrophic stop only (omit / leave unset = off).
+# and config/ema9_trend_risk_soxl.example.yaml). Clean pair-cross:
 #
-#   action.exit: ema_invalid     # this file's default
-#   action.exit: fixed_bracket   # restore percent stop/take (set stop_loss_pct / take_profit_pct)
+#   Entry: EMA(9) crosses over SMA(20) on the signal timeframe
+#          (prev EMA9 <= prev SMA20 and curr EMA9 > curr SMA20).
+#   Exit:  EMA(9) crosses under SMA(20); flatten at the *next bar open*
+#          (same fill as entries). Same-bar 1.5% stop still wins.
+#   Stop:  fixed 1.5% initial stop only. Break-even is off (omit /
+#          breakeven_after_bars: 0). No take-profit.
 #
-# Session gates (America/New_York): no new fills at/after 12:00; force-flat at
-# the 15:45 ET 15m bar close (last regular 15m bar, aligned with flatten_by 15:55).
-# Prior cutoffs: config/ema9_trend_bracket_1300.example.yaml (13:00) and
-# config/ema9_trend_bracket_1515.example.yaml (15:15). Set entry_cutoff /
-# flatten_by to null to restore overnight holds.
+# Session gates (America/New_York) — toggle either to null / off:
+#   entry_cutoff: "12:00"   # skip fills at/after this clock; null = off
+#   flatten_by: "15:55"     # force-flat at flatten-bar close; null = off
+# Overnight control: config/ema9_trend_bracket_overnight.example.yaml
+# Prior noon price-cross book (old entry): config/ema9_trend_bracket_nobe.example.yaml
 #
-# Bar size is parameterized: settings.timeframe (or --timeframe on the CLI)
-# rewrites every condition. Default here is 15m. Same book on 5m:
+# Bar size is settings.timeframe (or --timeframe). Default 15m. Same book on 5m:
 #
 #   python -m dta_bot backtest --config config/ema9_trend.example.yaml --timeframe 5m
 #   # or: config/ema9_trend_5m.example.yaml
 #
-# Cross definition (engine MaCrossCond): previous close <= previous EMA9 and
-# current close > current EMA9, evaluated only when the trend filter is true
-# on that same bar (all indicators use the chosen timeframe).
-#
-# This file also ships:
-#   - ema9_cross_raw — same cross and EMA-invalid exit, no SMA/RSI filter (ablation)
-#   - engulfing-with-trend — control book on the same tape (still 1.5/3.0 brackets)
-# Isolated backtest books stay separate (one lot per symbol per book).
-# Copy to config/ema9_trend.yaml (gitignored) and disable unused rules to paper-trade.
-#
 #   python -m dta_bot validate --config config/ema9_trend.example.yaml
 #   python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yahoo \
-#     --output artifacts/ema9_ema_invalid.json \
-#     --report artifacts/ema9_ema_invalid.md
-#   python -m dta_bot backtest --config config/ema9_trend.example.yaml --timeframe 5m \
-#     --source yahoo --output artifacts/ema9_ema_invalid_5m.json \
-#     --report artifacts/ema9_ema_invalid_5m.md
+#     --output artifacts/ema9_ma_cross.json \
+#     --report artifacts/ema9_ma_cross.md
 
 settings:
   paper: true
@@ -52,8 +38,8 @@ settings:
   lookback_bars: 80
   timeframe: 15m
   session_timezone: America/New_York
-  entry_cutoff: "12:00"
-  flatten_by: "15:55"
+  entry_cutoff: "12:00"   # null / off disables
+  flatten_by: "15:55"     # null / off disables
 
 universe:
   - AAPL
@@ -64,38 +50,11 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "15m bullish EMA(9) cross while price holds above the 20-SMA and RSI is not overbought. Exit when a 15m bar closes < EMA9."
+    notes: "15m EMA(9) cross over SMA(20). Flatten next bar open on EMA(9) cross under SMA(20). 1.5% stop; no take-profit; no break-even."
     when:
-      all:
-        - ema_cross:
-            period: 9
-            timeframe: 15m
-            direction: bullish
-        - sma:
-            period: 20
-            timeframe: 15m
-            compare: above
-        - rsi:
-            period: 14
-            timeframe: 15m
-            below: 70
-    action:
-      type: buy
-      size:
-        type: shares
-        value: 10
-      order: market
-      exit: ema_invalid
-      exit_ema_period: 9
-
-  - id: ema9_cross_raw
-    enabled: true
-    symbols: [AAPL, MSFT]
-    cooldown_minutes: 60
-    notes: "Ablation: 15m bullish EMA(9) cross with no SMA/RSI trend filter. Same 10-share EMA-invalidation exit."
-    when:
-      ema_cross:
-        period: 9
+      ema_sma_cross:
+        ema_period: 9
+        sma_period: 20
         timeframe: 15m
         direction: bullish
     action:
@@ -104,32 +63,7 @@ rules:
         type: shares
         value: 10
       order: market
-      exit: ema_invalid
-      exit_ema_period: 9
-
-  - id: engulfing-with-trend
-    enabled: true
-    symbols: [AAPL, MSFT]
-    cooldown_minutes: 60
-    notes: "Control: 15m bullish engulfing while price holds above the 20-SMA and RSI is not overbought. Still uses 1.5/3.0 fixed brackets."
-    when:
-      all:
-        - pattern: bullish_engulfing
-          timeframe: 15m
-        - sma:
-            period: 20
-            timeframe: 15m
-            compare: above
-        - rsi:
-            period: 14
-            timeframe: 15m
-            below: 70
-    action:
-      type: buy
-      size:
-        type: shares
-        value: 10
-      order: market
-      exit: fixed_bracket
+      exit: ma_cross
+      ema_period: 9
+      sma_period: 20
       stop_loss_pct: 1.5
-      take_profit_pct: 3.0

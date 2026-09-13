@@ -185,6 +185,7 @@ rules:
           timeframe: 15m
         - sma: { period: 20, timeframe: 15m, compare: above }   # or ema
         - ema_cross: { period: 9, timeframe: 15m, direction: bullish }  # or sma_cross
+        - ema_sma_cross: { ema_period: 9, sma_period: 20, timeframe: 15m, direction: bullish }
         - rsi: { period: 14, timeframe: 15m, below: 70 }        # above and/or below
         - volume: { period: 20, timeframe: 15m, multiplier: 1.2 }
       # any: [ ... ]         # OR; groups nest
@@ -195,10 +196,11 @@ rules:
       #   shares = floor( (equity_risk * equity) / ((stop_pct/100) * price) )
       order: market | limit
       limit_offset_pct: 0.05
-      exit: ema_invalid | fixed_bracket   # default fixed_bracket
-      exit_ema_period: 9                  # used when exit is ema_invalid
-      stop_loss_pct: 1.5     # optional; catastrophic-only when exit is ema_invalid
-      take_profit_pct: 3.0   # ignored when exit is ema_invalid
+      exit: ema_invalid | ma_cross | fixed_bracket   # default fixed_bracket
+      exit_ema_period: 9                  # ema_invalid / ma_cross (alias: ema_period)
+      exit_sma_period: 20                 # ma_cross (alias: sma_period)
+      stop_loss_pct: 1.5     # optional; initial stop (catastrophic-only when ema_invalid)
+      take_profit_pct: 3.0   # ignored when exit is ema_invalid or ma_cross
       breakeven_after_bars: 1            # 0/omit = off; 1 = next full candle after fill
       breakeven_requires_valid: true     # only arm if evaluation bar is still valid
       breakeven_valid: above_ema         # long: close > EMA(9); or always
@@ -206,25 +208,29 @@ rules:
 
 **Patterns:** `doji`, `bullish_engulfing`, `bearish_engulfing`, `hammer`, `inverted_hammer`, `shooting_star`, `morning_star`, `evening_star`, `three_white_soldiers`, `three_black_crows`.
 
-**MA cross:** `ema_cross` / `sma_cross` with `direction: bullish` or `bearish`. Bullish = previous close ≤ previous MA and current close > current MA (each MA is computed through that bar). Level compares (`sma` / `ema` + `compare: above|below`) still mean “close vs the current MA only.”
+**MA cross:** `ema_cross` / `sma_cross` with `direction: bullish` or `bearish`. Bullish = previous close ≤ previous MA and current close > current MA (each MA is computed through that bar). **EMA vs SMA:** `ema_sma_cross` with `ema_period` / `sma_period` (bullish = previous EMA ≤ previous SMA and current EMA > current SMA). Level compares (`sma` / `ema` + `compare: above|below`) still mean “close vs the current MA only.”
 
 `python -m dta_bot patterns` prints the list. Detectors always use **closed** bars (the in-progress candle is dropped).
 
-### 9 EMA trend (sample strategy)
+### 9/20 MA-cross (sample strategy)
 
-`config/ema9_trend.example.yaml` is a long-only book on **AAPL / MSFT**. SOXL is optional (`config/ema9_trend_bracket_soxl.example.yaml`, `config/ema9_trend_risk_soxl.example.yaml`). Entry reuses the engulfing-with-trend filter: close above SMA(20), RSI(14) below 70, buy 10 shares, 60-minute **wall-clock** cooldown. The trigger is a bullish **EMA(9) cross** instead of a bullish engulfing candle.
+`config/ema9_trend.example.yaml` is a long-only **EMA(9) / SMA(20) pair-cross** book on **AAPL / MSFT**. SOXL is optional (`config/ema9_trend_bracket_soxl.example.yaml`, `config/ema9_trend_risk_soxl.example.yaml`).
 
-Default exit is **`action.exit: ema_invalid`**: stay in the long until a signal-timeframe bar **closes < EMA(9)** and flatten at that close. Close == EMA9 stays valid. There is no 1.5%/3.0% bracket on the 9 EMA rules. Optional `stop_loss_pct` is a catastrophic stop only and is **off** in the example configs. Set `exit: fixed_bracket` plus `stop_loss_pct` / `take_profit_pct` to restore the old brackets. Paper / `dry_run` defaults; no live.
+1. **Entry** — EMA(9) crosses **over** SMA(20) on the signal timeframe (default 15m): previous EMA9 ≤ previous SMA20 and current EMA9 > current SMA20. Fill at the **next bar open**.
+2. **Exit** — EMA(9) crosses **under** SMA(20) (`action.exit: ma_cross`). Flatten at the **next bar open** (same fill as entries). Same-bar 1.5% stop still wins. If the cross bar is also the flatten bar, `session_flatten` at that close wins.
+3. **Stop** — fixed **1.5%** initial stop only. Break-even is **off** (`breakeven_after_bars` omitted / 0).
+4. **No take-profit** — `take_profit_pct` is omitted; percent take is ignored when `exit` is `ma_cross`.
+5. No RSI filter and no “price crosses EMA9 while above SMA20” — that old noon book is `config/ema9_trend_bracket_nobe.example.yaml`.
 
-**Session gates** (America/New_York, on in the ema9 example configs):
+YAML fields read as `ema_period: 9`, `sma_period: 20`, `exit: ma_cross`. Paper / `dry_run` defaults; no live. 60-minute wall-clock cooldown.
+
+**Session gates** (America/New_York, on in the ema9 example configs — set either to `null` / `off` to disable):
 
 - `entry_cutoff: "12:00"` — skip a signal when the next-bar **fill** (bar open) would be at/after noon ET. Prior gated books: `13:00` (`config/ema9_trend_bracket_1300.example.yaml`) and `15:15` (`config/ema9_trend_bracket_1515.example.yaml`).
-- `flatten_by: "15:55"` — force-flat at the close of the bar that contains 3:55 PM ET. On **15m** RTH bars opening `:00,:15,:30,:45` that is the **15:45 ET bar close** (last regular 15m bar before 16:00, labeled as the end-of-day flatten aligned with “by 15:55”). On **5m** that is the **15:50 ET bar close** (last 5m bar that completes at/before 15:55). Stop/take/EMA-invalid on that bar still win if they hit first. Exit reason: `session_flatten`.
-- Set either knob to `null` / `off` to disable it (overnight control: `config/ema9_trend_bracket_overnight.example.yaml`).
+- `flatten_by: "15:55"` — force-flat at the close of the bar that contains 3:55 PM ET. On **15m** RTH bars opening `:00,:15,:30,:45` that is the **15:45 ET bar close** (last regular 15m bar before 16:00, labeled as the end-of-day flatten aligned with “by 15:55”). On **5m** that is the **15:50 ET bar close** (last 5m bar that completes at/before 15:55). Stop / EMA-invalid / a same-bar MA-cross signal still win if they hit first; MA-cross fills at the next open, so a flatten-bar close is `session_flatten`. Exit reason: `session_flatten`.
+- Overnight control: `config/ema9_trend_bracket_overnight.example.yaml`.
 
-The 10-share and 1% risk books (`config/ema9_trend_bracket.example.yaml`, `config/ema9_trend_risk.example.yaml`) keep **`exit: fixed_bracket`** (initial stop 1.5% / take 3.0%) plus a **one-bar break-even**: after the fill, wait for one complete signal-timeframe bar after the entry bar; at that close, if the long is still valid (`close > EMA(9)`), move the stop to entry and leave it there. If not valid, keep the 1.5% stop. Prior 12:00 book without BE: `config/ema9_trend_bracket_nobe.example.yaml`.
-
-`config/ema9_trend_risk.example.yaml` is the same 15m entry on **AAPL / MSFT only** and sizes each long to risk ~1% of current equity at the 1.5% stop (`size.type: risk_pct`). Both names may be open at once when cash covers the second notional; otherwise the later signal is skipped. `--start` / `--end` bound the trade window (prior bars stay for SMA/RSI/EMA warmup):
+`config/ema9_trend_risk.example.yaml` is the same 15m pair-cross on **AAPL / MSFT only** and sizes each long to risk ~1% of current equity at the 1.5% stop (`size.type: risk_pct`). Both names may be open at once when cash covers the second notional; otherwise the later signal is skipped. `--start` / `--end` bound the trade window (prior bars stay for SMA/EMA warmup):
 
 ```bash
 python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml --source yahoo \
@@ -240,18 +246,16 @@ Bar size is `settings.timeframe` (default **15m**). The same rules on 5-minute b
 python -m dta_bot backtest --config config/ema9_trend.example.yaml --timeframe 5m --source yahoo
 # or
 python -m dta_bot backtest --config config/ema9_trend_5m.example.yaml --source yahoo \
-  --output artifacts/ema9_ema_invalid_5m.json --report artifacts/ema9_ema_invalid_5m.md
+  --output artifacts/ema9_ma_cross_5m.json --report artifacts/ema9_ma_cross_5m.md
 ```
-
-The same file also ships `ema9_cross_raw` (cross, no trend filter, same EMA-invalid exit) and `engulfing-with-trend` (the control, still 1.5/3.0 brackets) so one backtest is a head-to-head on the same tape:
 
 ```bash
 python -m dta_bot validate --config config/ema9_trend.example.yaml
 python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yahoo \
-  --output artifacts/ema9_ema_invalid.json --report artifacts/ema9_ema_invalid.md
+  --output artifacts/ema9_ma_cross.json --report artifacts/ema9_ma_cross.md
 ```
 
-Copy to `config/ema9_trend.yaml` or `config/ema9_trend_5m.yaml` (gitignored) and disable the ablation/control rules if you only want to paper the 9 EMA book.
+Copy to `config/ema9_trend.yaml` or `config/ema9_trend_5m.yaml` (gitignored) to paper the pair-cross book.
 
 On the Yahoo window 2026-06-17 → 2026-09-11, **EMA-invalidation** isolated books were: **15m AAPL/MSFT/SOXL 240 trades, 36.25%, $626.64**, max DD $850.25; **5m AAPL/MSFT/SOXL 498 trades, 30.72%, $-312.80**, max DD $722.18. Isolated SOXL: 15m 86 trades, 29.07%, $-835.05; 5m 170 trades, 28.24%, $-707.46. AAPL/MSFT only (same exit): 15m 154 / 40.26% / $1,461.69; 5m 328 / 32.01% / $394.66. Writeup: `artifacts/ema9_ema_invalid_5m_vs_15m.md`.
 

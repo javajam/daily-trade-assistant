@@ -16,6 +16,7 @@ from typing import Any, Optional
 from dta_bot.config import ActionSpec, AnyCondition, BotConfig, GroupCond, RuleSpec
 from dta_bot.engine import BarMap, cooldown_key, evaluate_rule, fire_key
 from dta_bot.models import Account, Bar
+from dta_bot.indicators import ma_pair_cross
 from dta_bot.orb import ema_cross_exit, ema_through
 from dta_bot.period_stats import build_period_stats, format_period_stats_md, session_date
 from dta_bot.session import fill_at_or_after_cutoff, is_flatten_bar
@@ -123,6 +124,7 @@ class OpenLot:
     tf: str
     exit_mode: str = "fixed_bracket"
     exit_ema_period: int = 9
+    exit_sma_period: int = 20
     completed_bars: int = 0
     breakeven_after_bars: int = 0
     breakeven_requires_valid: bool = True
@@ -148,6 +150,8 @@ class PendingOrder:
     entry_rule_id: str = ""
     exit_mode: str = "fixed_bracket"
     exit_ema_period: int = 9
+    exit_sma_period: int = 20
+    close_reason: str = "close_signal"
     breakeven_after_bars: int = 0
     breakeven_requires_valid: bool = True
     breakeven_valid: str = "above_ema"
@@ -299,6 +303,48 @@ def _breakeven_trade_valid(lot: OpenLot, bar: Bar, series: list[Bar]) -> bool:
     if lot.side == "buy":
         return bar.close > ema_val
     return bar.close < ema_val
+
+
+def _closes_through(series: list[Bar], bar: Bar) -> Optional[list[float]]:
+    closes: list[float] = []
+    target = _aware(bar.timestamp)
+    for item in series:
+        closes.append(item.close)
+        if _aware(item.timestamp) == target:
+            return closes
+    return None
+
+
+def _ma_pair_cross_exit(lot: OpenLot, bar: Bar, series: list[Bar]) -> bool:
+    """True when EMA crossed SMA against the lot on this closed bar.
+
+    Long: previous EMA >= previous SMA and current EMA < current SMA.
+    Short: previous EMA <= previous SMA and current EMA > current SMA.
+    """
+    closes = _closes_through(series, bar)
+    if not closes:
+        return False
+    direction = "bearish" if lot.side == "buy" else "bullish"
+    hit = ma_pair_cross(
+        closes,
+        lot.exit_ema_period,
+        lot.exit_sma_period,
+        direction=direction,
+    )
+    return bool(hit)
+
+
+def _exit_pnl_note(trades: list[Trade]) -> Optional[str]:
+    if not trades:
+        return None
+    grouped: dict[str, list[Trade]] = {}
+    for trade in trades:
+        grouped.setdefault(trade.exit_reason, []).append(trade)
+    parts = [
+        f"{reason} ${sum(t.pnl for t in group):,.2f} ({len(group)} trade(s))"
+        for reason, group in sorted(grouped.items())
+    ]
+    return "Exit P&L: " + "; ".join(parts) + "."
 
 
 def _maybe_arm_breakeven(lot: OpenLot, bar: Bar, series: list[Bar]) -> None:
@@ -573,7 +619,13 @@ def run_backtest(
             last_price[order.symbol] = fill_bar.open
             if order.kind == "close":
                 if order.symbol in symbols_in_position():
-                    flatten_symbol(order.symbol, _aware(fill_bar.timestamp), fill_bar.open, "close_signal", order.rule_id)
+                    flatten_symbol(
+                        order.symbol,
+                        _aware(fill_bar.timestamp),
+                        fill_bar.open,
+                        order.close_reason,
+                        order.rule_id,
+                    )
                 continue
             if fill_at_or_after_cutoff(_aware(fill_bar.timestamp), entry_cutoff, session_tz):
                 continue
@@ -606,6 +658,7 @@ def run_backtest(
                     tf=order.tf,
                     exit_mode=order.exit_mode,
                     exit_ema_period=order.exit_ema_period,
+                    exit_sma_period=order.exit_sma_period,
                     breakeven_after_bars=order.breakeven_after_bars,
                     breakeven_requires_valid=order.breakeven_requires_valid,
                     breakeven_valid=order.breakeven_valid,
@@ -618,6 +671,7 @@ def run_backtest(
         # 2) Stop / take on the bar that just completed (after any fill at its open).
         #    ema_invalid then exits at this bar's close when the close is on the
         #    wrong side of EMA (long: close < EMA). Same-bar stop + invalid → stop.
+        #    ma_cross schedules flatten at the *next* bar open (same fill as entries).
         for symbol, tf, bar in closing:
             last_price[symbol] = bar.close
             survivors: list[OpenLot] = []
@@ -626,12 +680,44 @@ def run_backtest(
                     survivors.append(lot)
                     continue
                 hit = _stop_take_hit(bar, lot)
+                series = series_map.get((symbol, tf), [])
                 if hit is None and lot.exit_mode == "ema_invalid":
-                    ema_val = ema_through(series_map.get((symbol, tf), []), bar, lot.exit_ema_period)
+                    ema_val = ema_through(series, bar, lot.exit_ema_period)
                     if ema_cross_exit(side=lot.side, close=bar.close, ema_value=ema_val):
                         hit = ("ema_invalid", bar.close)
+                if hit is None and lot.exit_mode == "ma_cross" and _ma_pair_cross_exit(lot, bar, series):
+                    nxt = _next_bar(series, bar.timestamp)
+                    already = any(
+                        order.kind == "close"
+                        and order.symbol == lot.symbol
+                        and order.tf == lot.tf
+                        for order in pending
+                    )
+                    if nxt is not None and not already:
+                        pending.append(
+                            PendingOrder(
+                                kind="close",
+                                rule_id=lot.rule_id,
+                                symbol=lot.symbol,
+                                tf=lot.tf,
+                                fill_ts=_aware(nxt.timestamp),
+                                qty=None,
+                                side="sell" if lot.side == "buy" else "buy",
+                                stop=None,
+                                take=None,
+                                signal_time=now,
+                                signal_price=bar.close,
+                                exit_mode=lot.exit_mode,
+                                exit_ema_period=lot.exit_ema_period,
+                                exit_sma_period=lot.exit_sma_period,
+                                close_reason="ma_cross",
+                            )
+                        )
+                    _maybe_arm_breakeven(lot, bar, series)
+                    survivors.append(lot)
+                    continue
                 if hit is None:
-                    _maybe_arm_breakeven(lot, bar, series_map.get((symbol, tf), []))
+                    _maybe_arm_breakeven(lot, bar, series)
                     survivors.append(lot)
                     continue
                 reason, px = hit
@@ -726,6 +812,7 @@ def run_backtest(
                                 signal_price=last_price.get(symbol, nxt.open),
                                 exit_mode=rule.action.exit,
                                 exit_ema_period=rule.action.exit_ema_period,
+                                exit_sma_period=rule.action.exit_sma_period,
                                 **_breakeven_fields(rule.action),
                             )
                         )
@@ -789,6 +876,7 @@ def run_backtest(
                                     signal_price=px,
                                     exit_mode=rule.action.exit,
                                     exit_ema_period=rule.action.exit_ema_period,
+                                    exit_sma_period=rule.action.exit_sma_period,
                                     **_breakeven_fields(rule.action),
                                 )
                             )
@@ -909,6 +997,25 @@ def run_backtest(
         extra_notes.append(
             f"Downloaded tape span {_iso(tape_start)} → {_iso(tape_end)}."
         )
+    ma_rules = [
+        r
+        for r in config.rules
+        if r.enabled and r.action.type != "close" and r.action.exit == "ma_cross"
+    ]
+    if ma_rules:
+        sample = ma_rules[0].action
+        extra_notes.append(
+            f"MA-cross exit (action.exit: ma_cross): flatten at the next bar open after "
+            f"EMA({sample.exit_ema_period}) crosses under SMA({sample.exit_sma_period}) "
+            f"for a long (prev EMA >= prev SMA and curr EMA < curr SMA). "
+            "Same fill convention as entries. Same-bar stop on the signal bar still wins. "
+            "If that signal is also the flatten bar, session_flatten at that close wins."
+        )
+        ma_exits = sum(1 for t in trades if t.exit_reason == "ma_cross")
+        extra_notes.append(f"{ma_exits} trade(s) exited as ma_cross (EMA/SMA cross-under).")
+    pnl_note = _exit_pnl_note(trades)
+    if pnl_note:
+        extra_notes.append(pnl_note)
     extra_notes.append(
         f"One lot per symbol; both names may be open at once if cash covers the second "
         f"risk-sized entry, otherwise the later signal is skipped. "
@@ -1005,9 +1112,12 @@ def format_report_md(payload: dict[str, Any]) -> str:
             if n.startswith("Exit-only")
             or n.startswith("Session gates")
             or n.startswith("Break-even")
+            or n.startswith("MA-cross exit")
+            or n.startswith("Exit P&L")
             or "entry_cutoff" in n
             or "session_flatten" in n
             or "armed break-even" in n
+            or "exited as ma_cross" in n
         ]
         for note in extra_notes:
             lines.append(f"- {note}")

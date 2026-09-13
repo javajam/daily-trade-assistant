@@ -1,10 +1,10 @@
-# 9 EMA trend — 10-share 1.5/3.0 bracket book with session gates OFF.
-# Same entry/exit/size as ema9_trend_bracket.example.yaml so the overnight
-# (prior) book can be compared to the gated product on the same tape.
+# 9/20 MA-cross — 10-share book with session gates OFF.
+# Same entry/exit/size as ema9_trend_bracket.example.yaml so overnight holds
+# can be compared to the gated product on the same tape.
+#
+# Toggle back on with entry_cutoff / flatten_by (see the gated file).
 #
 #   python -m dta_bot backtest --config config/ema9_trend_bracket_overnight.example.yaml \
-#     --compare-config config/ema9_trend_bracket_1300.example.yaml \
-#     --compare-config config/ema9_trend_bracket_1515.example.yaml \
 #     --compare-config config/ema9_trend_bracket.example.yaml --source yahoo \
 #     --combined-only --symbols AAPL,MSFT \
 #     --output artifacts/ema9_session_gates.json \
@@ -34,27 +34,20 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "Same 15m EMA9 trend + 1.5/3.0 brackets as the gated book, overnight holds allowed."
+    notes: "Same 15m EMA(9)/SMA(20) cross as the gated book, overnight holds allowed."
     when:
-      all:
-        - ema_cross:
-            period: 9
-            timeframe: 15m
-            direction: bullish
-        - sma:
-            period: 20
-            timeframe: 15m
-            compare: above
-        - rsi:
-            period: 14
-            timeframe: 15m
-            below: 70
+      ema_sma_cross:
+        ema_period: 9
+        sma_period: 20
+        timeframe: 15m
+        direction: bullish
     action:
       type: buy
       size:
         type: shares
         value: 10
       order: market
-      exit: fixed_bracket
+      exit: ma_cross
+      ema_period: 9
+      sma_period: 20
       stop_loss_pct: 1.5
-      take_profit_pct: 3.0

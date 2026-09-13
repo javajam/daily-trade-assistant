@@ -53,6 +53,21 @@ def test_ema_invalid_ignores_percent_take_keeps_optional_stop():
     assert bracket_prices(off, 100.0, "buy") == (None, None)
 
 
+def test_ma_cross_ignores_percent_take_keeps_stop():
+    action = ActionSpec(
+        type="buy",
+        size=SizeSpec(type="shares", value=1),
+        exit="ma_cross",
+        stop_loss_pct=1.5,
+        take_profit_pct=3.0,
+        exit_ema_period=9,
+        exit_sma_period=20,
+    )
+    stop, take = bracket_prices(action, 100.0, "buy")
+    assert stop == pytest.approx(98.5)
+    assert take is None
+
+
 def test_risk_pct_matches_locked_formula():
     action = ActionSpec(
         type="buy",

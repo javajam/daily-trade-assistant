@@ -45,7 +45,7 @@ class SizeSpec(BaseModel):
         return self
 
 
-EXIT_MODES = ("fixed_bracket", "ema_invalid")
+EXIT_MODES = ("fixed_bracket", "ema_invalid", "ma_cross")
 EXIT_ALIASES = {
     "ema_invalid": "ema_invalid",
     "ema_invalidation": "ema_invalid",
@@ -55,6 +55,11 @@ EXIT_ALIASES = {
     "fixed_bracket": "fixed_bracket",
     "bracket": "fixed_bracket",
     "fixed": "fixed_bracket",
+    "ma_cross": "ma_cross",
+    "ema_sma_cross": "ma_cross",
+    "ma_pair_cross": "ma_cross",
+    "cross_under": "ma_cross",
+    "ma_cross_under": "ma_cross",
 }
 
 
@@ -71,8 +76,11 @@ class ActionSpec(BaseModel):
     # fixed_bracket = optional % stop/take. ema_invalid = hold until a
     # signal-timeframe close is on the wrong side of EMA (long: close < EMA).
     # Optional stop_loss_pct is then a catastrophic stop only; take is ignored.
-    exit: Literal["fixed_bracket", "ema_invalid"] = "fixed_bracket"
+    # ma_cross = hold until EMA crosses under SMA (long) and flatten at the
+    # next bar open. stop_loss_pct is the initial percent stop; take is ignored.
+    exit: Literal["fixed_bracket", "ema_invalid", "ma_cross"] = "fixed_bracket"
     exit_ema_period: int = Field(default=9, ge=2)
+    exit_sma_period: int = Field(default=20, ge=2)
     # After this many complete signal-timeframe bars *after the entry bar*,
     # move the stop to entry (break-even). 0 / omitted = off. 1 = next full
     # candle after fill (e.g. the next 15m bar after a 15m fill).
@@ -91,7 +99,7 @@ class ActionSpec(BaseModel):
             return "fixed_bracket"
         key = str(v).strip().lower().replace("-", "_").replace(" ", "_")
         if key not in EXIT_ALIASES:
-            raise ValueError("exit must be 'ema_invalid' or 'fixed_bracket'")
+            raise ValueError("exit must be 'ema_invalid', 'ma_cross', or 'fixed_bracket'")
         return EXIT_ALIASES[key]
 
     @field_validator("breakeven_after_bars", mode="before")
@@ -197,7 +205,22 @@ class MaCrossCond(BaseModel):
         return normalize(v)
 
 
-LeafCondition = Union[PatternCond, MaCond, RsiCond, VolumeCond, MaCrossCond]
+class MaPairCrossCond(BaseModel):
+    """EMA crossing SMA: prev EMA vs prev SMA, curr EMA vs curr SMA."""
+
+    kind: Literal["ma_pair_cross"] = "ma_pair_cross"
+    ema_period: int = Field(default=9, ge=2)
+    sma_period: int = Field(default=20, ge=2)
+    timeframe: str
+    direction: Literal["bullish", "bearish"] = "bullish"
+
+    @field_validator("timeframe")
+    @classmethod
+    def _tf(cls, v: str) -> str:
+        return normalize(v)
+
+
+LeafCondition = Union[PatternCond, MaCond, RsiCond, VolumeCond, MaCrossCond, MaPairCrossCond]
 
 
 class GroupCond(BaseModel):
@@ -370,6 +393,37 @@ def timeframe_label(config: BotConfig) -> str:
     return aliases.get(tf, tf)
 
 
+def _normalize_cross_direction(raw: Any, default: str = "bullish") -> str:
+    if raw is None:
+        return default
+    direction = str(raw).strip().lower()
+    if direction in {"above", "up", "long", "over", "cross_over", "cross-over"}:
+        return "bullish"
+    if direction in {"below", "down", "short", "under", "cross_under", "cross-under"}:
+        return "bearish"
+    return direction
+
+
+def _parse_ma_pair_cross(raw: dict[str, Any], default_timeframe: Optional[str] = None) -> MaPairCrossCond:
+    block = (
+        raw.get("ema_sma_cross")
+        or raw.get("ma_pair_cross")
+        or raw.get("ema_cross_sma")
+        or {}
+    )
+    if not isinstance(block, dict):
+        block = {}
+    skip = {"ema_sma_cross", "ma_pair_cross", "ema_cross_sma"}
+    merged = {**block, **{k: v for k, v in raw.items() if k not in skip}}
+    direction = _normalize_cross_direction(merged.get("direction") or merged.get("compare"))
+    return MaPairCrossCond(
+        ema_period=int(merged.get("ema_period", merged.get("fast_period", 9))),
+        sma_period=int(merged.get("sma_period", merged.get("slow_period", 20))),
+        timeframe=_condition_timeframe(merged, raw, default=default_timeframe),
+        direction=direction,
+    )
+
+
 def _parse_ma_cross(raw: dict[str, Any], default_timeframe: Optional[str] = None) -> MaCrossCond:
     block = (
         raw.get("ema_cross")
@@ -397,11 +451,7 @@ def _parse_ma_cross(raw: dict[str, Any], default_timeframe: Optional[str] = None
             direction = "bearish"
         else:
             direction = "bullish"
-    direction = str(direction).strip().lower()
-    if direction in {"above", "up", "long"}:
-        direction = "bullish"
-    elif direction in {"below", "down", "short"}:
-        direction = "bearish"
+    direction = _normalize_cross_direction(direction)
     return MaCrossCond(
         ma=ma,
         period=int(merged["period"]),
@@ -420,6 +470,8 @@ def _parse_leaf(raw: dict[str, Any], default_timeframe: Optional[str] = None) ->
                 timeframe=_condition_timeframe(name, raw, default=default_timeframe),
             )
         return PatternCond(name=name, timeframe=_condition_timeframe(raw, default=default_timeframe))
+    if any(key in raw for key in ("ema_sma_cross", "ma_pair_cross", "ema_cross_sma")):
+        return _parse_ma_pair_cross(raw, default_timeframe=default_timeframe)
     if any(key in raw for key in ("ema_cross", "sma_cross", "ma_cross", "cross")):
         return _parse_ma_cross(raw, default_timeframe=default_timeframe)
     if "sma" in raw or "ema" in raw or "price_vs_ma" in raw:
@@ -500,7 +552,8 @@ def _parse_action(raw: dict[str, Any]) -> ActionSpec:
         stop_loss_pct=raw.get("stop_loss_pct"),
         take_profit_pct=raw.get("take_profit_pct"),
         exit=raw.get("exit", "fixed_bracket"),
-        exit_ema_period=raw.get("exit_ema_period", 9),
+        exit_ema_period=raw.get("exit_ema_period", raw.get("ema_period", 9)),
+        exit_sma_period=raw.get("exit_sma_period", raw.get("sma_period", 20)),
         breakeven_after_bars=raw.get("breakeven_after_bars", 0),
         breakeven_requires_valid=raw.get("breakeven_requires_valid", True),
         breakeven_valid=raw.get("breakeven_valid", "above_ema"),
