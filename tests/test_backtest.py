@@ -1,0 +1,195 @@
+from datetime import datetime, timezone
+
+from dta_bot.backtest import run_backtest, summarize
+from dta_bot.config import ActionSpec, BotConfig, RuleSpec, Settings, SizeSpec, parse_condition
+from dta_bot.models import Bar
+from tests.conftest import bar
+
+
+def _cfg(*rules: RuleSpec, lookback: int = 80) -> BotConfig:
+    return BotConfig(settings=Settings(lookback_bars=lookback, max_open_positions=5), universe=["AAPL"], rules=list(rules))
+
+
+def _buy_rule(**kwargs) -> RuleSpec:
+    defaults = dict(
+        id="engulf",
+        symbols=["AAPL"],
+        cooldown_minutes=60,
+        when=parse_condition({"pattern": "bullish_engulfing", "timeframe": "15m"}),
+        action=ActionSpec(
+            type="buy",
+            size=SizeSpec(type="shares", value=10),
+            stop_loss_pct=1.5,
+            take_profit_pct=3.0,
+        ),
+    )
+    defaults.update(kwargs)
+    return RuleSpec(**defaults)
+
+
+def _close_rule(**kwargs) -> RuleSpec:
+    defaults = dict(
+        id="exit",
+        symbols=["AAPL"],
+        cooldown_minutes=30,
+        when=parse_condition(
+            {
+                "any": [
+                    {"pattern": "evening_star", "timeframe": "15m"},
+                    {"pattern": "bearish_engulfing", "timeframe": "15m"},
+                ]
+            }
+        ),
+        action=ActionSpec(type="close"),
+    )
+    defaults.update(kwargs)
+    return RuleSpec(**defaults)
+
+
+def test_take_profit_round_trip():
+    # bars 0,1 form engulfing; bar 2 is the fill and immediately tags +3% take.
+    bars = [
+        Bar(bar(0, 10, 10.2, 8.0, 8.2).timestamp, 10.0, 10.2, 8.0, 8.2, 1000),
+        Bar(bar(1, 8.1, 11.0, 8.0, 10.4).timestamp, 8.1, 11.0, 8.0, 10.4, 1000),
+        Bar(bar(2, 10.4, 10.72, 10.3, 10.5).timestamp, 10.4, 10.72, 10.3, 10.5, 1000),
+    ]
+    result = run_backtest(_cfg(_buy_rule()), {("AAPL", "15Min"): bars}, starting_equity=100_000)
+    assert result.report.signals == 1
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.exit_reason == "take"
+    assert trade.qty == 10
+    assert trade.entry_price == 10.4
+    assert trade.exit_price == 10.4 * 1.03  # take is 3% above signal close 10.4
+    assert trade.pnl == 10 * (trade.exit_price - trade.entry_price)
+    assert result.report.wins == 1
+    assert result.report.total_pnl == trade.pnl
+
+
+def test_stop_loss_round_trip():
+    bars = [
+        Bar(bar(0, 10, 10.2, 8.0, 8.2).timestamp, 10.0, 10.2, 8.0, 8.2, 1000),
+        Bar(bar(1, 8.1, 11.0, 8.0, 10.0).timestamp, 8.1, 11.0, 8.0, 10.0, 1000),
+        Bar(bar(2, 10.0, 10.1, 9.80, 9.90).timestamp, 10.0, 10.1, 9.80, 9.90, 1000),
+    ]
+    result = run_backtest(_cfg(_buy_rule()), {("AAPL", "15Min"): bars}, starting_equity=100_000)
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.exit_reason == "stop"
+    assert trade.entry_price == 10.0
+    assert trade.exit_price == 10.0 * 0.985
+    assert trade.pnl < 0
+    assert result.report.losses == 1
+
+
+def test_gap_through_stop_fills_at_open():
+    bars = [
+        Bar(bar(0, 10, 10.2, 8.0, 8.2).timestamp, 10.0, 10.2, 8.0, 8.2, 1000),
+        Bar(bar(1, 8.1, 11.0, 8.0, 10.0).timestamp, 8.1, 11.0, 8.0, 10.0, 1000),
+        Bar(bar(2, 9.70, 9.80, 9.60, 9.65).timestamp, 9.70, 9.80, 9.60, 9.65, 1000),
+    ]
+    result = run_backtest(_cfg(_buy_rule()), {("AAPL", "15Min"): bars}, starting_equity=100_000)
+    trade = result.trades[0]
+    assert trade.exit_reason == "stop"
+    assert trade.entry_price == 9.70
+    assert trade.exit_price == 9.70  # gapped through 9.85 stop, both fills at open
+
+
+def test_close_rule_exits_open_lot():
+    # Engulfing entry, then a later bearish engulfing flatten (no stop/take hit).
+    bars = [
+        Bar(bar(0, 10, 10.2, 8.0, 8.2).timestamp, 10.0, 10.2, 8.0, 8.2, 1000),
+        Bar(bar(1, 8.1, 11.0, 8.0, 10.0).timestamp, 8.1, 11.0, 8.0, 10.0, 1000),
+        Bar(bar(2, 10.0, 10.2, 9.95, 10.1).timestamp, 10.0, 10.2, 9.95, 10.1, 1000),
+        Bar(bar(3, 10.1, 10.25, 10.0, 10.2).timestamp, 10.1, 10.25, 10.0, 10.2, 1000),
+        Bar(bar(4, 10.25, 10.28, 9.90, 9.95).timestamp, 10.25, 10.28, 9.90, 9.95, 1000),
+        Bar(bar(5, 9.95, 10.00, 9.90, 9.92).timestamp, 9.95, 10.00, 9.90, 9.92, 1000),
+    ]
+    result = run_backtest(
+        _cfg(_buy_rule(cooldown_minutes=0), _close_rule()),
+        {("AAPL", "15Min"): bars},
+        starting_equity=100_000,
+    )
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.exit_reason == "close_signal"
+    assert trade.entry_price == 10.0
+    assert trade.exit_price == 9.95
+
+
+def test_exit_only_counts_signals_without_trades():
+    bars = [
+        Bar(bar(0, 8.0, 10.2, 7.9, 10.0).timestamp, 8.0, 10.2, 7.9, 10.0, 1000),
+        Bar(bar(1, 10.1, 10.3, 7.5, 7.8).timestamp, 10.1, 10.3, 7.5, 7.8, 1000),
+        Bar(bar(2, 7.8, 7.9, 7.6, 7.7).timestamp, 7.8, 7.9, 7.6, 7.7, 1000),
+    ]
+    result = run_backtest(_cfg(_close_rule()), {("AAPL", "15Min"): bars}, starting_equity=100_000)
+    assert result.report.signals == 1
+    assert result.report.trades == 0
+    assert result.signals[0].skip_reason == "no_position"
+    assert result.report.total_pnl == 0
+    assert result.report.win_rate_pct is None
+
+
+def test_cooldown_blocks_second_entry():
+    # Two engulfing pairs 15 minutes apart; 60m cooldown keeps the second from firing.
+    bars = [
+        Bar(bar(0, 10, 10.2, 8.0, 8.2).timestamp, 10.0, 10.2, 8.0, 8.2, 1000),
+        Bar(bar(1, 8.1, 11.0, 8.0, 10.0).timestamp, 8.1, 11.0, 8.0, 10.0, 1000),
+        Bar(bar(2, 10.0, 10.1, 9.9, 10.0).timestamp, 10.0, 10.1, 9.9, 10.0, 1000),
+        Bar(bar(3, 10.0, 10.2, 8.0, 8.2).timestamp, 10.0, 10.2, 8.0, 8.2, 1000),
+        Bar(bar(4, 8.1, 11.0, 8.0, 10.0).timestamp, 8.1, 11.0, 8.0, 10.0, 1000),
+        Bar(bar(5, 10.0, 10.4, 9.9, 10.2).timestamp, 10.0, 10.4, 9.9, 10.2, 1000),
+    ]
+    blocked = run_backtest(_cfg(_buy_rule(cooldown_minutes=60)), {("AAPL", "15Min"): bars})
+    assert blocked.report.signals == 1
+    open_cd = run_backtest(_cfg(_buy_rule(cooldown_minutes=0)), {("AAPL", "15Min"): bars}, allow_pyramid=True)
+    assert open_cd.report.signals == 2
+
+
+def test_percent_equity_sizing():
+    bars = [
+        Bar(bar(0, 10, 10.2, 8.0, 8.2).timestamp, 10.0, 10.2, 8.0, 8.2, 1000),
+        Bar(bar(1, 8.1, 11.0, 8.0, 50.0).timestamp, 8.1, 11.0, 8.0, 50.0, 1000),
+        Bar(bar(2, 50.0, 52.0, 49.6, 51.0).timestamp, 50.0, 52.0, 49.6, 51.0, 1000),
+    ]
+    rule = _buy_rule(
+        action=ActionSpec(
+            type="buy",
+            size=SizeSpec(type="percent_equity", value=2),
+            stop_loss_pct=1.0,
+            take_profit_pct=2.0,
+        )
+    )
+    result = run_backtest(_cfg(rule), {("AAPL", "15Min"): bars}, starting_equity=100_000)
+    # 2% of 100k = 2000 / 50 = 40 shares; take 2% of signal 50 = 51, fill bar high 52.
+    assert result.trades[0].qty == 40
+    assert result.trades[0].exit_reason == "take"
+
+
+def test_same_bar_stop_and_take_uses_stop():
+    bars = [
+        Bar(bar(0, 10, 10.2, 8.0, 8.2).timestamp, 10.0, 10.2, 8.0, 8.2, 1000),
+        Bar(bar(1, 8.1, 11.0, 8.0, 10.0).timestamp, 8.1, 11.0, 8.0, 10.0, 1000),
+        Bar(bar(2, 10.0, 10.40, 9.80, 10.1).timestamp, 10.0, 10.40, 9.80, 10.1, 1000),
+    ]
+    result = run_backtest(_cfg(_buy_rule()), {("AAPL", "15Min"): bars})
+    assert result.trades[0].exit_reason == "stop"
+
+
+def test_summarize_handles_empty_book():
+    report = summarize(
+        label="empty",
+        starting_equity=100_000,
+        ending_equity=100_000,
+        trades=[],
+        signals=[],
+        equity_curve=[(datetime(2026, 1, 1, tzinfo=timezone.utc), 100_000.0)],
+        period_start=None,
+        period_end=None,
+        data_source="fixture",
+    )
+    assert report.trades == 0
+    assert report.win_rate_pct is None
+    assert report.avg_win is None
+    assert report.max_drawdown == 0

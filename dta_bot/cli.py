@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
+from dta_bot.backtest import format_report_md, restrict_config, run_backtest, write_results_json
 from dta_bot.broker import build_broker, resolve_api_keys, resolve_trading_url
 from dta_bot.config import load_config
+from dta_bot.history import download_pairs, drop_still_forming, series_span
 from dta_bot.killswitch import is_active, pause, reason as kill_reason, resume
 from dta_bot.logging_setup import setup_logging
 from dta_bot.market_data import FixtureMarketData, build_market_data
@@ -65,6 +68,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     pats = sub.add_parser("patterns", help="List built-in candlestick patterns")
     pats.add_argument("--verbose", "-v", action="store_true")
+
+    bt = sub.add_parser("backtest", help="Replay rules on historical OHLCV (Yahoo or Alpaca)")
+    _add_shared(bt)
+    bt.add_argument("--source", default="auto", choices=["auto", "yahoo", "alpaca"], help="OHLCV source (auto=Alpaca if keys else Yahoo)")
+    bt.add_argument("--fixture", help="Local OHLCV JSON fixture (skips download)")
+    bt.add_argument("--starting-equity", type=float, default=100_000.0)
+    bt.add_argument("--commission", type=float, default=0.0)
+    bt.add_argument("--slippage-pct", type=float, default=0.0)
+    bt.add_argument("--cache-dir", default="data/ohlcv")
+    bt.add_argument("--output", default="artifacts/backtest_results.json")
+    bt.add_argument("--report", default="artifacts/backtest_results.md")
+    bt.add_argument(
+        "--combined-only",
+        action="store_true",
+        help="Skip per-rule isolated books; run the full rule set once",
+    )
     return parser
 
 
@@ -127,6 +146,107 @@ def cmd_resume(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_backtest(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    now = datetime.now(timezone.utc)
+    if args.fixture:
+        fixture = FixtureMarketData(args.fixture)
+        bars = {}
+        sources = {}
+        for symbol, tf in sorted(cfg.all_symbol_timeframes()):
+            bars[(symbol, tf)] = fixture.get_bars(symbol, tf, limit=10_000_000)
+            sources[f"{symbol}:{tf}"] = f"fixture:{args.fixture}"
+        source_label = f"fixture {args.fixture}"
+    else:
+        bars, sources = download_pairs(
+            cfg.all_symbol_timeframes(),
+            source=args.source,
+            feed=cfg.settings.data_feed,
+            cache_dir=args.cache_dir,
+        )
+        used = sorted(set(sources.values()))
+        source_label = ", ".join(used) if used else args.source
+
+    for key, series in list(bars.items()):
+        bars[key] = drop_still_forming(series, key[1], now=now)
+
+    spans = []
+    for (symbol, tf), series in sorted(bars.items()):
+        start, end = series_span(series)
+        spans.append(f"{symbol} {tf}: {len(series)} bars {start} → {end}")
+        print(f"  data {symbol} {tf}: {len(series)} closed bars ({start} → {end})")
+
+    friction = f"commission=${args.commission:.2f}/fill, slippage={args.slippage_pct}%"
+    assumptions = [
+        "Signals come from the live evaluate_rule path (same pattern/SMA/RSI/volume detectors).",
+        "A rule is evaluated when any of its referenced timeframes prints a newly closed bar.",
+        "Entries and close-signals fill at the next bar open of the finest rule timeframe.",
+        "Stop/take are computed from the signal-bar close (same as live bracket_prices).",
+        "If stop and take both trade in the fill bar, the stop is assumed to fill first.",
+        "A gap through stop/take fills at that bar's open.",
+        "One open lot per symbol (no pyramiding). A second signal while flat-in-symbol is skipped.",
+        "Open lots still on the last bar are flattened at the last close (exit reason eod).",
+        "Regular-session Yahoo bars when the source is Yahoo (includePrePost=false), unadjusted OHLC.",
+        friction,
+        f"Starting equity ${args.starting_equity:,.2f}.",
+    ]
+
+    run_ids: list[list[str] | None]
+    if args.combined_only:
+        run_ids = [None]
+    else:
+        run_ids = [[r.id] for r in cfg.rules] + [None]
+
+    runs = []
+    for ids in run_ids:
+        subset = restrict_config(cfg, ids)
+        tag = "combined" if ids is None else ids[0]
+        notes = list(assumptions)
+        if ids is not None and subset.rules and subset.rules[0].action.type == "close":
+            notes.append(
+                "Exit-only rule: isolated book has no entries, so P&L is $0. "
+                "Signal count is how often the pattern would have fired; "
+                "the combined book uses those fires to flatten longs from the entry rules."
+            )
+        print(f"\n=== backtest {tag} ===")
+        result = run_backtest(
+            subset,
+            bars,
+            starting_equity=args.starting_equity,
+            commission=args.commission,
+            slippage_pct=args.slippage_pct,
+            label=tag,
+            data_source=source_label,
+            notes=notes,
+        )
+        r = result.report
+        print(
+            f"  signals={r.signals} trades={r.trades} win_rate={r.win_rate_pct} "
+            f"pnl=${r.total_pnl:.2f} ({r.total_pnl_pct:.3f}%) "
+            f"dd=${r.max_drawdown} ({r.max_drawdown_pct})"
+        )
+        runs.append(result.to_dict())
+
+    payload = {
+        "generated_at": now.isoformat().replace("+00:00", "Z"),
+        "config": args.config,
+        "starting_equity": args.starting_equity,
+        "friction": friction,
+        "data_source": source_label,
+        "data_spans": spans,
+        "sources": sources,
+        "assumptions": assumptions,
+        "runs": runs,
+    }
+    write_results_json(args.output, payload)
+    report_path = Path(args.report)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(format_report_md(payload), encoding="utf-8")
+    print(f"\nWrote {args.output}")
+    print(f"Wrote {args.report}")
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     dry = _dry_run_flag(args, cfg.settings.dry_run)
@@ -170,6 +290,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_resume(args)
     if args.cmd in {"run", "evaluate"}:
         return cmd_run(args)
+    if args.cmd == "backtest":
+        return cmd_backtest(args)
     parser.error(f"unknown command {args.cmd}")
     return 2
 
