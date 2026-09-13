@@ -227,11 +227,12 @@ def _flatten_ma_cross(
     *,
     dry_run: bool,
 ) -> None:
-    """Close paper/live lots when EMA crosses under SMA (long) after entry.
+    """Close paper/live lots when EMA crosses SMA against the position after entry.
 
-    Live fill is a market flatten on the next poll after the signal bar closes,
-    matching the backtest next-bar-open convention as closely as the loop allows.
-    Optional percent stop stays on the broker when stop_loss_pct is set.
+    Long: EMA under SMA. Short: EMA above SMA (cover). Live fill is a market
+    flatten on the next poll after the signal bar closes, matching the backtest
+    next-bar-open convention as closely as the loop allows. Optional percent /
+    lock_plus stop stays on the broker when stop_loss_pct is set.
     """
     kill_file = config.settings.kill_switch_file
     if is_active(kill_file):

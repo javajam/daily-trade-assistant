@@ -120,8 +120,10 @@ class ActionSpec(BaseModel):
     # fixed_bracket = optional % stop/take. ema_invalid = hold until a
     # signal-timeframe close is on the wrong side of EMA (long: close < EMA).
     # Optional stop_loss_pct is then a catastrophic stop only; take is ignored.
-    # ma_cross = hold until EMA crosses under SMA (long) and flatten at the
-    # next bar open. stop_loss_pct is the initial percent stop; take is ignored.
+    # ma_cross = hold until EMA crosses SMA against the position and flatten
+    # at the next bar open. Long: EMA under SMA. Short: EMA above SMA (cover).
+    # Optional stop_loss_pct is a catastrophic stop only (off when omitted).
+    # The default noon short omits it. Percent take-profit is ignored.
     exit: Literal["fixed_bracket", "ema_invalid", "ma_cross"] = "fixed_bracket"
     exit_ema_period: int = Field(default=9, ge=2)
     exit_sma_period: int = Field(default=20, ge=2)
@@ -524,7 +526,7 @@ def has_noon_stack(cond: AnyCondition) -> bool:
 
 
 def has_noon_short_stack(cond: AnyCondition) -> bool:
-    """Bearish EMA-cross + SMA-below + RSI — the mirrored ema9_trend_short entry."""
+    """Bearish EMA-cross + SMA-below — the ema9_trend_short entry (no RSI)."""
     leaves = _flatten_conditions(cond)
     has_cross = any(
         isinstance(leaf, MaCrossCond) and leaf.ma == "ema" and leaf.direction == "bearish"
@@ -534,8 +536,7 @@ def has_noon_short_stack(cond: AnyCondition) -> bool:
         isinstance(leaf, MaCond) and leaf.ma == "sma" and leaf.compare == "below"
         for leaf in leaves
     )
-    has_rsi = any(isinstance(leaf, RsiCond) for leaf in leaves)
-    return has_cross and has_sma and has_rsi
+    return has_cross and has_sma
 
 
 def entry_sides(config: BotConfig) -> set[str]:

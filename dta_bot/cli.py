@@ -208,7 +208,10 @@ def cmd_validate(args: argparse.Namespace) -> int:
                     )
             else:
                 size_txt = f" size={size.type} {size.value}"
-        stop_txt = f" stop_mode={rule.action.stop_mode}"
+        if rule.action.stop_loss_pct is None and rule.action.stop_mode == "percent":
+            stop_txt = " stop=off"
+        else:
+            stop_txt = f" stop_mode={rule.action.stop_mode}"
         if rule.action.stop_mode == "sma20":
             stop_txt += f" stop_sma_period={rule.action.stop_sma_period}"
         elif rule.action.stop_mode == "lock_plus":

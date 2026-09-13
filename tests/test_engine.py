@@ -271,3 +271,46 @@ def test_ema_cross_and_trend_filter():
     assert "ema_cross matched" in ev.reasons[0]
     assert "SMA20" in ev.reasons[0]
     assert "RSI14" in ev.reasons[0]
+
+
+def test_noon_short_stack_fires_without_rsi_even_when_oversold():
+    # Flats seed EMA/SMA at 10; last print 8 is a bearish price-cross below SMA20.
+    # One drop after flats drives Wilder RSI near 0, so RSI > 30 would block.
+    bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(20)]
+    bars.append(bar(20, 10.0, 10.1, 7.9, 8.0))
+    cond = parse_condition(
+        {
+            "all": [
+                {"ema_cross": {"period": 9, "timeframe": "15m", "direction": "bearish"}},
+                {"sma": {"period": 20, "timeframe": "15m", "compare": "below"}},
+            ]
+        }
+    )
+    ev = evaluate_rule(
+        _rule(when=cond, action=ActionSpec(type="sell", size=SizeSpec(type="shares", value=10))),
+        "AAPL",
+        {("AAPL", "15Min"): bars},
+        BotState(),
+    )
+    assert ev.matched
+    assert "ema_cross matched (bearish)" in ev.reasons[0]
+    assert "SMA20" in ev.reasons[0]
+    assert "RSI14" not in ev.reasons[0]
+
+    blocked = parse_condition(
+        {
+            "all": [
+                {"ema_cross": {"period": 9, "timeframe": "15m", "direction": "bearish"}},
+                {"sma": {"period": 20, "timeframe": "15m", "compare": "below"}},
+                {"rsi": {"period": 14, "timeframe": "15m", "above": 30}},
+            ]
+        }
+    )
+    blocked_ev = evaluate_rule(
+        _rule(when=blocked, action=ActionSpec(type="sell", size=SizeSpec(type="shares", value=10))),
+        "AAPL",
+        {("AAPL", "15Min"): bars},
+        BotState(),
+    )
+    assert not blocked_ev.matched
+    assert "RSI14" in blocked_ev.reasons[0]

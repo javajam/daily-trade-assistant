@@ -1224,13 +1224,17 @@ def run_backtest(
         sample = ma_rules[0].action
         extra_notes.append(
             f"MA-cross exit (action.exit: ma_cross): flatten at the next bar open after "
-            f"EMA({sample.exit_ema_period}) crosses under SMA({sample.exit_sma_period}) "
-            f"for a long (prev EMA >= prev SMA and curr EMA < curr SMA). "
+            f"EMA({sample.exit_ema_period}) crosses SMA({sample.exit_sma_period}) against "
+            "the position. Long: prev EMA >= prev SMA and curr EMA < curr SMA (cross-under). "
+            "Short: prev EMA <= prev SMA and curr EMA > curr SMA (cross-over / cover). "
             "Same fill convention as entries. Same-bar stop on the signal bar still wins. "
             "If that signal is also the flatten bar, session_flatten at that close wins."
         )
         ma_exits = sum(1 for t in trades if t.exit_reason == "ma_cross")
-        extra_notes.append(f"{ma_exits} trade(s) exited as ma_cross (EMA/SMA cross-under).")
+        extra_notes.append(
+            f"{ma_exits} trade(s) exited as ma_cross "
+            "(EMA/SMA pair-cross against the position)."
+        )
     pnl_note = _exit_pnl_note(trades)
     if pnl_note:
         extra_notes.append(pnl_note)
@@ -1300,15 +1304,26 @@ def run_backtest(
         if sample.stop_mode == "lock_plus":
             trig = sample.resolved_lock_trigger_pct()
             lock = sample.resolved_lock_stop_pct()
-            extra_notes.append(
-                f"Lock-plus (stop_mode: lock_plus): first trade/touch of the lock trigger "
-                f"moves the stop to the lock level and leaves it. Long: trigger/lock at "
-                f"entry×(1+{(trig or 0):g}/100) (bar high ≥ that print). Short: trigger/lock "
-                f"at entry×(1−{(lock or 0):g}/100) (bar low ≤ that print). "
-                "The locked stop is live from the next bar; same-bar pullback after the "
-                "tag still uses the initial 1% protective stop. Later hit of the locked "
-                "stop is exit reason lock_stop. Session flatten covers longs and shorts."
-            )
+            lock_sides = {r.action.type for r in entry_stop_rules}
+            if lock_sides == {"buy"}:
+                extra_notes.append(
+                    f"Lock-plus (stop_mode: lock_plus) on longs only: first trade/touch of "
+                    f"entry×(1+{(trig or 0):g}/100) (bar high ≥ that print) moves the stop "
+                    "there and leaves it. Shorts have no percent / lock_plus stop. "
+                    "The locked stop is live from the next bar; same-bar pullback after the "
+                    "tag still uses the initial 1% protective stop. Later hit of the locked "
+                    "stop is exit reason lock_stop. Session flatten covers longs and shorts."
+                )
+            else:
+                extra_notes.append(
+                    f"Lock-plus (stop_mode: lock_plus): first trade/touch of the lock trigger "
+                    f"moves the stop to the lock level and leaves it. Long: trigger/lock at "
+                    f"entry×(1+{(trig or 0):g}/100) (bar high ≥ that print). Short: trigger/lock "
+                    f"at entry×(1−{(lock or 0):g}/100) (bar low ≤ that print). "
+                    "The locked stop is live from the next bar; same-bar pullback after the "
+                    "tag still uses the initial 1% protective stop. Later hit of the locked "
+                    "stop is exit reason lock_stop. Session flatten covers longs and shorts."
+                )
             extra_notes.append(
                 f"{sum(1 for t in trades if t.lock_armed)} trade(s) armed the +lock; "
                 f"{sum(1 for t in trades if t.exit_reason == 'lock_stop')} exited as lock_stop."
