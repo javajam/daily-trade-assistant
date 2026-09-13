@@ -1,0 +1,66 @@
+# Book B — price×EMA9 noon stack, lock stop to +1% after first +1% touch.
+#
+# Same entry / session as Book A (config/ema9_trend_bracket_nobe_fixed1.example.yaml).
+# Stop (stop_mode: lock_plus):
+#   initial stop = fill × 0.99
+#   first trade/touch of fill × 1.01 (bar high ≥ trigger) moves the stop to
+#   fill × 1.01 and leaves it. Locked stop is live from the next bar.
+# No take-profit. Exits = stop / lock_stop / session_flatten.
+#
+#   python -m dta_bot backtest --config config/ema9_trend_bracket_nobe_fixed1.example.yaml \
+#     --compare-config config/ema9_trend_bracket_nobe_lock1.example.yaml \
+#     --compare-config config/ema9_trend_bracket_nobe_trail1.example.yaml \
+#     --source yahoo --combined-only --symbols AAPL,MSFT \
+#     --output artifacts/ema9_stop_manage.json \
+#     --report artifacts/ema9_stop_manage.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"
+  flatten_by: "15:55"
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Noon book B: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 10 shares, lock stop to +1% on first touch of entry×1.01, no take."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      exit: fixed_bracket
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      lock_trigger_pct: 1.0
+      lock_stop_pct: 1.0

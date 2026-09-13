@@ -255,6 +255,16 @@ def test_run_rule_books_prefixes_and_soxl_breakout():
     assert "15m ema9_trend (cutoff 12:00, flat 15:55, SMA20/2.0)" in [
         block["label"] for block in sma20_runs
     ]
+    fixed1 = load_config("config/ema9_trend_bracket_nobe_fixed1.example.yaml")
+    lock1 = load_config("config/ema9_trend_bracket_nobe_lock1.example.yaml")
+    trail1 = load_config("config/ema9_trend_bracket_nobe_trail1.example.yaml")
+    assert session_gate_suffix(fixed1) == " (cutoff 12:00, flat 15:55, entry 1.0%)"
+    assert session_gate_suffix(lock1) == " (cutoff 12:00, flat 15:55, lock +1.0%)"
+    assert session_gate_suffix(trail1) == " (cutoff 12:00, flat 15:55, trail 1.0%)"
+    lock_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, lock1)
+    assert any("stop_mode: lock_plus" in n and "entry×(1+1/100)" in n for n in lock_notes)
+    trail_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, trail1)
+    assert any("stop_mode: trail" in n and "peak_price_since_entry" in n for n in trail_notes)
     soxl = next(block for block in runs if block["label"] == f"15m ema9_trend SOXL{gated}")
     assert soxl["report"]["trades"] == 0
     assert any("Isolated SOXL" in n for n in soxl["report"]["notes"])

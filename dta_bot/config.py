@@ -64,7 +64,10 @@ EXIT_ALIASES = {
 
 
 BREAKEVEN_VALID_MODES = ("above_ema", "always")
-STOP_MODES = ("percent", "sma20")
+STOP_MODES = ("percent", "sma20", "entry_pct", "lock_plus", "trail")
+# entry_pct / lock_plus / trail rebase the protective stop to the fill
+# (next-bar open). percent stays on the signal-bar close (legacy).
+ENTRY_STOP_MODES = frozenset({"entry_pct", "lock_plus", "trail"})
 STOP_MODE_ALIASES = {
     "percent": "percent",
     "pct": "percent",
@@ -73,6 +76,18 @@ STOP_MODE_ALIASES = {
     "sma_20": "sma20",
     "sma": "sma20",
     "at_sma20": "sma20",
+    "entry_pct": "entry_pct",
+    "entry": "entry_pct",
+    "fixed_entry": "entry_pct",
+    "fixed_1pct": "entry_pct",
+    "lock_plus": "lock_plus",
+    "lock": "lock_plus",
+    "lock_1pct": "lock_plus",
+    "lock_plus_1pct": "lock_plus",
+    "trail": "trail",
+    "trail_pct": "trail",
+    "trail_1pct": "trail",
+    "trailing": "trail",
 }
 
 
@@ -87,8 +102,20 @@ class ActionSpec(BaseModel):
     # sma20 = protective stop at SMA(stop_sma_period) of the signal bar (fixed
     # level, not trailed). Longs skip when that SMA is at/above the signal close
     # or the next-bar fill. take_profit_pct is unchanged (omit for stop-only).
-    stop_mode: Literal["percent", "sma20"] = "percent"
+    # entry_pct = stop_loss_pct below the *fill* (next-bar open); never moves.
+    # lock_plus = entry_pct initial stop; first trade/touch of
+    #   entry * (1 + lock_trigger_pct/100) moves the stop to
+    #   entry * (1 + lock_stop_pct/100) and leaves it (live next bar).
+    # trail = stop = peak_price_since_entry * (1 - trail_pct/100), ratchets
+    #   up only; peak updates from each bar high after the stop check.
+    stop_mode: Literal["percent", "sma20", "entry_pct", "lock_plus", "trail"] = "percent"
     stop_sma_period: int = Field(default=20, ge=2)
+    # lock_plus: trigger and locked-stop distance in percent from entry.
+    # Omit to use stop_loss_pct (1.0 → first touch of entry*1.01, lock there).
+    lock_trigger_pct: Optional[float] = Field(default=None, gt=0)
+    lock_stop_pct: Optional[float] = Field(default=None, gt=0)
+    # trail: distance in percent from the peak (omit to use stop_loss_pct).
+    trail_pct: Optional[float] = Field(default=None, gt=0)
     # fixed_bracket = optional % stop/take. ema_invalid = hold until a
     # signal-timeframe close is on the wrong side of EMA (long: close < EMA).
     # Optional stop_loss_pct is then a catastrophic stop only; take is ignored.
@@ -142,7 +169,9 @@ class ActionSpec(BaseModel):
             return "percent"
         key = str(v).strip().lower().replace("-", "_").replace(" ", "_")
         if key not in STOP_MODE_ALIASES:
-            raise ValueError("stop_mode must be 'sma20' or 'percent'")
+            raise ValueError(
+                "stop_mode must be 'percent', 'sma20', 'entry_pct', 'lock_plus', or 'trail'"
+            )
         return STOP_MODE_ALIASES[key]
 
     @model_validator(mode="after")
@@ -150,6 +179,21 @@ class ActionSpec(BaseModel):
         if self.type in {"buy", "sell"} and self.size is None:
             raise ValueError("buy/sell actions require size (shares, percent_equity, or risk_pct)")
         return self
+
+    def resolved_lock_trigger_pct(self) -> Optional[float]:
+        if self.lock_trigger_pct is not None:
+            return self.lock_trigger_pct
+        return self.stop_loss_pct
+
+    def resolved_lock_stop_pct(self) -> Optional[float]:
+        if self.lock_stop_pct is not None:
+            return self.lock_stop_pct
+        return self.stop_loss_pct
+
+    def resolved_trail_pct(self) -> Optional[float]:
+        if self.trail_pct is not None:
+            return self.trail_pct
+        return self.stop_loss_pct
 
 
 class PatternCond(BaseModel):
@@ -668,6 +712,9 @@ def _parse_action(raw: dict[str, Any]) -> ActionSpec:
         take_profit_pct=raw.get("take_profit_pct"),
         stop_mode=raw.get("stop_mode", "percent"),
         stop_sma_period=raw.get("stop_sma_period", raw.get("sma_period", raw.get("exit_sma_period", 20))),
+        lock_trigger_pct=raw.get("lock_trigger_pct"),
+        lock_stop_pct=raw.get("lock_stop_pct"),
+        trail_pct=raw.get("trail_pct"),
         exit=raw.get("exit", "fixed_bracket"),
         exit_ema_period=raw.get("exit_ema_period", raw.get("ema_period", 9)),
         exit_sma_period=raw.get("exit_sma_period", raw.get("sma_period", 20)),

@@ -319,10 +319,52 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
             f"action.exit: {action.exit}.{take_txt} "
             "Set stop_mode: percent to restore stop_loss_pct from the signal-bar close."
         )
+    manage_rules = [
+        rule
+        for rule in (config.rules if config is not None else [])
+        if rule.action.type != "close" and rule.action.stop_mode in {"entry_pct", "lock_plus", "trail"}
+    ]
+    if manage_rules:
+        action = manage_rules[0].action
+        stop_pct = action.stop_loss_pct
+        stop_txt = f"{stop_pct:g}%" if stop_pct is not None else "n/a"
+        take_txt = (
+            f" Optional take_profit_pct {action.take_profit_pct:g}% is still from the signal-bar close."
+            if action.take_profit_pct
+            else " take_profit_pct is omitted (stop variant or session_flatten only; no % take)."
+        )
+        if action.stop_mode == "entry_pct":
+            return (
+                f"Stop is a fixed {stop_txt} below the *fill* (next-bar open; "
+                f"stop_mode: entry_pct). It never moves.{take_txt} "
+                "percent still uses stop_loss_pct from the signal-bar close."
+            )
+        if action.stop_mode == "lock_plus":
+            trig = action.resolved_lock_trigger_pct()
+            lock = action.resolved_lock_stop_pct()
+            return (
+                f"Lock-plus stop (stop_mode: lock_plus): initial stop is {stop_txt} below "
+                f"the fill. First trade/touch of entry×(1+{(trig or 0):g}/100) "
+                f"(long: bar high ≥ that print) moves the stop to "
+                f"entry×(1+{(lock or 0):g}/100) and leaves it. The locked stop is live "
+                f"from the next bar; same-bar pullback after the tag uses the initial stop. "
+                f"A later hit of the locked stop is lock_stop.{take_txt}"
+            )
+        trail = action.resolved_trail_pct()
+        return (
+            f"Trailing stop (stop_mode: trail): stop is always "
+            f"peak_price_since_entry × (1−{(trail or 0):g}/100), ratcheting up only. "
+            f"Initial stop starts at fill×(1−{(trail or 0):g}/100) (peak starts at entry). "
+            "Peak updates from each bar's high after the current-stop check, so a new "
+            f"trail is live from the next bar. Stop hits are trail_stop.{take_txt}"
+        )
     return (
         "Stop/take are computed from the signal-bar close (same as live bracket_prices; "
         "action.exit: fixed_bracket, default; stop_mode: percent). Set action.stop_mode: sma20 "
-        "to rest the protective stop at SMA(20) of the signal bar. Set action.exit: ma_cross "
+        "to rest the protective stop at SMA(20) of the signal bar. Set action.stop_mode: entry_pct "
+        "for a fixed percent stop from the fill. Set action.stop_mode: lock_plus to lock the stop "
+        "to +stop_loss_pct after the first touch of that print. Set action.stop_mode: trail to "
+        "ratchet the stop to peak×(1−stop_loss_pct/100). Set action.exit: ma_cross "
         "to flatten at the next bar open after EMA crosses under SMA. Set action.exit: ema_invalid "
         "to hold until a signal-timeframe close is on the wrong side of EMA (long: close < EMA; "
         "exit at that close)."
@@ -442,6 +484,20 @@ def _fixed_bracket_tag(config: BotConfig) -> Optional[str]:
             return f"SMA{period} stop"
         return f"SMA{period}/{take:.1f}"
     stop = action.stop_loss_pct
+    if action.stop_mode == "entry_pct":
+        if stop is None:
+            return "entry stop"
+        return f"entry {stop:.1f}%"
+    if action.stop_mode == "lock_plus":
+        trig = action.resolved_lock_trigger_pct() or stop
+        if trig is None:
+            return "lock+"
+        return f"lock +{trig:.1f}%"
+    if action.stop_mode == "trail":
+        trail = action.resolved_trail_pct() or stop
+        if trail is None:
+            return "trail"
+        return f"trail {trail:.1f}%"
     if stop is None:
         return None
     if take is None:
@@ -815,6 +871,8 @@ def exit_mix(report: dict[str, Any]) -> str:
     ma_x = int(reasons.get("ma_cross") or 0)
     sess = int(reasons.get("session_flatten") or 0)
     be_stop = int(reasons.get("breakeven_stop") or 0)
+    lock_stop = int(reasons.get("lock_stop") or 0)
+    trail_stop = int(reasons.get("trail_stop") or 0)
     parts: list[str] = []
     if ema_inv:
         parts.append(f"ema_invalid {ema_inv}")
@@ -823,6 +881,10 @@ def exit_mix(report: dict[str, Any]) -> str:
     parts.extend([f"take {take}", f"stop {stop}"])
     if be_stop:
         parts.append(f"breakeven_stop {be_stop}")
+    if lock_stop:
+        parts.append(f"lock_stop {lock_stop}")
+    if trail_stop:
+        parts.append(f"trail_stop {trail_stop}")
     if sess:
         parts.append(f"session_flatten {sess}")
     if eod:
@@ -839,6 +901,8 @@ def exit_mix(report: dict[str, Any]) -> str:
             "ma_cross",
             "session_flatten",
             "breakeven_stop",
+            "lock_stop",
+            "trail_stop",
         }
         and count
     ]
@@ -869,6 +933,8 @@ def format_side_by_side_table(columns: list[tuple[str, dict[str, Any]]]) -> list
         ("Avg loss", lambda r: _fmt_money(r.get("avg_loss"))),
         ("Takes vs stops", lambda r: exit_mix(r)),
         ("BE armed", lambda r: str(int(r.get("breakeven_armed") or 0))),
+        ("Lock armed", lambda r: str(int(r.get("lock_armed") or 0))),
+        ("Trail ratcheted", lambda r: str(int(r.get("trail_ratcheted") or 0))),
     ]
     for label, fmt in rows:
         lines.append(f"| {label} | {cells(fmt)} |")

@@ -277,6 +277,54 @@ def test_ema9_trend_sma20_stop_configs_load():
     assert risk_notake.rules[0].action.take_profit_pct is None
 
 
+def test_ema9_trend_stop_manage_configs_load():
+    fixed = load_config("config/ema9_trend_bracket_nobe_fixed1.example.yaml")
+    lock = load_config("config/ema9_trend_bracket_nobe_lock1.example.yaml")
+    trail = load_config("config/ema9_trend_bracket_nobe_trail1.example.yaml")
+    assert fixed.rules[0].action.stop_mode == "entry_pct"
+    assert fixed.rules[0].action.stop_loss_pct == 1.0
+    assert fixed.rules[0].action.take_profit_pct is None
+    assert lock.rules[0].action.stop_mode == "lock_plus"
+    assert lock.rules[0].action.resolved_lock_trigger_pct() == 1.0
+    assert lock.rules[0].action.resolved_lock_stop_pct() == 1.0
+    assert lock.rules[0].action.take_profit_pct is None
+    assert trail.rules[0].action.stop_mode == "trail"
+    assert trail.rules[0].action.resolved_trail_pct() == 1.0
+    assert trail.rules[0].action.take_profit_pct is None
+    for cfg in (fixed, lock, trail):
+        assert cfg.settings.entry_cutoff == "12:00"
+        assert cfg.settings.flatten_by == "15:55"
+        assert cfg.rules[0].action.exit == "fixed_bracket"
+        assert cfg.rules[0].action.size and cfg.rules[0].action.size.type == "shares"
+        assert cfg.rules[0].action.size.value == 10
+        rsi = find_rsi_condition(cfg.rules[0].when)
+        assert rsi is not None and rsi.below == 70
+    risk_fixed = load_config("config/ema9_trend_risk_nobe_fixed1.example.yaml")
+    risk_lock = load_config("config/ema9_trend_risk_nobe_lock1.example.yaml")
+    risk_trail = load_config("config/ema9_trend_risk_nobe_trail1.example.yaml")
+    for cfg, mode in (
+        (risk_fixed, "entry_pct"),
+        (risk_lock, "lock_plus"),
+        (risk_trail, "trail"),
+    ):
+        assert cfg.rules[0].action.stop_mode == mode
+        assert cfg.rules[0].action.size is not None
+        assert cfg.rules[0].action.size.type == "risk_pct"
+        assert cfg.rules[0].action.size.equity_risk == 0.01
+        assert cfg.rules[0].action.size.stop_pct == 1.0
+        assert cfg.rules[0].action.stop_loss_pct == 1.0
+        assert cfg.rules[0].action.take_profit_pct is None
+
+
+def test_stop_mode_aliases_and_defaults():
+    lock = load_config("config/ema9_trend_bracket_nobe_lock1.example.yaml")
+    # Explicit lock fields resolve to 1.0; omitting them falls back to stop_loss_pct.
+    assert lock.rules[0].action.lock_trigger_pct == 1.0
+    bare = lock.rules[0].action.model_copy(update={"lock_trigger_pct": None, "lock_stop_pct": None})
+    assert bare.resolved_lock_trigger_pct() == 1.0
+    assert bare.resolved_lock_stop_pct() == 1.0
+
+
 def test_stop_mode_unknown_rejected(tmp_path: Path):
     path = tmp_path / "bad_stop.yaml"
     path.write_text(
@@ -286,7 +334,7 @@ universe: [AAPL]
 rules:
   - id: x
     when: {ema_cross: {period: 9, direction: bullish}}
-    action: {type: buy, size: {type: shares, value: 1}, stop_mode: trail}
+    action: {type: buy, size: {type: shares, value: 1}, stop_mode: foobar}
 """,
         encoding="utf-8",
     )
@@ -349,6 +397,11 @@ def test_cli_validate_timeframe_override(capsys):
     sma_out = capsys.readouterr().out
     assert "stop_mode=sma20" in sma_out
     assert "stop_sma_period=20" in sma_out
+    lock_rc = main(["validate", "--config", "config/ema9_trend_bracket_nobe_lock1.example.yaml"])
+    assert lock_rc == 0
+    lock_out = capsys.readouterr().out
+    assert "stop_mode=lock_plus" in lock_out
+    assert "lock_trigger_pct=1" in lock_out
 
 
 def test_ema_cross_yaml_parses_and_does_not_steal_level_ema():
