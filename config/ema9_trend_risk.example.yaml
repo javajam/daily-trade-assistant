@@ -2,6 +2,9 @@
 #
 # Locked product:
 #   - 15m EMA(9) crosses over SMA(20) (long only)
+#   - optional RSI filter off by default; enable with
+#       rsi: { period: 14, below: 70 }
+#     beside ema_sma_cross (see config/ema9_trend_risk_rsi.example.yaml)
 #   - exit: ma_cross — flatten at next bar open when EMA(9) crosses under SMA(20)
 #   - stop: 1.5% initial only (break-even off; no take-profit)
 #   - universe: AAPL + MSFT (no SOXL)
@@ -49,6 +52,7 @@ rules:
         sma_period: 20
         timeframe: 15m
         direction: bullish
+      # rsi: { period: 14, below: 70 }   # optional; omit = no RSI filter
     action:
       type: buy
       size:

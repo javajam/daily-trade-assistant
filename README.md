@@ -220,7 +220,7 @@ rules:
 2. **Exit** — EMA(9) crosses **under** SMA(20) (`action.exit: ma_cross`). Flatten at the **next bar open** (same fill as entries). Same-bar 1.5% stop still wins. If the cross bar is also the flatten bar, `session_flatten` at that close wins.
 3. **Stop** — fixed **1.5%** initial stop only. Break-even is **off** (`breakeven_after_bars` omitted / 0).
 4. **No take-profit** — `take_profit_pct` is omitted; percent take is ignored when `exit` is `ma_cross`.
-5. No RSI filter and no “price crosses EMA9 while above SMA20” — that old noon book is `config/ema9_trend_bracket_nobe.example.yaml`.
+5. **Optional RSI filter** — omit `rsi` (default / Book A) or add a sibling of `ema_sma_cross`: `rsi: { period: 14, below: 70 }` (Book B; same threshold as the prior noon price-cross / engulfing filter). Nested `ema_sma_cross.rsi` is also accepted. Filtered 10-share book: `config/ema9_trend_bracket_rsi.example.yaml`. RSI14 < 60: `config/ema9_trend_bracket_rsi60.example.yaml`. The old “price crosses EMA9 while above SMA20 and RSI < 70” noon book is `config/ema9_trend_bracket_nobe.example.yaml`.
 
 YAML fields read as `ema_period: 9`, `sma_period: 20`, `exit: ma_cross`. Paper / `dry_run` defaults; no live. 60-minute wall-clock cooldown.
 
@@ -238,7 +238,7 @@ python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml --source
   --output artifacts/ema9_aug2026_risk.json --report artifacts/ema9_aug2026_risk.md
 ```
 
-The 10-share control on the same window is `config/ema9_trend_bracket.example.yaml`.
+The 10-share control on the same window is `config/ema9_trend_bracket.example.yaml`. The 1% book with the RSI14 < 70 filter is `config/ema9_trend_risk_rsi.example.yaml`.
 
 Bar size is `settings.timeframe` (default **15m**). The same rules on 5-minute bars (every indicator on 5m; cooldown still 60 minutes):
 
@@ -257,9 +257,9 @@ python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yaho
 
 Copy to `config/ema9_trend.yaml` or `config/ema9_trend_5m.yaml` (gitignored) to paper the pair-cross book.
 
-Current product on the Yahoo window 2026-06-17 → 2026-09-11 (15m, AAPL/MSFT, 12:00 / 15:55, $100k start): **EMA(9)/SMA(20) pair-cross 10-share 44 trades, 54.55%, $349.33**, max DD $131.87. Exit P&L: **ma_cross 28 ($-84.50)**, **session_flatten 14 ($451.13)**, stop 2 ($-17.29). Prior noon price-cross book (old entry, 1.5/3.0, no BE) **reproduced** on the same tape: **50 trades, 62.00%, $453.00**, max DD $207.70, 41 of 50 `session_flatten`. Writeup: `artifacts/ema9_ma_cross.md`.
+Current product on the Yahoo window 2026-06-17 → 2026-09-11 (15m, AAPL/MSFT, 12:00 / 15:55, $100k start): **EMA(9)/SMA(20) pair-cross 10-share (no RSI) 44 trades, 54.55%, $349.33**, max DD $131.87. Exit P&L: **ma_cross 28 ($-84.50)**, **session_flatten 14 ($451.13)**, stop 2 ($-17.29). Prior noon price-cross book (old entry, 1.5/3.0, no BE) **reproduced** on the same tape: **50 trades, 62.00%, $453.00**, max DD $207.70, 41 of 50 `session_flatten`. Writeup: `artifacts/ema9_ma_cross.md`. RSI14 < 70 / RSI14 < 60 ablation: `artifacts/ema9_ma_cross_rsi.md`.
 
-August 2026 only (2026-08-01 → 2026-08-31 RTH, same Yahoo 15m tape, AAPL/MSFT, pair-cross + 1.5% stop, no TP/BE, $100k start) **with 12:00 / 15:55 session gates**: **1% equity-risk 12 trades, 66.67%, $904.72**, max DD $1,707.30. Exit P&L: **ma_cross 8 ($-146.21)**, **session_flatten 4 ($1,050.93)**. Sizing still works (131–219 shares; 3 `insufficient_cash` skips; max concurrent 1). Prior August 1% writeups used the old price-cross entry and are not re-run: with one-bar BE **16 trades, 31.25%, $3,188.15**; without BE **15 trades, 73.33%, $3,194.05**. Writeup: `artifacts/ema9_aug2026_risk.md`.
+August 2026 only (2026-08-01 → 2026-08-31 RTH, same Yahoo 15m tape, AAPL/MSFT, pair-cross + 1.5% stop, no TP/BE, $100k start) **with 12:00 / 15:55 session gates**: **1% equity-risk (no RSI) 12 trades, 66.67%, $904.72**, max DD $1,707.30. Exit P&L: **ma_cross 8 ($-146.21)**, **session_flatten 4 ($1,050.93)**. Sizing still works (131–219 shares; 3 `insufficient_cash` skips; max concurrent 1). Prior August 1% writeups used the old price-cross entry and are not re-run: with one-bar BE **16 trades, 31.25%, $3,188.15**; without BE **15 trades, 73.33%, $3,194.05**. Writeup: `artifacts/ema9_aug2026_risk.md`. RSI14 < 70 on that August 1% book: `artifacts/ema9_aug2026_risk_rsi.md`.
 
 On the same Yahoo window, older **EMA-invalidation** isolated books were: **15m AAPL/MSFT/SOXL 240 trades, 36.25%, $626.64**, max DD $850.25; **5m AAPL/MSFT/SOXL 498 trades, 30.72%, $-312.80**, max DD $722.18. Isolated SOXL: 15m 86 trades, 29.07%, $-835.05; 5m 170 trades, 28.24%, $-707.46. AAPL/MSFT only (same exit): 15m 154 / 40.26% / $1,461.69; 5m 328 / 32.01% / $394.66. Writeup: `artifacts/ema9_ema_invalid_5m_vs_15m.md`.
 

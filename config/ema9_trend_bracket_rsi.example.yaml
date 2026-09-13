@@ -1,0 +1,59 @@
+# 9/20 MA-cross — 10-share book with RSI14 < 70 entry filter (Book B).
+#
+# Same locked product as ema9_trend_bracket.example.yaml except the entry
+# also requires RSI(14) on the signal 15m bar to be below 70 (same threshold
+# as the prior noon price-cross / engulfing filter). YAML toggle:
+#
+#   rsi: { period: 14, below: 70 }
+#
+# beside ema_sma_cross. Omit that key (Book A) to restore the unfiltered
+# pair-cross. Tightened sibling: config/ema9_trend_bracket_rsi60.example.yaml.
+#
+#   python -m dta_bot backtest --config config/ema9_trend_bracket.example.yaml \
+#     --compare-config config/ema9_trend_bracket_rsi.example.yaml \
+#     --source yahoo --combined-only --symbols AAPL,MSFT \
+#     --output artifacts/ema9_ma_cross_rsi.json \
+#     --report artifacts/ema9_ma_cross_rsi.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"   # null / off disables
+  flatten_by: "15:55"     # null / off disables
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "15m EMA(9) cross over SMA(20) only when RSI14 < 70. 10 shares. Flatten next open on EMA(9) cross under SMA(20). 1.5% stop; no take-profit; no break-even."
+    when:
+      ema_sma_cross:
+        ema_period: 9
+        sma_period: 20
+        timeframe: 15m
+        direction: bullish
+      rsi: { period: 14, below: 70 }
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      exit: ma_cross
+      ema_period: 9
+      sma_period: 20
+      stop_loss_pct: 1.5
