@@ -1,6 +1,6 @@
-# 9 EMA trend — 10-share 1.5/3.0 bracket book with session gates OFF.
-# Same entry/exit/size as ema9_trend_bracket.example.yaml so the overnight
-# (prior) book can be compared to the gated product on the same tape.
+# 9 EMA trend — 10-share 1.5/3.0 bracket book with the prior 13:00 entry cutoff.
+# Same flatten_by 15:55 as the current product. Used only as a comparison
+# control against overnight holds and the 15:15 cutoff default.
 #
 #   python -m dta_bot backtest --config config/ema9_trend_bracket_overnight.example.yaml \
 #     --compare-config config/ema9_trend_bracket_1300.example.yaml \
@@ -21,8 +21,8 @@ settings:
   lookback_bars: 80
   timeframe: 15m
   session_timezone: America/New_York
-  entry_cutoff: null
-  flatten_by: null
+  entry_cutoff: "13:00"
+  flatten_by: "15:55"
 
 universe:
   - AAPL
@@ -33,7 +33,7 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "Same 15m EMA9 trend + 1.5/3.0 brackets as the gated book, overnight holds allowed."
+    notes: "Same 15m EMA9 trend + 1.5/3.0 brackets as the gated book, 13:00 ET cutoff."
     when:
       all:
         - ema_cross:

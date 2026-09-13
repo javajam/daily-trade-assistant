@@ -169,7 +169,7 @@ settings:
   data_feed: iex
   lookback_bars: 80
   session_timezone: America/New_York   # optional session clock
-  entry_cutoff: "13:00"                # skip fills at/after this clock; null = off
+  entry_cutoff: "15:15"                # skip fills at/after this clock; null = off
   flatten_by: "15:55"                  # force-flat at flatten-bar close; null = off
 
 universe: [AAPL, MSFT, SPY]  # default symbols; a rule may override
@@ -215,7 +215,7 @@ Default exit is **`action.exit: ema_invalid`**: stay in the long until a signal-
 
 **Session gates** (America/New_York, on in the ema9 example configs):
 
-- `entry_cutoff: "13:00"` — skip a signal when the next-bar **fill** (bar open) would be at/after 1:00 PM ET.
+- `entry_cutoff: "15:15"` — skip a signal when the next-bar **fill** (bar open) would be at/after 3:15 PM ET. Prior gated books used `13:00` (`config/ema9_trend_bracket_1300.example.yaml`).
 - `flatten_by: "15:55"` — force-flat at the close of the bar that contains 3:55 PM ET. On **15m** RTH bars opening `:00,:15,:30,:45` that is the **15:45 ET bar close** (last regular 15m bar before 16:00, labeled as the end-of-day flatten aligned with “by 15:55”). On **5m** that is the **15:50 ET bar close** (last 5m bar that completes at/before 15:55). Stop/take/EMA-invalid on that bar still win if they hit first. Exit reason: `session_flatten`.
 - Set either knob to `null` / `off` to disable it (overnight control: `config/ema9_trend_bracket_overnight.example.yaml`).
 
@@ -250,9 +250,9 @@ Copy to `config/ema9_trend.yaml` or `config/ema9_trend_5m.yaml` (gitignored) and
 
 On the Yahoo window 2026-06-17 → 2026-09-11, **EMA-invalidation** isolated books were: **15m AAPL/MSFT/SOXL 240 trades, 36.25%, $626.64**, max DD $850.25; **5m AAPL/MSFT/SOXL 498 trades, 30.72%, $-312.80**, max DD $722.18. Isolated SOXL: 15m 86 trades, 29.07%, $-835.05; 5m 170 trades, 28.24%, $-707.46. AAPL/MSFT only (same exit): 15m 154 / 40.26% / $1,461.69; 5m 328 / 32.01% / $394.66. Writeup: `artifacts/ema9_ema_invalid_5m_vs_15m.md`.
 
-August 2026 only (2026-08-01 → 2026-08-31 RTH, same Yahoo 15m tape, AAPL/MSFT, `exit: fixed_bracket` 1.5/3.0, $100k start) **with session gates**: **1% equity-risk 17 trades, 70.59%, $3,022.49**, max DD $1,663.57, **16 of 17 exits `session_flatten`**. Prior overnight August risk book (gates off): 7 trades, 57.14%, $5,502.59, max DD $3,282.83. Writeup: `artifacts/ema9_aug2026_risk.md`.
+August 2026 only (2026-08-01 → 2026-08-31 RTH, same Yahoo 15m tape, AAPL/MSFT, `exit: fixed_bracket` 1.5/3.0, $100k start) **with 15:15 / 15:55 session gates**: **1% equity-risk 19 trades, 68.42%, $2,595.50**, max DD $1,668.34, **18 of 19 exits `session_flatten`**, 4 `entry_cutoff` skips. Prior 13:00 gated August: 17 trades, 70.59%, $3,022.49, max DD $1,663.57. Prior overnight August (gates off): 7 trades, 57.14%, $5,502.59, max DD $3,282.83. Writeup: `artifacts/ema9_aug2026_risk.md`.
 
-Full-window **15m 10-share** AAPL/MSFT (1.5/3.0) **WITH session gates vs WITHOUT** (same tape 2026-06-17 → 2026-09-11): overnight **44 trades, 50.00%, $1,404.89**, max DD $407.70 (reproduced); gated **64 trades, 60.94%, $419.25**, max DD $298.92, **54 of 64 `session_flatten`**, 33 `entry_cutoff` skips. Writeup: `artifacts/ema9_session_gates.md`.
+Full-window **15m 10-share** AAPL/MSFT (1.5/3.0) on the same tape 2026-06-17 → 2026-09-11: overnight **44 trades, 50.00%, $1,404.89**, max DD $407.70 (reproduced); 13:00 / 15:55 **64 trades, 60.94%, $419.25**, max DD $298.92, **54 of 64 `session_flatten`**, 33 `entry_cutoff` skips (reproduced); **15:15 / 15:55 83 trades, 55.42%, $380.60**, max DD $298.92, **72 of 83 `session_flatten`**, 8 `entry_cutoff` skips. Writeup: `artifacts/ema9_session_gates.md`.
 
 Prior **fixed-bracket** AAPL/MSFT books (1.5/3.0, overnight) on the same tape: **15m 44 trades, 50.00%, $1,404.89**; **5m 56 trades, 48.21%, $1,305.23**. Writeups: `artifacts/ema9_vs_engulfing.md`, `artifacts/ema9_5m_vs_15m.md`. Yahoo 5m/15m history is still documented as a ~60-day cap.
 

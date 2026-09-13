@@ -19,3 +19,5 @@ config/ema9_trend.yaml
 config/ema9_trend_5m.yaml
 config/ema9_trend_risk.yaml
 config/ema9_trend_bracket.yaml
+config/ema9_trend_bracket_overnight.yaml
+config/ema9_trend_bracket_1300.yaml

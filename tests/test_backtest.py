@@ -400,8 +400,8 @@ def test_trade_window_blocks_entries_before_start():
     assert result.report.trades == 0
 
 
-def _session_cfg(*, gates: bool = True, tf: str = "15m") -> BotConfig:
-    settings = dict(entry_cutoff="13:00", flatten_by="15:55") if gates else dict(
+def _session_cfg(*, gates: bool = True, cutoff: str = "15:15", tf: str = "15m") -> BotConfig:
+    settings = dict(entry_cutoff=cutoff, flatten_by="15:55") if gates else dict(
         entry_cutoff=None, flatten_by=None
     )
     return _cfg(_buy_rule(cooldown_minutes=0), **settings)
@@ -414,7 +414,9 @@ def test_entry_cutoff_skips_fill_at_or_after_1300_et():
         _et_bar(12, 45, 8.1, 11.0, 8.0, 10.4),
         _et_bar(13, 0, 10.4, 10.5, 10.3, 10.45),
     ]
-    result = run_backtest(_session_cfg(), {("AAPL", "15Min"): bars}, starting_equity=100_000)
+    result = run_backtest(
+        _session_cfg(cutoff="13:00"), {("AAPL", "15Min"): bars}, starting_equity=100_000
+    )
     assert result.report.signals == 1
     assert result.signals[0].accepted is False
     assert result.signals[0].skip_reason == "entry_cutoff"
@@ -430,11 +432,43 @@ def test_entry_cutoff_allows_fill_before_1300_et():
         _et_bar(12, 45, 10.4, 10.72, 10.3, 10.5),
         _et_bar(13, 0, 10.5, 10.6, 10.4, 10.55),
     ]
-    result = run_backtest(_session_cfg(), {("AAPL", "15Min"): bars}, starting_equity=100_000)
+    result = run_backtest(
+        _session_cfg(cutoff="13:00"), {("AAPL", "15Min"): bars}, starting_equity=100_000
+    )
     assert result.report.signals == 1
     assert result.signals[0].accepted is True
     assert result.report.trades == 1
     assert result.trades[0].entry_time == datetime(2026, 9, 11, 12, 45, tzinfo=NY)
+
+
+def test_entry_cutoff_skips_fill_at_or_after_1515_et():
+    # Engulfing completes on the 15:00 ET bar (closes 15:15); next open is 15:15.
+    bars = [
+        _et_bar(14, 45, 10.0, 10.2, 8.0, 8.2),
+        _et_bar(15, 0, 8.1, 11.0, 8.0, 10.4),
+        _et_bar(15, 15, 10.4, 10.5, 10.3, 10.45),
+    ]
+    result = run_backtest(_session_cfg(), {("AAPL", "15Min"): bars}, starting_equity=100_000)
+    assert result.report.signals == 1
+    assert result.signals[0].accepted is False
+    assert result.signals[0].skip_reason == "entry_cutoff"
+    assert result.report.trades == 0
+    assert result.report.skip_reasons == {"entry_cutoff": 1}
+
+
+def test_entry_cutoff_allows_fill_before_1515_et():
+    # Engulfing completes on the 14:45 ET bar (closes 15:00); fill at 15:00 open.
+    bars = [
+        _et_bar(14, 30, 10.0, 10.2, 8.0, 8.2),
+        _et_bar(14, 45, 8.1, 11.0, 8.0, 10.4),
+        _et_bar(15, 0, 10.4, 10.72, 10.3, 10.5),
+        _et_bar(15, 15, 10.5, 10.6, 10.4, 10.55),
+    ]
+    result = run_backtest(_session_cfg(), {("AAPL", "15Min"): bars}, starting_equity=100_000)
+    assert result.report.signals == 1
+    assert result.signals[0].accepted is True
+    assert result.report.trades == 1
+    assert result.trades[0].entry_time == datetime(2026, 9, 11, 15, 0, tzinfo=NY)
 
 
 def test_flatten_by_closes_15m_at_1545_bar_close():

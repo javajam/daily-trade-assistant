@@ -1,37 +1,40 @@
-# ema9_trend session gates vs overnight (15m, 10-share, AAPL/MSFT)
+# ema9_trend session gates: overnight vs 13:00 vs 15:15 (15m, 10-share, AAPL/MSFT)
 
-- Generated (UTC): 2026-09-13T17:14:20.686207Z
+- Generated (UTC): 2026-09-13T17:26:17.122432Z
 - Tape: Yahoo Finance v8 chart (unadjusted regular-session OHLC)
 - Window: 2026-06-17T13:30:00Z → 2026-09-11T19:45:00Z (~86 calendar days)
 - Bars: AAPL 15m 1560; MSFT 15m 1560
 - Starting equity: $100,000.00
 - Friction: commission=$0.00/fill, slippage=0.0%
 - Sizing: 10 shares; stop 1.5%; take 3.0%; cooldown 60 minutes
-- WITHOUT: `config/ema9_trend_bracket_overnight.example.yaml` (`entry_cutoff` / `flatten_by` null)
-- WITH: `config/ema9_trend_bracket.example.yaml` (`entry_cutoff: "13:00"`, `flatten_by: "15:55"`, America/New_York)
-- Replay: `python -m dta_bot backtest --config config/ema9_trend_bracket_overnight.example.yaml --compare-config config/ema9_trend_bracket.example.yaml --source yahoo --symbols AAPL,MSFT --output artifacts/ema9_session_gates.json --report artifacts/ema9_session_gates.md`
+- Overnight: `config/ema9_trend_bracket_overnight.example.yaml` (`entry_cutoff` / `flatten_by` null)
+- 13:00 control: `config/ema9_trend_bracket_1300.example.yaml` (`entry_cutoff: "13:00"`, `flatten_by: "15:55"`)
+- 15:15 default: `config/ema9_trend_bracket.example.yaml` (`entry_cutoff: "15:15"`, `flatten_by: "15:55"`)
+- Replay: `python -m dta_bot backtest --config config/ema9_trend_bracket_overnight.example.yaml --compare-config config/ema9_trend_bracket_1300.example.yaml --compare-config config/ema9_trend_bracket.example.yaml --source yahoo --combined-only --symbols AAPL,MSFT --output artifacts/ema9_session_gates.json --report artifacts/ema9_session_gates.md`
 
 **15m flatten rule used here:** force-flat at the **15:45 ET bar close** (bar covers 15:45–16:00; last regular 15m RTH bar). That close prints as 16:00 ET and is the time-exit aligned with `flatten_by: "15:55"`. Exit reason: `session_flatten`. Stop/take on that bar still win if they hit first.
 
 The overnight book reproduced the prior 10-share fixed-bracket tape exactly: **44 trades, 50.00%, $1,404.89**, max DD $407.70, exits stop 22 / take 21 / eod 1.
 
-Session gates on the same tape: **64 trades, 60.94%, $419.25**, max DD $298.92. Same 154 EMA9-cross signals; **33 skipped as `entry_cutoff`** (fill at/after 13:00 ET), 57 skipped as already-in-position. **54 of 64 closed trades were `session_flatten` time-exits** (9 stop, 1 take, 0 leftover eod). Flattening same-day frees the symbol for the next session, which is why the gated book has more trades and a higher win rate but much smaller average win/loss (overnight 3% takes are cut off).
+The 13:00 / 15:55 book reproduced the prior gated tape exactly: **64 trades, 60.94%, $419.25**, max DD $298.92. Same 154 EMA9-cross signals; **33 skipped as `entry_cutoff`**, 57 skipped as already-in-position. **54 of 64 closed trades were `session_flatten`** (9 stop, 1 take).
+
+Moving the cutoff to 15:15 on the same flatten clock: **83 trades, 55.42%, $380.60**, max DD $298.92. Same 154 signals; **8 skipped as `entry_cutoff`**, 63 skipped as already-in-position. **72 of 83 closed trades were `session_flatten`** (10 stop, 1 take). Later fills add same-day time-exits; they raise trade count and cut overnight 3% takes the same way the 13:00 book did, without beating the 13:00 P&L on this tape.
 
 ## Side-by-side
 
-| | Overnight (gates off) | Session-gated (13:00 / 15:55) |
-| --- | ---: | ---: |
-| Signals | 154 (AAPL 77, MSFT 77) | 154 (AAPL 77, MSFT 77) |
-| Skips | already_in_position 110 | already_in_position 57, **entry_cutoff 33** |
-| Trades | 44 (AAPL 21, MSFT 23) | 64 (AAPL 30, MSFT 34) |
-| Wins / losses / scratch | 22 / 21 / 1 | 39 / 24 / 1 |
-| **Win rate** | **50.00%** | **60.94%** |
-| **Total P&L** | **$1,404.89** (1.405%) | **$419.25** (0.419%) |
-| Avg win | $123.61 | $29.02 |
-| Avg loss | $-62.59 | $-29.69 |
-| **Max drawdown** | **$407.70** (0.40%) | **$298.92** (0.30%) |
-| Ending equity | $101,404.89 | $100,419.25 |
-| Exit mix | stop 22, take 21, eod 1 | **session_flatten 54**, stop 9, take 1 |
+| | Overnight (gates off) | Session-gated (13:00 / 15:55) | Session-gated (15:15 / 15:55) |
+| --- | ---: | ---: | ---: |
+| Signals | 154 (AAPL 77, MSFT 77) | 154 (AAPL 77, MSFT 77) | 154 (AAPL 77, MSFT 77) |
+| Skips | already_in_position 110 | already_in_position 57, **entry_cutoff 33** | already_in_position 63, **entry_cutoff 8** |
+| Trades | 44 (AAPL 21, MSFT 23) | 64 (AAPL 30, MSFT 34) | 83 (AAPL 39, MSFT 44) |
+| Wins / losses / scratch | 22 / 21 / 1 | 39 / 24 / 1 | 46 / 36 / 1 |
+| **Win rate** | **50.00%** | **60.94%** | **55.42%** |
+| **Total P&L** | **$1,404.89** (1.405%) | **$419.25** (0.419%) | **$380.60** (0.381%) |
+| Avg win | $123.61 | $29.02 | $28.13 |
+| Avg loss | $-62.59 | $-29.69 | $-25.37 |
+| **Max drawdown** | **$407.70** (0.40%) | **$298.92** (0.30%) | **$298.92** (0.30%) |
+| Ending equity | $101,404.89 | $100,419.25 | $100,380.60 |
+| Exit mix | stop 22, take 21, eod 1 | **session_flatten 54**, stop 9, take 1 | **session_flatten 72**, stop 10, take 1 |
 
 Figures are engine totals, not annualized. One ~86-day Yahoo 15m window.
 
@@ -84,7 +87,7 @@ Figures are engine totals, not annualized. One ~86-day Yahoo 15m window.
 | 43 | AAPL | 10 | 2026-09-10 12:30 ET @ 321.86 | 2026-09-11 09:45 ET @ 331.56 | take | $97.07 |
 | 44 | MSFT | 10 | 2026-09-08 15:15 ET @ 492.19 | 2026-09-11 16:00 ET @ 495.58 | eod | $33.90 |
 
-### Session-gated trades
+### Session-gated trades (13:00 / 15:55)
 
 | # | Symbol | Qty | Entry | Exit | Reason | P&L |
 | ---: | --- | ---: | --- | --- | --- | ---: |
@@ -153,14 +156,106 @@ Figures are engine totals, not annualized. One ~86-day Yahoo 15m window.
 | 63 | MSFT | 10 | 2026-09-10 12:15 ET @ 491.80 | 2026-09-10 16:00 ET @ 492.49 | session_flatten | $6.90 |
 | 64 | MSFT | 10 | 2026-09-11 11:15 ET @ 494.49 | 2026-09-11 16:00 ET @ 495.58 | session_flatten | $10.90 |
 
+### Session-gated trades (15:15 / 15:55)
+
+| # | Symbol | Qty | Entry | Exit | Reason | P&L |
+| ---: | --- | ---: | --- | --- | --- | ---: |
+| 1 | AAPL | 10 | 2026-06-18 12:30 ET @ 297.48 | 2026-06-18 16:00 ET @ 297.89 | session_flatten | $4.05 |
+| 2 | MSFT | 10 | 2026-06-18 12:30 ET @ 378.60 | 2026-06-18 16:00 ET @ 379.05 | session_flatten | $4.55 |
+| 3 | MSFT | 10 | 2026-06-22 09:30 ET @ 375.56 | 2026-06-22 10:45 ET @ 373.36 | stop | $-21.96 |
+| 4 | AAPL | 10 | 2026-06-22 11:15 ET @ 300.10 | 2026-06-22 16:00 ET @ 296.79 | session_flatten | $-33.05 |
+| 5 | AAPL | 10 | 2026-06-23 09:45 ET @ 300.47 | 2026-06-23 15:30 ET @ 296.00 | stop | $-44.68 |
+| 6 | MSFT | 10 | 2026-06-23 09:45 ET @ 374.74 | 2026-06-23 16:00 ET @ 373.90 | session_flatten | $-8.40 |
+| 7 | MSFT | 10 | 2026-06-24 10:30 ET @ 374.80 | 2026-06-24 14:45 ET @ 369.18 | stop | $-56.22 |
+| 8 | MSFT | 10 | 2026-06-25 14:30 ET @ 357.74 | 2026-06-25 15:30 ET @ 352.35 | stop | $-53.91 |
+| 9 | MSFT | 10 | 2026-06-26 09:45 ET @ 361.23 | 2026-06-26 15:45 ET @ 372.07 | take | $108.37 |
+| 10 | AAPL | 10 | 2026-06-26 10:15 ET @ 278.21 | 2026-06-26 16:00 ET @ 281.20 | session_flatten | $29.90 |
+| 11 | AAPL | 10 | 2026-06-29 11:00 ET @ 281.82 | 2026-06-29 16:00 ET @ 281.63 | session_flatten | $-1.90 |
+| 12 | AAPL | 10 | 2026-06-30 09:45 ET @ 283.27 | 2026-06-30 16:00 ET @ 289.09 | session_flatten | $58.20 |
+| 13 | MSFT | 10 | 2026-06-30 11:30 ET @ 370.62 | 2026-06-30 16:00 ET @ 372.84 | session_flatten | $22.20 |
+| 14 | AAPL | 10 | 2026-07-01 13:15 ET @ 294.45 | 2026-07-01 16:00 ET @ 294.25 | session_flatten | $-1.95 |
+| 15 | MSFT | 10 | 2026-07-02 11:45 ET @ 388.35 | 2026-07-02 16:00 ET @ 389.62 | session_flatten | $12.70 |
+| 16 | AAPL | 10 | 2026-07-06 12:45 ET @ 312.56 | 2026-07-06 16:00 ET @ 312.81 | session_flatten | $2.50 |
+| 17 | MSFT | 10 | 2026-07-06 14:15 ET @ 385.78 | 2026-07-06 16:00 ET @ 386.90 | session_flatten | $11.20 |
+| 18 | AAPL | 10 | 2026-07-07 12:45 ET @ 313.63 | 2026-07-07 16:00 ET @ 310.66 | session_flatten | $-29.70 |
+| 19 | AAPL | 10 | 2026-07-09 14:45 ET @ 314.67 | 2026-07-09 16:00 ET @ 316.18 | session_flatten | $15.10 |
+| 20 | MSFT | 10 | 2026-07-09 13:30 ET @ 380.81 | 2026-07-09 16:00 ET @ 384.35 | session_flatten | $35.37 |
+| 21 | AAPL | 10 | 2026-07-10 14:15 ET @ 314.16 | 2026-07-10 16:00 ET @ 315.33 | session_flatten | $11.70 |
+| 22 | MSFT | 10 | 2026-07-10 11:45 ET @ 383.99 | 2026-07-10 16:00 ET @ 385.08 | session_flatten | $10.92 |
+| 23 | MSFT | 10 | 2026-07-13 11:00 ET @ 389.47 | 2026-07-13 16:00 ET @ 390.98 | session_flatten | $15.10 |
+| 24 | MSFT | 10 | 2026-07-15 09:45 ET @ 387.47 | 2026-07-15 16:00 ET @ 395.62 | session_flatten | $81.50 |
+| 25 | AAPL | 10 | 2026-07-16 09:30 ET @ 328.01 | 2026-07-16 16:00 ET @ 333.27 | session_flatten | $52.65 |
+| 26 | MSFT | 10 | 2026-07-16 10:30 ET @ 396.02 | 2026-07-16 16:00 ET @ 401.12 | session_flatten | $51.00 |
+| 27 | AAPL | 10 | 2026-07-17 09:30 ET @ 332.54 | 2026-07-17 16:00 ET @ 333.74 | session_flatten | $12.00 |
+| 28 | MSFT | 10 | 2026-07-17 15:00 ET @ 395.17 | 2026-07-17 16:00 ET @ 393.77 | session_flatten | $-14.05 |
+| 29 | MSFT | 10 | 2026-07-20 10:30 ET @ 394.36 | 2026-07-20 16:00 ET @ 402.51 | session_flatten | $81.50 |
+| 30 | AAPL | 10 | 2026-07-21 10:15 ET @ 326.07 | 2026-07-21 16:00 ET @ 327.59 | session_flatten | $15.20 |
+| 31 | MSFT | 10 | 2026-07-23 09:30 ET @ 389.96 | 2026-07-23 10:15 ET @ 384.43 | stop | $-55.39 |
+| 32 | MSFT | 10 | 2026-07-24 09:30 ET @ 386.55 | 2026-07-24 16:00 ET @ 381.74 | session_flatten | $-48.08 |
+| 33 | AAPL | 10 | 2026-07-27 12:15 ET @ 337.33 | 2026-07-27 16:00 ET @ 336.92 | session_flatten | $-4.10 |
+| 34 | MSFT | 10 | 2026-07-27 12:30 ET @ 390.46 | 2026-07-27 16:00 ET @ 389.13 | session_flatten | $-13.30 |
+| 35 | AAPL | 10 | 2026-07-28 11:15 ET @ 339.09 | 2026-07-28 16:00 ET @ 340.16 | session_flatten | $10.70 |
+| 36 | MSFT | 10 | 2026-07-28 09:45 ET @ 394.50 | 2026-07-28 16:00 ET @ 393.47 | session_flatten | $-10.30 |
+| 37 | MSFT | 10 | 2026-07-29 12:30 ET @ 395.66 | 2026-07-29 16:00 ET @ 389.73 | stop | $-59.35 |
+| 38 | AAPL | 10 | 2026-07-29 12:00 ET @ 341.10 | 2026-07-29 16:00 ET @ 338.07 | session_flatten | $-30.30 |
+| 39 | AAPL | 10 | 2026-07-31 09:30 ET @ 304.81 | 2026-07-31 09:45 ET @ 304.81 | stop | $0.00 |
+| 40 | MSFT | 10 | 2026-07-31 09:45 ET @ 459.97 | 2026-07-31 10:30 ET @ 453.07 | stop | $-69.00 |
+| 41 | AAPL | 10 | 2026-07-31 14:45 ET @ 302.32 | 2026-07-31 16:00 ET @ 309.03 | session_flatten | $67.15 |
+| 42 | MSFT | 10 | 2026-07-31 11:30 ET @ 457.83 | 2026-07-31 16:00 ET @ 464.92 | session_flatten | $70.95 |
+| 43 | AAPL | 10 | 2026-08-03 12:30 ET @ 306.35 | 2026-08-03 16:00 ET @ 303.27 | session_flatten | $-30.80 |
+| 44 | AAPL | 10 | 2026-08-04 11:45 ET @ 306.26 | 2026-08-04 16:00 ET @ 309.39 | session_flatten | $31.30 |
+| 45 | MSFT | 10 | 2026-08-04 10:00 ET @ 491.08 | 2026-08-04 16:00 ET @ 492.82 | session_flatten | $17.40 |
+| 46 | AAPL | 10 | 2026-08-05 10:45 ET @ 308.85 | 2026-08-05 16:00 ET @ 310.92 | session_flatten | $20.70 |
+| 47 | MSFT | 10 | 2026-08-05 14:15 ET @ 490.17 | 2026-08-05 16:00 ET @ 487.46 | session_flatten | $-27.10 |
+| 48 | AAPL | 10 | 2026-08-06 12:30 ET @ 311.16 | 2026-08-06 16:00 ET @ 312.45 | session_flatten | $12.90 |
+| 49 | MSFT | 10 | 2026-08-06 09:45 ET @ 493.27 | 2026-08-06 16:00 ET @ 499.86 | session_flatten | $65.90 |
+| 50 | AAPL | 10 | 2026-08-07 10:15 ET @ 312.14 | 2026-08-07 16:00 ET @ 313.30 | session_flatten | $11.60 |
+| 51 | MSFT | 10 | 2026-08-10 09:45 ET @ 505.20 | 2026-08-10 16:00 ET @ 505.97 | session_flatten | $7.75 |
+| 52 | MSFT | 10 | 2026-08-11 14:45 ET @ 502.92 | 2026-08-11 16:00 ET @ 503.81 | session_flatten | $8.90 |
+| 53 | MSFT | 10 | 2026-08-13 09:45 ET @ 497.89 | 2026-08-13 16:00 ET @ 496.81 | session_flatten | $-10.75 |
+| 54 | AAPL | 10 | 2026-08-14 11:00 ET @ 305.16 | 2026-08-14 16:00 ET @ 305.95 | session_flatten | $7.90 |
+| 55 | MSFT | 10 | 2026-08-14 10:00 ET @ 498.48 | 2026-08-14 16:00 ET @ 495.42 | session_flatten | $-30.60 |
+| 56 | AAPL | 10 | 2026-08-18 14:15 ET @ 310.49 | 2026-08-18 16:00 ET @ 310.20 | session_flatten | $-2.95 |
+| 57 | MSFT | 10 | 2026-08-18 10:15 ET @ 481.38 | 2026-08-18 16:00 ET @ 481.93 | session_flatten | $5.47 |
+| 58 | AAPL | 10 | 2026-08-19 09:45 ET @ 311.69 | 2026-08-19 16:00 ET @ 316.88 | session_flatten | $51.88 |
+| 59 | MSFT | 10 | 2026-08-19 10:00 ET @ 482.65 | 2026-08-19 16:00 ET @ 484.48 | session_flatten | $18.30 |
+| 60 | AAPL | 10 | 2026-08-20 11:00 ET @ 317.43 | 2026-08-20 16:00 ET @ 312.66 | stop | $-47.71 |
+| 61 | MSFT | 10 | 2026-08-20 13:45 ET @ 482.20 | 2026-08-20 16:00 ET @ 481.38 | session_flatten | $-8.26 |
+| 62 | AAPL | 10 | 2026-08-21 13:00 ET @ 310.99 | 2026-08-21 16:00 ET @ 309.42 | session_flatten | $-15.70 |
+| 63 | MSFT | 10 | 2026-08-21 09:45 ET @ 482.00 | 2026-08-21 16:00 ET @ 483.35 | session_flatten | $13.50 |
+| 64 | AAPL | 10 | 2026-08-24 09:45 ET @ 311.15 | 2026-08-24 16:00 ET @ 310.35 | session_flatten | $-8.00 |
+| 65 | MSFT | 10 | 2026-08-24 14:30 ET @ 488.62 | 2026-08-24 16:00 ET @ 487.34 | session_flatten | $-12.80 |
+| 66 | MSFT | 10 | 2026-08-25 09:45 ET @ 488.79 | 2026-08-25 16:00 ET @ 491.50 | session_flatten | $27.15 |
+| 67 | AAPL | 10 | 2026-08-26 09:30 ET @ 310.24 | 2026-08-26 16:00 ET @ 313.48 | session_flatten | $32.35 |
+| 68 | MSFT | 10 | 2026-08-26 12:15 ET @ 494.42 | 2026-08-26 16:00 ET @ 496.17 | session_flatten | $17.50 |
+| 69 | MSFT | 10 | 2026-08-27 12:15 ET @ 501.08 | 2026-08-27 16:00 ET @ 504.88 | session_flatten | $38.00 |
+| 70 | AAPL | 10 | 2026-08-28 09:30 ET @ 317.09 | 2026-08-28 16:00 ET @ 319.64 | session_flatten | $25.52 |
+| 71 | MSFT | 10 | 2026-08-31 13:00 ET @ 511.39 | 2026-08-31 16:00 ET @ 507.32 | session_flatten | $-40.65 |
+| 72 | AAPL | 10 | 2026-09-01 14:00 ET @ 325.22 | 2026-09-01 16:00 ET @ 325.14 | session_flatten | $-0.80 |
+| 73 | AAPL | 10 | 2026-09-02 09:45 ET @ 325.45 | 2026-09-02 16:00 ET @ 324.99 | session_flatten | $-4.65 |
+| 74 | MSFT | 10 | 2026-09-02 09:30 ET @ 500.17 | 2026-09-02 16:00 ET @ 496.81 | session_flatten | $-33.60 |
+| 75 | AAPL | 10 | 2026-09-03 09:45 ET @ 326.47 | 2026-09-03 16:00 ET @ 328.21 | session_flatten | $17.40 |
+| 76 | MSFT | 10 | 2026-09-03 14:00 ET @ 510.99 | 2026-09-03 16:00 ET @ 510.08 | session_flatten | $-9.15 |
+| 77 | AAPL | 10 | 2026-09-04 14:45 ET @ 321.36 | 2026-09-04 16:00 ET @ 319.99 | session_flatten | $-13.65 |
+| 78 | AAPL | 10 | 2026-09-09 10:00 ET @ 317.86 | 2026-09-09 10:45 ET @ 313.11 | stop | $-47.53 |
+| 79 | AAPL | 10 | 2026-09-09 14:45 ET @ 314.12 | 2026-09-09 16:00 ET @ 315.41 | session_flatten | $12.90 |
+| 80 | MSFT | 10 | 2026-09-09 10:45 ET @ 493.08 | 2026-09-09 16:00 ET @ 491.77 | session_flatten | $-13.10 |
+| 81 | AAPL | 10 | 2026-09-10 12:30 ET @ 321.86 | 2026-09-10 16:00 ET @ 326.60 | session_flatten | $47.40 |
+| 82 | MSFT | 10 | 2026-09-10 12:15 ET @ 491.80 | 2026-09-10 16:00 ET @ 492.49 | session_flatten | $6.90 |
+| 83 | MSFT | 10 | 2026-09-11 11:15 ET @ 494.49 | 2026-09-11 16:00 ET @ 495.58 | session_flatten | $10.90 |
+
 ## Ranking by P&L % of starting equity
 
-Figures are the engine totals for each book. They are **not** annualized.
+
+Figures are the engine totals for each book. They are **not** annualized and **not** size-normalized (ORB / engulfing use 10 shares; hammer uses 2% of equity). Yahoo 5m/15m history is capped at ~60 days; the 1h hammer book can span ~2 years.
 
 | Rank | Book | Trades | Win rate | P&L $ | P&L % | Max DD | Avg win | Avg loss | Period | Caveat |
 | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
-| 1 | 15m ema9_trend | 44 | 50.00% | $1,404.89 | 1.405% | $407.70 | $123.61 | $-62.59 | 2026-06-17T13:30:00Z → 2026-09-11T19:45:00Z | ~86 calendar days |
-| 2 | 15m ema9_trend (cutoff 13:00, flat 15:55) | 64 | 60.94% | $419.25 | 0.419% | $298.92 | $29.02 | $-29.69 | 2026-06-17T13:30:00Z → 2026-09-11T19:45:00Z | ~86 calendar days |
+| 1 | 15m combined | 44 | 50.00% | $1,404.89 | 1.405% | $407.70 | $123.61 | $-62.59 | 2026-06-17T13:30:00Z → 2026-09-11T19:45:00Z | ~86 calendar days |
+| 2 | 15m combined (cutoff 13:00, flat 15:55) | 64 | 60.94% | $419.25 | 0.419% | $298.92 | $29.02 | $-29.69 | 2026-06-17T13:30:00Z → 2026-09-11T19:45:00Z | ~86 calendar days |
+| 3 | 15m combined (cutoff 15:15, flat 15:55) | 83 | 55.42% | $380.60 | 0.381% | $298.92 | $28.13 | $-25.37 | 2026-06-17T13:30:00Z → 2026-09-11T19:45:00Z | ~86 calendar days |
+
+ORB and the sample rules use separate engines and are not merged into one shared-position book. Ranking is apples-to-apples across isolated (and sample combined) books, not a single multi-strategy portfolio.
 
 ## Data windows and Yahoo limits
 
@@ -172,12 +267,12 @@ Figures are the engine totals for each book. They are **not** annualized.
 
 # Per-book detail
 
-- Generated (UTC): 2026-09-13T17:14:20.686207Z
+- Generated (UTC): 2026-09-13T17:26:17.122432Z
 - Starting equity: $100,000.00
 - Commission / slippage: commission=$0.00/fill, slippage=0.0%
 - Data: Yahoo Finance v8 chart (unadjusted regular-session OHLC)
 
-## 15m ema9_trend
+## 15m combined
 
 - Period: 2026-06-17T13:30:00Z → 2026-09-11T19:45:00Z
 - Bars used: {'AAPL:15Min': 1560, 'MSFT:15Min': 1560}
@@ -290,7 +385,7 @@ Figures are the engine totals for each book. They are **not** annualized.
 | 2026-09-11 | 2 | 2 | 0 | $130.97 | 0.13% | $101,404.89 |
 
 
-## 15m ema9_trend (cutoff 13:00, flat 15:55)
+## 15m combined (cutoff 13:00, flat 15:55)
 
 - Period: 2026-06-17T13:30:00Z → 2026-09-11T19:45:00Z
 - Bars used: {'AAPL:15Min': 1560, 'MSFT:15Min': 1560}
@@ -407,6 +502,123 @@ Figures are the engine totals for each book. They are **not** annualized.
 | 2026-09-11 | 1 | 1 | 0 | $10.90 | 0.01% | $100,419.25 |
 
 
+## 15m combined (cutoff 15:15, flat 15:55)
+
+- Period: 2026-06-17T13:30:00Z → 2026-09-11T19:45:00Z
+- Bars used: {'AAPL:15Min': 1560, 'MSFT:15Min': 1560}
+- Data source: Yahoo Finance v8 chart (unadjusted regular-session OHLC)
+- Signals: 154  (by symbol: {'AAPL': 77, 'MSFT': 77})
+- Pattern hits in those signals: {'ema_cross': 154}
+- Trades: 83  (by symbol: {'AAPL': 39, 'MSFT': 44})
+- Wins / losses / scratch: 46 / 36 / 1
+- Win rate: 55.42%
+- Total P&L: $380.60 (0.381% of starting equity)
+- Avg win: $28.13
+- Avg loss: $-25.37
+- Max drawdown: $298.92 (0.30%)
+- Ending equity: $100,380.60
+- Exit reasons: {'session_flatten': 72, 'stop': 10, 'take': 1}
+- Skip reasons: {'already_in_position': 63, 'entry_cutoff': 8}
+- Session gates (America/New_York): entry_cutoff=15:15 skips a signal when the next-bar fill (bar open) is at/after that clock. flatten_by=15:55 force-flats at the close of the bar that contains that clock (exit reason session_flatten): 15m RTH bars opening :00,:15,:30,:45 flatten on the 15:45 ET bar close when flatten_by is 15:55 (last regular 15m bar, aligned with “by 15:55”); 5m flattens on the 15:50 ET bar close (last 5m bar that completes at/before 15:55). Stop/take/ema_invalid on that bar still win if they hit first. Set entry_cutoff / flatten_by to null to restore overnight holds.
+- Session gates (America/New_York): entry_cutoff=15:15 (skip signals whose next-bar fill is at/after that clock); flatten_by=15:55 (force flat at the close of the bar containing that clock: 15m RTH → 15:45 ET bar close when flatten_by is 15:55; 5m RTH → 15:50 ET bar close, the last 5m bar that completes at/before 15:55).
+- 8 signal(s) skipped as entry_cutoff (15:15 America/New_York; fill would be at/after the cutoff).
+- 72 trade(s) exited as session_flatten (time-exit at the flatten bar close; flatten_by 15:55 America/New_York).
+
+### Monthly
+
+- Month: 2026-06-17 → 2026-09-11
+- Session days: 60
+- Trades: 83  (wins 46 / losses 36)
+- Win rate: 56.10%
+- Total P&L: $380.60 (0.38% of starting equity)
+- Ending equity: $100,380.60
+- Best day (realized): 2026-06-26 $138.27 (2 trades)
+- Worst day (realized): 2026-07-29 $-89.65 (2 trades)
+
+### Weekly
+
+| Week | Trades | Win rate | P&L $ | P&L % | Equity EOW |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 2026-W25 (2026-06-17 → 2026-06-18) | 2 | 100.00% | $8.60 | 0.01% | $100,008.60 |
+| 2026-W26 (2026-06-22 → 2026-06-26) | 8 | 25.00% | $-79.94 | -0.08% | $99,928.66 |
+| 2026-W27 (2026-06-29 → 2026-07-02) | 5 | 60.00% | $89.25 | 0.09% | $100,017.91 |
+| 2026-W28 (2026-07-06 → 2026-07-10) | 7 | 85.71% | $57.09 | 0.06% | $100,075.00 |
+| 2026-W29 (2026-07-13 → 2026-07-17) | 6 | 83.33% | $198.20 | 0.20% | $100,273.20 |
+| 2026-W30 (2026-07-20 → 2026-07-24) | 4 | 50.00% | $-6.77 | -0.01% | $100,266.43 |
+| 2026-W31 (2026-07-27 → 2026-07-31) | 10 | 33.33% | $-37.54 | -0.04% | $100,228.89 |
+| 2026-W32 (2026-08-03 → 2026-08-07) | 8 | 75.00% | $101.90 | 0.10% | $100,330.78 |
+| 2026-W33 (2026-08-10 → 2026-08-14) | 5 | 60.00% | $-16.80 | -0.02% | $100,313.98 |
+| 2026-W34 (2026-08-17 → 2026-08-21) | 8 | 50.00% | $14.53 | 0.01% | $100,328.52 |
+| 2026-W35 (2026-08-24 → 2026-08-28) | 7 | 71.43% | $119.72 | 0.12% | $100,448.24 |
+| 2026-W36 (2026-08-31 → 2026-09-04) | 7 | 14.29% | $-85.10 | -0.09% | $100,363.14 |
+| 2026-W37 (2026-09-08 → 2026-09-11) | 6 | 66.67% | $17.46 | 0.02% | $100,380.60 |
+
+### Daily
+
+| Date | Trades | Wins | Losses | P&L $ | P&L % | Equity EOD |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2026-06-17 | 0 | 0 | 0 | $0.00 | 0.00% | $100,000.00 |
+| 2026-06-18 | 2 | 2 | 0 | $8.60 | 0.01% | $100,008.60 |
+| 2026-06-22 | 2 | 0 | 2 | $-55.01 | -0.06% | $99,953.59 |
+| 2026-06-23 | 2 | 0 | 2 | $-53.08 | -0.05% | $99,900.52 |
+| 2026-06-24 | 1 | 0 | 1 | $-56.22 | -0.06% | $99,844.30 |
+| 2026-06-25 | 1 | 0 | 1 | $-53.91 | -0.05% | $99,790.39 |
+| 2026-06-26 | 2 | 2 | 0 | $138.27 | 0.14% | $99,928.66 |
+| 2026-06-29 | 1 | 0 | 1 | $-1.90 | -0.00% | $99,926.76 |
+| 2026-06-30 | 2 | 2 | 0 | $80.40 | 0.08% | $100,007.16 |
+| 2026-07-01 | 1 | 0 | 1 | $-1.95 | -0.00% | $100,005.21 |
+| 2026-07-02 | 1 | 1 | 0 | $12.70 | 0.01% | $100,017.91 |
+| 2026-07-06 | 2 | 2 | 0 | $13.70 | 0.01% | $100,031.61 |
+| 2026-07-07 | 1 | 0 | 1 | $-29.70 | -0.03% | $100,001.91 |
+| 2026-07-08 | 0 | 0 | 0 | $0.00 | 0.00% | $100,001.91 |
+| 2026-07-09 | 2 | 2 | 0 | $50.47 | 0.05% | $100,052.38 |
+| 2026-07-10 | 2 | 2 | 0 | $22.62 | 0.02% | $100,075.00 |
+| 2026-07-13 | 1 | 1 | 0 | $15.10 | 0.02% | $100,090.10 |
+| 2026-07-14 | 0 | 0 | 0 | $0.00 | 0.00% | $100,090.10 |
+| 2026-07-15 | 1 | 1 | 0 | $81.50 | 0.08% | $100,171.60 |
+| 2026-07-16 | 2 | 2 | 0 | $103.65 | 0.10% | $100,275.25 |
+| 2026-07-17 | 2 | 1 | 1 | $-2.05 | -0.00% | $100,273.20 |
+| 2026-07-20 | 1 | 1 | 0 | $81.50 | 0.08% | $100,354.70 |
+| 2026-07-21 | 1 | 1 | 0 | $15.20 | 0.02% | $100,369.90 |
+| 2026-07-22 | 0 | 0 | 0 | $0.00 | 0.00% | $100,369.90 |
+| 2026-07-23 | 1 | 0 | 1 | $-55.39 | -0.06% | $100,314.51 |
+| 2026-07-24 | 1 | 0 | 1 | $-48.08 | -0.05% | $100,266.43 |
+| 2026-07-27 | 2 | 0 | 2 | $-17.40 | -0.02% | $100,249.03 |
+| 2026-07-28 | 2 | 1 | 1 | $0.40 | 0.00% | $100,249.43 |
+| 2026-07-29 | 2 | 0 | 2 | $-89.65 | -0.09% | $100,159.78 |
+| 2026-07-30 | 0 | 0 | 0 | $0.00 | 0.00% | $100,159.78 |
+| 2026-07-31 | 4 | 2 | 1 | $69.10 | 0.07% | $100,228.89 |
+| 2026-08-03 | 1 | 0 | 1 | $-30.80 | -0.03% | $100,198.09 |
+| 2026-08-04 | 2 | 2 | 0 | $48.70 | 0.05% | $100,246.79 |
+| 2026-08-05 | 2 | 1 | 1 | $-6.40 | -0.01% | $100,240.39 |
+| 2026-08-06 | 2 | 2 | 0 | $78.80 | 0.08% | $100,319.19 |
+| 2026-08-07 | 1 | 1 | 0 | $11.60 | 0.01% | $100,330.78 |
+| 2026-08-10 | 1 | 1 | 0 | $7.75 | 0.01% | $100,338.53 |
+| 2026-08-11 | 1 | 1 | 0 | $8.90 | 0.01% | $100,347.43 |
+| 2026-08-12 | 0 | 0 | 0 | $0.00 | 0.00% | $100,347.43 |
+| 2026-08-13 | 1 | 0 | 1 | $-10.75 | -0.01% | $100,336.68 |
+| 2026-08-14 | 2 | 1 | 1 | $-22.70 | -0.02% | $100,313.98 |
+| 2026-08-17 | 0 | 0 | 0 | $0.00 | 0.00% | $100,313.98 |
+| 2026-08-18 | 2 | 1 | 1 | $2.53 | 0.00% | $100,316.51 |
+| 2026-08-19 | 2 | 2 | 0 | $70.18 | 0.07% | $100,386.69 |
+| 2026-08-20 | 2 | 0 | 2 | $-55.97 | -0.06% | $100,330.72 |
+| 2026-08-21 | 2 | 1 | 1 | $-2.20 | -0.00% | $100,328.52 |
+| 2026-08-24 | 2 | 0 | 2 | $-20.80 | -0.02% | $100,307.72 |
+| 2026-08-25 | 1 | 1 | 0 | $27.15 | 0.03% | $100,334.87 |
+| 2026-08-26 | 2 | 2 | 0 | $49.85 | 0.05% | $100,384.72 |
+| 2026-08-27 | 1 | 1 | 0 | $38.00 | 0.04% | $100,422.72 |
+| 2026-08-28 | 1 | 1 | 0 | $25.52 | 0.03% | $100,448.24 |
+| 2026-08-31 | 1 | 0 | 1 | $-40.65 | -0.04% | $100,407.59 |
+| 2026-09-01 | 1 | 0 | 1 | $-0.80 | -0.00% | $100,406.79 |
+| 2026-09-02 | 2 | 0 | 2 | $-38.25 | -0.04% | $100,368.54 |
+| 2026-09-03 | 2 | 1 | 1 | $8.25 | 0.01% | $100,376.79 |
+| 2026-09-04 | 1 | 0 | 1 | $-13.65 | -0.01% | $100,363.14 |
+| 2026-09-08 | 0 | 0 | 0 | $0.00 | 0.00% | $100,363.14 |
+| 2026-09-09 | 3 | 1 | 2 | $-47.73 | -0.05% | $100,315.40 |
+| 2026-09-10 | 2 | 2 | 0 | $54.30 | 0.05% | $100,369.70 |
+| 2026-09-11 | 1 | 1 | 0 | $10.90 | 0.01% | $100,380.60 |
+
+
 ## Assumptions
 
 - Signals come from the live evaluate_rule path (same pattern/SMA/EMA/RSI/volume/MA-cross detectors).
@@ -422,3 +634,5 @@ Figures are the engine totals for each book. They are **not** annualized.
 - commission=$0.00/fill, slippage=0.0%
 - Starting equity $100,000.00. Size types: shares, percent_equity, or risk_pct (shares = floor((equity_risk * equity) / ((stop_pct/100) * price))).
 - Session gates (America/New_York): entry_cutoff=13:00 skips a signal when the next-bar fill (bar open) is at/after that clock. flatten_by=15:55 force-flats at the close of the bar that contains that clock (exit reason session_flatten): 15m RTH bars opening :00,:15,:30,:45 flatten on the 15:45 ET bar close when flatten_by is 15:55 (last regular 15m bar, aligned with “by 15:55”); 5m flattens on the 15:50 ET bar close (last 5m bar that completes at/before 15:55). Stop/take/ema_invalid on that bar still win if they hit first. Set entry_cutoff / flatten_by to null to restore overnight holds.
+- Session gates (America/New_York): entry_cutoff=15:15 skips a signal when the next-bar fill (bar open) is at/after that clock. flatten_by=15:55 force-flats at the close of the bar that contains that clock (exit reason session_flatten): 15m RTH bars opening :00,:15,:30,:45 flatten on the 15:45 ET bar close when flatten_by is 15:55 (last regular 15m bar, aligned with “by 15:55”); 5m flattens on the 15:50 ET bar close (last 5m bar that completes at/before 15:55). Stop/take/ema_invalid on that bar still win if they hit first. Set entry_cutoff / flatten_by to null to restore overnight holds.
+- ORB and the sample rules use separate engines and are not merged into one shared-position book. Ranking is apples-to-apples across isolated (and sample combined) books, not a single multi-strategy portfolio.
