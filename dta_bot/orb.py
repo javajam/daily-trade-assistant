@@ -12,9 +12,12 @@ Locked v1 rules
 - Reversal = the **next** signal bar, opposite color:
   top probe + bearish close → short; bottom probe + bullish close → long.
 - Entry fills at the **open of the bar after the reversal**.
-- Stop: long → reversal low; short → reversal high.
+- Stop (default ``orb_extreme``): long → opening-range low; short → opening-range
+  high. ``reversal_candle`` keeps the older stop at the reversal extreme.
 - Take profit (v1): OR midpoint ``(or_high + or_low) / 2``.
   Exit strategy will be A/B tested later.
+- Frequency (default): at most one entry per symbol per session, and only if
+  that entry is before 10:30 America/New_York. No new entries at/after 10:30.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from dta_bot.timeframes import duration
 
 Zone = Literal["top", "bottom"]
 Side = Literal["buy", "sell"]
+StopMode = Literal["orb_extreme", "reversal_candle"]
 
 
 def _aware(dt: datetime) -> datetime:
@@ -145,6 +149,7 @@ class OrbSetup:
     stop: float
     take: float
     entry_bar: Optional[Bar] = None
+    stop_mode: StopMode = "orb_extreme"
 
     @property
     def session_date(self) -> date:
@@ -157,13 +162,18 @@ class OrbSetup:
             if self.entry_bar is not None
             else "entry_open=(next signal bar)"
         )
+        if self.stop_mode == "reversal_candle":
+            stop_why = "reversal candle extreme"
+        else:
+            stop_why = "OR low" if self.side == "buy" else "OR high"
         return (
             f"ORB {self.zone}-zone probe + "
             f"{'bearish' if self.side == 'sell' else 'bullish'} reversal → {direction}; "
             f"OR {self.opening_range.low:.4f}–{self.opening_range.high:.4f} "
             f"mid={self.opening_range.midpoint:.4f}; "
             f"probe C={self.probe.close:.4f}; reversal {self.reversal.summary()}; "
-            f"{entry}; stop={self.stop:.4f} take={self.take:.4f} (OR midpoint, v1)"
+            f"{entry}; stop={self.stop:.4f} ({stop_why}) "
+            f"take={self.take:.4f} (OR midpoint, v1)"
         )
 
 
@@ -268,6 +278,20 @@ def signal_bars_after_or(
     return [b for b in day if _aware(b.timestamp) >= start]
 
 
+def stop_price(
+    *,
+    zone: Zone,
+    opening_range: OpeningRange,
+    reversal: Bar,
+    stop_mode: StopMode = "orb_extreme",
+) -> float:
+    """Long → OR low (or reversal low); short → OR high (or reversal high)."""
+    mode = stop_mode or "orb_extreme"
+    if mode == "reversal_candle":
+        return reversal.low if zone == "bottom" else reversal.high
+    return opening_range.low if zone == "bottom" else opening_range.high
+
+
 def _setup_from_pair(
     *,
     symbol: str,
@@ -276,6 +300,7 @@ def _setup_from_pair(
     probe: Bar,
     reversal: Bar,
     entry_bar: Optional[Bar],
+    stop_mode: StopMode = "orb_extreme",
 ) -> Optional[OrbSetup]:
     zone = opening_range.classify_close(probe.close, edge_pct)
     if zone is None:
@@ -284,12 +309,10 @@ def _setup_from_pair(
         if not reversal.is_bearish():
             return None
         side: Side = "sell"
-        stop = reversal.high
     else:
         if not reversal.is_bullish():
             return None
         side = "buy"
-        stop = reversal.low
     return OrbSetup(
         symbol=symbol,
         opening_range=opening_range,
@@ -297,9 +320,15 @@ def _setup_from_pair(
         side=side,
         probe=probe,
         reversal=reversal,
-        stop=stop,
+        stop=stop_price(
+            zone=zone,
+            opening_range=opening_range,
+            reversal=reversal,
+            stop_mode=stop_mode,
+        ),
         take=opening_range.midpoint,
         entry_bar=entry_bar,
+        stop_mode=stop_mode,
     )
 
 
@@ -311,8 +340,13 @@ def find_setups(
     edge_pct: float = 0.05,
     session_timezone: str = "America/New_York",
     session_close: Optional[str] = "16:00",
+    stop_mode: StopMode = "orb_extreme",
 ) -> list[OrbSetup]:
-    """Walk probe → next-bar reversal on post-OR signal bars. Multiple setups allowed."""
+    """Walk probe → next-bar reversal on post-OR signal bars. Multiple setups allowed.
+
+    Time/frequency gating is applied separately by ``gate_setups`` so this
+    function stays a pure probe/reversal detector.
+    """
     series = signal_bars_after_or(
         signal_bars,
         opening_range,
@@ -336,6 +370,7 @@ def find_setups(
             probe=probe,
             reversal=reversal,
             entry_bar=entry,
+            stop_mode=stop_mode,
         )
         if setup is None:
             # Same-color (or doji) "reversal" — no trade. That bar may itself be a probe.
@@ -358,6 +393,7 @@ def find_session_setups(
     orb_timeframe: str = "15m",
     signal_timeframe: str = "5m",
     edge_pct: float = 0.05,
+    stop_mode: StopMode = "orb_extreme",
 ) -> tuple[Optional[OpeningRange], list[OrbSetup]]:
     rng = resolve_opening_range(
         orb_bars=orb_bars,
@@ -377,6 +413,7 @@ def find_session_setups(
         edge_pct=edge_pct,
         session_timezone=session_timezone,
         session_close=session_close,
+        stop_mode=stop_mode,
     )
 
 
@@ -391,6 +428,7 @@ def find_all_setups(
     orb_timeframe: str = "15m",
     signal_timeframe: str = "5m",
     edge_pct: float = 0.05,
+    stop_mode: StopMode = "orb_extreme",
 ) -> list[OrbSetup]:
     dates = session_dates(orb_bars or signal_bars, session_timezone)
     found: list[OrbSetup] = []
@@ -406,6 +444,7 @@ def find_all_setups(
             orb_timeframe=orb_timeframe,
             signal_timeframe=signal_timeframe,
             edge_pct=edge_pct,
+            stop_mode=stop_mode,
         )
         found.extend(setups)
     return found
@@ -485,3 +524,47 @@ def next_signal_bar(series: list[Bar], after: datetime) -> Optional[Bar]:
     if not later:
         return None
     return min(later, key=lambda b: _aware(b.timestamp))
+
+
+def setup_entry_time(setup: OrbSetup, signal_timeframe: str = "5m") -> datetime:
+    """Fill time: next signal-bar open, or reversal close + one signal bar if unknown."""
+    if setup.entry_bar is not None:
+        return _aware(setup.entry_bar.timestamp)
+    return _aware(setup.reversal.timestamp) + duration(signal_timeframe)
+
+
+def gate_setups(
+    setups: list[OrbSetup],
+    *,
+    entry_cutoff: Optional[str] = "10:30",
+    max_trades_before_cutoff: int = 1,
+    allow_entries_after_cutoff: bool = False,
+    session_timezone: str = "America/New_York",
+    signal_timeframe: str = "5m",
+) -> list[tuple[OrbSetup, Optional[str]]]:
+    """Tag each setup with a skip reason, or None if the entry window allows it.
+
+    Default product rule: at most ``max_trades_before_cutoff`` entries per symbol
+    per session whose entry time is strictly before ``entry_cutoff`` (10:30 ET),
+    and no entries at/after that cutoff. Counts reset each session date.
+    """
+    if not entry_cutoff:
+        return [(setup, None) for setup in setups]
+    before_count: dict[date, int] = {}
+    out: list[tuple[OrbSetup, Optional[str]]] = []
+    for setup in setups:
+        entry_ts = setup_entry_time(setup, signal_timeframe)
+        cutoff_dt = session_dt(setup.session_date, entry_cutoff, session_timezone)
+        if entry_ts >= cutoff_dt:
+            if allow_entries_after_cutoff:
+                out.append((setup, None))
+            else:
+                out.append((setup, "entry_cutoff"))
+            continue
+        used = before_count.get(setup.session_date, 0)
+        if used >= max_trades_before_cutoff:
+            out.append((setup, "max_trades_before_cutoff"))
+            continue
+        before_count[setup.session_date] = used + 1
+        out.append((setup, None))
+    return out

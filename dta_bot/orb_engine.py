@@ -16,6 +16,7 @@ from dta_bot.orb import (
     bar_session_date,
     find_all_setups,
     find_session_setups,
+    gate_setups,
     live_setup,
     no_setup_reason,
     session_dt,
@@ -66,6 +67,7 @@ def _eval_from_setup(
             "band": setup.opening_range.band(edge_pct),
             "stop": setup.stop,
             "take": setup.take,
+            "stop_mode": setup.stop_mode,
             "probe": setup.probe.summary(),
             "reversal": setup.reversal.summary(),
             "entry_open": setup.entry_bar.open if setup.entry_bar is not None else None,
@@ -118,6 +120,7 @@ def setups_for_symbol(config: OrbBotConfig, symbol: str, bars_by_key: BarMap) ->
         orb_timeframe=config.orb.orb_timeframe,
         signal_timeframe=config.orb.signal_timeframe,
         edge_pct=config.orb.edge_pct,
+        stop_mode=config.orb.stop_mode,
     )
 
 
@@ -151,10 +154,16 @@ def evaluate_orb_symbol(
                 orb_timeframe=orb_tf,
                 signal_timeframe=sig_tf,
                 edge_pct=config.orb.edge_pct,
+                stop_mode=config.orb.stop_mode,
             )
             return [_eval_miss(symbol, rng, signal_bars, config)]
         results: list[EvalResult] = []
-        for setup in setups:
+        for setup, gate_skip in gate_setups(setups, **config.orb.gate_kwargs()):
+            if gate_skip:
+                results.append(
+                    _eval_from_setup(setup, skipped=gate_skip, edge_pct=config.orb.edge_pct)
+                )
+                continue
             cd_until = state.on_cooldown(cooldown_key(RULE_ID, symbol), now=now)
             if cd_until:
                 results.append(
@@ -199,10 +208,16 @@ def evaluate_orb_symbol(
         orb_timeframe=orb_tf,
         signal_timeframe=sig_tf,
         edge_pct=config.orb.edge_pct,
+        stop_mode=config.orb.stop_mode,
     )
     hit = live_setup(setups, signal_bars)
     if hit is None:
         return [_eval_miss(symbol, rng, signal_bars, config)]
+
+    gated = {id(setup): reason for setup, reason in gate_setups(setups, **config.orb.gate_kwargs())}
+    gate_skip = gated.get(id(hit))
+    if gate_skip:
+        return [_eval_from_setup(hit, skipped=gate_skip, edge_pct=config.orb.edge_pct)]
 
     cd_until = state.on_cooldown(cooldown_key(RULE_ID, symbol), now=now)
     if cd_until:

@@ -27,6 +27,16 @@ class OrbSpec(BaseModel):
     on_open_position: Literal["skip", "replace"] = "skip"
     # v1 take-profit is the OR midpoint. Exit strategy will be A/B tested later.
     take_profit: Literal["midpoint"] = "midpoint"
+    # orb_extreme = long stop at OR low, short stop at OR high (default).
+    # reversal_candle = previous stop at the reversal candle extreme.
+    stop_mode: Literal["orb_extreme", "reversal_candle"] = "orb_extreme"
+    # Strict morning window: at most max_trades_before_cutoff entries per symbol
+    # whose fill time is strictly before entry_cutoff (session timezone).
+    # allow_entries_after_cutoff=false means the session stops taking new entries
+    # at/after that clock time. Empty/null disables the clock gate.
+    entry_cutoff: Optional[str] = "10:30"
+    max_trades_before_cutoff: int = Field(default=1, ge=0)
+    allow_entries_after_cutoff: bool = False
     cooldown_minutes: int = Field(default=0, ge=0)
 
     @field_validator("orb_timeframe", "signal_timeframe")
@@ -38,6 +48,17 @@ class OrbSpec(BaseModel):
     @classmethod
     def _hhmm(cls, v: str) -> str:
         parsed = parse_hhmm(v)
+        return f"{parsed.hour:02d}:{parsed.minute:02d}"
+
+    @field_validator("entry_cutoff")
+    @classmethod
+    def _cutoff(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        raw = str(v).strip()
+        if raw == "" or raw.lower() in {"none", "off", "disabled"}:
+            return None
+        parsed = parse_hhmm(raw)
         return f"{parsed.hour:02d}:{parsed.minute:02d}"
 
     @field_validator("session_timezone")
@@ -67,6 +88,33 @@ class OrbSpec(BaseModel):
         if key not in aliases:
             raise ValueError("on_open_position must be 'skip' or 'replace'")
         return aliases[key]
+
+    @field_validator("stop_mode", mode="before")
+    @classmethod
+    def _stop_mode(cls, v: Any) -> str:
+        key = str(v or "orb_extreme").strip().lower().replace("-", "_")
+        aliases = {
+            "orb_extreme": "orb_extreme",
+            "orb": "orb_extreme",
+            "or": "orb_extreme",
+            "range": "orb_extreme",
+            "opening_range": "orb_extreme",
+            "reversal_candle": "reversal_candle",
+            "reversal": "reversal_candle",
+            "candle": "reversal_candle",
+        }
+        if key not in aliases:
+            raise ValueError("stop_mode must be 'orb_extreme' or 'reversal_candle'")
+        return aliases[key]
+
+    def gate_kwargs(self) -> dict[str, Any]:
+        return {
+            "entry_cutoff": self.entry_cutoff,
+            "max_trades_before_cutoff": self.max_trades_before_cutoff,
+            "allow_entries_after_cutoff": self.allow_entries_after_cutoff,
+            "session_timezone": self.session_timezone,
+            "signal_timeframe": self.signal_timeframe,
+        }
 
 
 class OrderSpec(BaseModel):

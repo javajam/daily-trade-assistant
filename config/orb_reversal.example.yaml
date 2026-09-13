@@ -14,12 +14,25 @@
 #      top probe + bearish close  → short
 #      bottom probe + bullish close → long
 # 6. Entry fills at the open of the bar after the reversal (one bar later).
-# 7. Stop: long → reversal low; short → reversal high.
+# 7. Stop (stop_mode: orb_extreme, default):
+#      long  → opening-range low  (bottom of the range)
+#      short → opening-range high (top of the range)
+#    Previous behavior is stop_mode: reversal_candle (reversal low/high).
+#    Take profit stays the OR midpoint either way.
 # 8. Take profit (v1): OR midpoint (or_high + or_low) / 2.
 #    Exit strategy will be A/B tested later — do not treat midpoint as final.
-# 9. Multiple trades are allowed; there is no daily cap. One open position per
-#    symbol (no pyramiding). Default is skip new entries while already in a
-#    position; set on_open_position: replace to close/replace on a new signal.
+# 9. Frequency (defaults aimed at fewer late/choppy trades):
+#      entry_cutoff: "10:30"          # session timezone (America/New_York)
+#      max_trades_before_cutoff: 1    # per symbol per session
+#      allow_entries_after_cutoff: false
+#    Meaning: at most one entry per symbol, and only if that entry's fill
+#    time is strictly before 10:30 ET. No new entries at/after 10:30.
+#    Set allow_entries_after_cutoff: true to still take post-10:30 signals
+#    after the one morning slot is used (or instead, if the first setup
+#    is late). Set entry_cutoff: null to disable the clock gate.
+#    One open position per symbol (no pyramiding). Default is skip new
+#    entries while already in a position; set on_open_position: replace
+#    to close/replace on a new signal.
 # 10. Universe is fully configurable below. A morning screener will populate
 #     this list later — edit it by hand for now.
 
@@ -51,7 +64,11 @@ orb:
   edge_pct: 0.05                   # fraction of OR height (0.05 = 5%), not "5"
   on_open_position: skip           # skip | replace
   take_profit: midpoint            # v1; A/B tested later
-  cooldown_minutes: 0              # 0 = no cooldown; multiple trades allowed
+  stop_mode: orb_extreme           # orb_extreme | reversal_candle
+  entry_cutoff: "10:30"            # no new entries at/after this clock (ET)
+  max_trades_before_cutoff: 1      # per symbol per session before the cutoff
+  allow_entries_after_cutoff: false
+  cooldown_minutes: 0              # extra pause after a fire; 0 = off
 
 sizing:
   type: shares                     # shares | percent_equity

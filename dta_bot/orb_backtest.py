@@ -25,7 +25,7 @@ from dta_bot.backtest import (
 from dta_bot.config import ActionSpec
 from dta_bot.engine import BarMap
 from dta_bot.models import Account
-from dta_bot.orb import OrbSetup, find_all_setups, next_signal_bar
+from dta_bot.orb import OrbSetup, find_all_setups, gate_setups, next_signal_bar
 from dta_bot.orb_config import OrbBotConfig
 from dta_bot.orb_engine import RULE_ID
 from dta_bot.sizing import shares_for
@@ -70,10 +70,25 @@ def run_orb_backtest(
             orb_timeframe=orb_tf,
             signal_timeframe=sig_tf,
             edge_pct=config.orb.edge_pct,
+            stop_mode=config.orb.stop_mode,
         )
-        for setup in setups:
+        for setup, gate_skip in gate_setups(setups, **config.orb.gate_kwargs()):
             nxt = next_signal_bar(series, setup.reversal.timestamp)
             close_ts = _aware(setup.reversal.timestamp) + duration(sig_tf)
+            if gate_skip:
+                signals.append(
+                    Signal(
+                        rule_id=RULE_ID,
+                        symbol=symbol,
+                        action_type="buy" if setup.side == "buy" else "sell",
+                        signal_time=close_ts,
+                        bar_ts=setup.reversal.timestamp,
+                        reason=setup.explain(),
+                        accepted=False,
+                        skip_reason=gate_skip,
+                    )
+                )
+                continue
             accepted = nxt is not None
             signals.append(
                 Signal(

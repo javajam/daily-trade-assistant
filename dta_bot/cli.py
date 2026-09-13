@@ -134,6 +134,9 @@ def cmd_validate(args: argparse.Namespace) -> int:
         )
         print(
             f"  on_open_position={cfg.orb.on_open_position} take_profit={cfg.orb.take_profit} "
+            f"stop_mode={cfg.orb.stop_mode} entry_cutoff={cfg.orb.entry_cutoff} "
+            f"max_trades_before_cutoff={cfg.orb.max_trades_before_cutoff} "
+            f"allow_entries_after_cutoff={cfg.orb.allow_entries_after_cutoff} "
             f"sizing={cfg.sizing.type} {cfg.sizing.value}"
         )
         return 0
@@ -250,7 +253,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
 
     for path, kind, cfg in loaded:
         if isinstance(cfg, OrbBotConfig):
-            notes = assumptions_orb(friction, args.starting_equity)
+            notes = assumptions_orb(friction, args.starting_equity, cfg)
             assumption_blocks.extend(notes)
             print(f"\n=== backtest orb_reversal ({path}) ===")
             compact = run_orb_book(
