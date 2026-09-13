@@ -280,6 +280,20 @@ Yahoo (no Alpaca keys) or Alpaca paper data:
 python -m dta_bot backtest --config config/orb_reversal.example.yaml --source yahoo
 ```
 
+Compare ORB with the three sample rules on one report (separate books — the engines do not share positions):
+
+```bash
+python -m dta_bot backtest \
+  --config config/orb_reversal.example.yaml \
+  --compare-config config/rules.example.yaml \
+  --source yahoo \
+  --starting-equity 100000 \
+  --output artifacts/orb_vs_sample_comparison.json \
+  --report artifacts/orb_vs_sample_comparison.md
+```
+
+Yahoo history is short on fast bars: **5m/15m/30m ≈ 60 days**, **1h ≈ 2 years**. ORB needs 15m for the opening range and 5m for signals, so its longest reliable Yahoo window is that 60-day cap. The 1h hammer book can look back further; P&L% is not time-normalized across books.
+
 `evaluate` scans the whole fixture and prints `[FIRE]` / `[NO]`. The live/paper `run` loop only acts when the **latest closed signal bar is the reversal** (so a market order lands on the next bar’s open). `run` still defaults to dry-run unless you pass `--live-orders` (paper unless the live gates are set).
 
 ---

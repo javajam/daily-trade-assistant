@@ -193,13 +193,19 @@ def _next_bar(series: list[Bar], after_ts: datetime) -> Optional[Bar]:
 
 
 def _mark_to_market(cash: float, lots: list[OpenLot], last_price: dict[str, float]) -> float:
+    """Cash plus long inventory minus short liabilities.
+
+    Entries already moved cash (longs debit ``qty * entry``, shorts credit it),
+    so a short must subtract ``qty * mark`` — not add ``qty * (2*entry - mark)``,
+    which double-counts proceeds and fabricates a drawdown when the short closes.
+    """
     equity = cash
     for lot in lots:
         px = last_price.get(lot.symbol, lot.entry_price)
         if lot.side == "buy":
             equity += lot.qty * px
         else:
-            equity += lot.qty * (2.0 * lot.entry_price - px)
+            equity -= lot.qty * px
     return equity
 
 
