@@ -209,6 +209,7 @@ def test_ema9_trend_bracket_nobe_12_uses_tighter_brackets():
     rule = cfg.rules[0]
     assert rule.action.breakeven_after_bars == 0
     assert rule.action.exit == "fixed_bracket"
+    assert rule.action.stop_mode == "percent"
     assert rule.action.stop_loss_pct == 1.0
     assert rule.action.take_profit_pct == 2.0
     assert rule.action.size and rule.action.size.type == "shares"
@@ -236,6 +237,7 @@ def test_ema9_trend_risk_nobe_matches_stop_pct_to_bracket():
     assert tight.rules[0].action.size.stop_pct == 1.0
     assert tight.rules[0].action.stop_loss_pct == 1.0
     assert tight.rules[0].action.take_profit_pct == 2.0
+    assert tight.rules[0].action.stop_mode == "percent"
     assert tight.rules[0].action.exit == "fixed_bracket"
     assert tight.rules[0].action.breakeven_after_bars == 0
     for cfg in (wide, tight):
@@ -245,6 +247,51 @@ def test_ema9_trend_risk_nobe_matches_stop_pct_to_bracket():
         assert any(isinstance(c, MaCrossCond) for c in cfg.rules[0].when.conditions)
         rsi = find_rsi_condition(cfg.rules[0].when)
         assert rsi is not None and rsi.below == 70
+
+
+def test_ema9_trend_sma20_stop_configs_load():
+    ten = load_config("config/ema9_trend_bracket_sma20.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.stop_mode == "sma20"
+    assert rule.action.stop_sma_period == 20
+    assert rule.action.take_profit_pct == 2.0
+    assert rule.action.stop_loss_pct is None
+    assert rule.action.breakeven_after_bars == 0
+    assert rule.action.exit == "fixed_bracket"
+    assert rule.action.size and rule.action.size.type == "shares"
+    assert rule.action.size.value == 10
+    assert ten.settings.entry_cutoff == "12:00"
+    assert ten.settings.flatten_by == "15:55"
+    notake = load_config("config/ema9_trend_bracket_sma20_notake.example.yaml")
+    assert notake.rules[0].action.stop_mode == "sma20"
+    assert notake.rules[0].action.take_profit_pct is None
+    risk = load_config("config/ema9_trend_risk_sma20.example.yaml")
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+    assert risk.rules[0].action.size.stop_pct is None
+    assert risk.rules[0].action.stop_mode == "sma20"
+    assert risk.rules[0].action.take_profit_pct == 2.0
+    risk_notake = load_config("config/ema9_trend_risk_sma20_notake.example.yaml")
+    assert risk_notake.rules[0].action.stop_mode == "sma20"
+    assert risk_notake.rules[0].action.take_profit_pct is None
+
+
+def test_stop_mode_unknown_rejected(tmp_path: Path):
+    path = tmp_path / "bad_stop.yaml"
+    path.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action: {type: buy, size: {type: shares, value: 1}, stop_mode: trail}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="stop_mode"):
+        load_config(path)
 
 
 def test_exit_alias_and_unknown_rejected(tmp_path: Path):
@@ -297,6 +344,11 @@ def test_cli_validate_timeframe_override(capsys):
     assert rsi_rc == 0
     rsi_out = capsys.readouterr().out
     assert "rsi=RSI14 < 70" in rsi_out
+    sma_rc = main(["validate", "--config", "config/ema9_trend_bracket_sma20.example.yaml"])
+    assert sma_rc == 0
+    sma_out = capsys.readouterr().out
+    assert "stop_mode=sma20" in sma_out
+    assert "stop_sma_period=20" in sma_out
 
 
 def test_ema_cross_yaml_parses_and_does_not_steal_level_ema():

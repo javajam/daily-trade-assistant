@@ -807,3 +807,133 @@ def test_ema_sma_cross_stop_beats_cross_under_on_same_bar():
     )
     assert result.trades[0].exit_reason == "stop"
     assert result.trades[0].exit_price == pytest.approx(100.5 * 0.985)
+
+
+def _sma20_warmup(close: float = 100.0) -> list[Bar]:
+    return [bar(i, close, close + 0.1, close - 0.1, close) for i in range(20)]
+
+
+def _sma20_rule(**action_kw) -> RuleSpec:
+    defaults = dict(
+        type="buy",
+        size=SizeSpec(type="shares", value=10),
+        exit="fixed_bracket",
+        stop_mode="sma20",
+        stop_sma_period=20,
+        take_profit_pct=2.0,
+    )
+    defaults.update(action_kw)
+    return _buy_rule(action=ActionSpec(**defaults))
+
+
+def test_sma20_stop_fills_at_signal_bar_sma():
+    # 20 bars @ 100, then engulfing close 101 → SMA20 = (19*100 + 101) / 20 = 100.05
+    warmup = _sma20_warmup()
+    warmup[-2] = Bar(warmup[-2].timestamp, 100.0, 100.2, 8.0, 8.2, 1000)
+    warmup[-1] = Bar(warmup[-1].timestamp, 8.1, 102.0, 8.0, 101.0, 1000)
+    from dta_bot.indicators import sma as _sma
+
+    signal_sma = _sma([b.close for b in warmup], 20)
+    assert signal_sma is not None
+    assert signal_sma < 101.0
+    fill = Bar(bar(20, 101.0, 101.2, 100.8, 101.1).timestamp, 101.0, 101.2, 100.8, 101.1, 1000)
+    hit = Bar(bar(21, 101.1, 101.2, signal_sma - 0.20, 100.5).timestamp, 101.1, 101.2, signal_sma - 0.20, 100.5, 1000)
+    result = run_backtest(_cfg(_sma20_rule()), {("AAPL", "15Min"): warmup + [fill, hit]})
+    assert result.report.signals == 1
+    assert result.signals[0].accepted is True
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.exit_reason == "stop"
+    assert trade.exit_price == pytest.approx(signal_sma)
+    assert trade.entry_price == 101.0
+    assert any("stop_mode: sma20" in n for n in result.report.notes)
+
+
+def test_sma20_stop_skips_when_sma_above_signal_close():
+    # Flat 110s, then a lower engulfing (close 102.5) — SMA20 stays ~109, above the close.
+    warmup = _sma20_warmup(110.0)
+    warmup[-2] = Bar(warmup[-2].timestamp, 102.0, 102.2, 99.0, 99.2, 1000)
+    warmup[-1] = Bar(warmup[-1].timestamp, 99.1, 103.0, 98.0, 102.5, 1000)
+    from dta_bot.indicators import sma as _sma
+
+    signal_sma = _sma([b.close for b in warmup], 20)
+    assert signal_sma is not None and signal_sma > 102.5
+    fill = Bar(bar(20, 102.5, 103.0, 102.0, 102.6).timestamp, 102.5, 103.0, 102.0, 102.6, 1000)
+    result = run_backtest(_cfg(_sma20_rule()), {("AAPL", "15Min"): warmup + [fill]})
+    assert result.report.signals == 1
+    assert result.signals[0].accepted is False
+    assert result.signals[0].skip_reason == "sma20_above_entry"
+    assert result.report.trades == 0
+
+
+def test_sma20_stop_skips_fill_when_open_at_or_below_sma():
+    warmup = _sma20_warmup()
+    warmup[-2] = Bar(warmup[-2].timestamp, 100.0, 100.2, 8.0, 8.2, 1000)
+    warmup[-1] = Bar(warmup[-1].timestamp, 8.1, 102.0, 8.0, 101.0, 1000)
+    from dta_bot.indicators import sma as _sma
+
+    signal_sma = _sma([b.close for b in warmup], 20)
+    assert signal_sma is not None
+    # Next open gaps through the SMA20 stop — skip rather than enter already stopped.
+    fill = Bar(
+        bar(20, signal_sma - 0.10, signal_sma + 0.20, signal_sma - 0.20, signal_sma).timestamp,
+        signal_sma - 0.10,
+        signal_sma + 0.20,
+        signal_sma - 0.20,
+        signal_sma,
+        1000,
+    )
+    result = run_backtest(_cfg(_sma20_rule()), {("AAPL", "15Min"): warmup + [fill]})
+    assert result.report.signals == 1
+    assert result.signals[0].accepted is True
+    assert result.report.trades == 0
+    assert any("skipped at fill because SMA20" in n for n in result.report.notes)
+
+
+def test_sma20_stop_keeps_percent_take():
+    warmup = _sma20_warmup()
+    warmup[-2] = Bar(warmup[-2].timestamp, 100.0, 100.2, 8.0, 8.2, 1000)
+    warmup[-1] = Bar(warmup[-1].timestamp, 8.1, 102.0, 8.0, 101.0, 1000)
+    fill = Bar(bar(20, 101.0, 103.10, 100.9, 102.5).timestamp, 101.0, 103.10, 100.9, 102.5, 1000)
+    result = run_backtest(_cfg(_sma20_rule()), {("AAPL", "15Min"): warmup + [fill]})
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.exit_reason == "take"
+    assert trade.exit_price == pytest.approx(101.0 * 1.02)
+
+
+def test_sma20_stop_without_take_holds_to_eod():
+    warmup = _sma20_warmup()
+    warmup[-2] = Bar(warmup[-2].timestamp, 100.0, 100.2, 8.0, 8.2, 1000)
+    warmup[-1] = Bar(warmup[-1].timestamp, 8.1, 102.0, 8.0, 101.0, 1000)
+    from dta_bot.indicators import sma as _sma
+
+    signal_sma = _sma([b.close for b in warmup], 20)
+    fill = Bar(bar(20, 101.0, 101.5, signal_sma + 0.10, 101.2).timestamp, 101.0, 101.5, signal_sma + 0.10, 101.2, 1000)
+    result = run_backtest(
+        _cfg(_sma20_rule(take_profit_pct=None)),
+        {("AAPL", "15Min"): warmup + [fill]},
+    )
+    assert result.report.trades == 1
+    assert result.trades[0].exit_reason == "eod"
+    assert result.trades[0].exit_price == 101.2
+
+
+def test_sma20_risk_pct_sizes_from_entry_to_sma():
+    warmup = _sma20_warmup()
+    warmup[-2] = Bar(warmup[-2].timestamp, 100.0, 100.2, 8.0, 8.2, 1000)
+    warmup[-1] = Bar(warmup[-1].timestamp, 8.1, 102.0, 8.0, 101.0, 1000)
+    from dta_bot.indicators import sma as _sma
+
+    signal_sma = _sma([b.close for b in warmup], 20)
+    assert signal_sma is not None
+    r = 101.0 - signal_sma
+    expected = int(1000.0 // r)
+    fill = Bar(bar(20, 101.0, 101.2, signal_sma + 0.10, 101.1).timestamp, 101.0, 101.2, signal_sma + 0.10, 101.1, 1000)
+    rule = _sma20_rule(
+        size=SizeSpec(type="risk_pct", equity_risk=0.01),
+        take_profit_pct=None,
+    )
+    result = run_backtest(_cfg(rule), {("AAPL", "15Min"): warmup + [fill]}, starting_equity=100_000)
+    assert result.report.trades == 1
+    assert result.trades[0].qty == expected

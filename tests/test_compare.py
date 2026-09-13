@@ -235,6 +235,26 @@ def test_run_rule_books_prefixes_and_soxl_breakout():
     assert "15m ema9_trend (cutoff 12:00, flat 15:55, 1.0/2.0)" in [
         block["label"] for block in nobe12_runs
     ]
+    sma20 = load_config("config/ema9_trend_bracket_sma20.example.yaml")
+    assert session_gate_suffix(sma20) == " (cutoff 12:00, flat 15:55, SMA20/2.0)"
+    sma20_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, sma20)
+    assert any("stop_mode: sma20" in n and "SMA(20)" in n for n in sma20_notes)
+    assert any("R = signal-bar close − SMA20" in n for n in sma20_notes)
+    notake = load_config("config/ema9_trend_bracket_sma20_notake.example.yaml")
+    assert session_gate_suffix(notake) == " (cutoff 12:00, flat 15:55, SMA20 stop)"
+    sma20_runs = run_rule_books(
+        sma20,
+        {},
+        starting_equity=100_000,
+        commission=0.0,
+        slippage_pct=0.0,
+        data_source="fixture",
+        assumptions=["x"],
+        label_prefix="15m",
+    )
+    assert "15m ema9_trend (cutoff 12:00, flat 15:55, SMA20/2.0)" in [
+        block["label"] for block in sma20_runs
+    ]
     soxl = next(block for block in runs if block["label"] == f"15m ema9_trend SOXL{gated}")
     assert soxl["report"]["trades"] == 0
     assert any("Isolated SOXL" in n for n in soxl["report"]["notes"])

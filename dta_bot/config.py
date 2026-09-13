@@ -64,6 +64,16 @@ EXIT_ALIASES = {
 
 
 BREAKEVEN_VALID_MODES = ("above_ema", "always")
+STOP_MODES = ("percent", "sma20")
+STOP_MODE_ALIASES = {
+    "percent": "percent",
+    "pct": "percent",
+    "fixed_pct": "percent",
+    "sma20": "sma20",
+    "sma_20": "sma20",
+    "sma": "sma20",
+    "at_sma20": "sma20",
+}
 
 
 class ActionSpec(BaseModel):
@@ -73,6 +83,12 @@ class ActionSpec(BaseModel):
     limit_offset_pct: Optional[float] = None
     stop_loss_pct: Optional[float] = Field(default=None, gt=0)
     take_profit_pct: Optional[float] = Field(default=None, gt=0)
+    # percent = stop_loss_pct from the signal-bar close (legacy).
+    # sma20 = protective stop at SMA(stop_sma_period) of the signal bar (fixed
+    # level, not trailed). Longs skip when that SMA is at/above the signal close
+    # or the next-bar fill. take_profit_pct is unchanged (omit for stop-only).
+    stop_mode: Literal["percent", "sma20"] = "percent"
+    stop_sma_period: int = Field(default=20, ge=2)
     # fixed_bracket = optional % stop/take. ema_invalid = hold until a
     # signal-timeframe close is on the wrong side of EMA (long: close < EMA).
     # Optional stop_loss_pct is then a catastrophic stop only; take is ignored.
@@ -118,6 +134,16 @@ class ActionSpec(BaseModel):
         if key not in BREAKEVEN_VALID_MODES:
             raise ValueError("breakeven_valid must be 'above_ema' or 'always'")
         return key
+
+    @field_validator("stop_mode", mode="before")
+    @classmethod
+    def _stop_mode(cls, v: Any) -> str:
+        if v is None or str(v).strip() == "":
+            return "percent"
+        key = str(v).strip().lower().replace("-", "_").replace(" ", "_")
+        if key not in STOP_MODE_ALIASES:
+            raise ValueError("stop_mode must be 'sma20' or 'percent'")
+        return STOP_MODE_ALIASES[key]
 
     @model_validator(mode="after")
     def _size_required(self) -> "ActionSpec":
@@ -640,6 +666,8 @@ def _parse_action(raw: dict[str, Any]) -> ActionSpec:
         limit_offset_pct=raw.get("limit_offset_pct"),
         stop_loss_pct=raw.get("stop_loss_pct"),
         take_profit_pct=raw.get("take_profit_pct"),
+        stop_mode=raw.get("stop_mode", "percent"),
+        stop_sma_period=raw.get("stop_sma_period", raw.get("sma_period", raw.get("exit_sma_period", 20))),
         exit=raw.get("exit", "fixed_bracket"),
         exit_ema_period=raw.get("exit_ema_period", raw.get("ema_period", 9)),
         exit_sma_period=raw.get("exit_sma_period", raw.get("sma_period", 20)),

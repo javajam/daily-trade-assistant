@@ -12,6 +12,11 @@ def sma(values: Sequence[float], period: int) -> Optional[float]:
     return sum(window) / period
 
 
+def sma_through(closes: Sequence[float], period: int) -> Optional[float]:
+    """SMA of the last ``period`` closes (oldest-first series through the signal bar)."""
+    return sma(closes, period)
+
+
 def ema(values: Sequence[float], period: int) -> Optional[float]:
     if period <= 0 or len(values) < period:
         return None

@@ -24,8 +24,9 @@ from dta_bot.orb_engine import (
     position_blocks_entry,
     setup_from_eval,
 )
+from dta_bot.indicators import sma
 from dta_bot.session import fill_at_or_after_cutoff, is_flatten_bar, wall_clock_at_or_after
-from dta_bot.sizing import build_order
+from dta_bot.sizing import build_order, sma_stop_valid
 from dta_bot.state import BotState, parse_ts, save_state
 from dta_bot.timeframes import duration
 
@@ -110,6 +111,27 @@ def execute_decision(
     if last is None:
         log.error("No last price for %s — cannot size order", ev.symbol)
         return
+    sma_value = _signal_sma(rule, ev.symbol, bars)
+    if ev.action_type != "close" and rule.action.stop_mode == "sma20":
+        side = "buy" if ev.action_type == "buy" else "sell"
+        if sma_value is None:
+            log.info(
+                "[SKIP] %s / %s — stop_mode sma20 but SMA(%s) unavailable",
+                ev.symbol,
+                ev.rule_id,
+                rule.action.stop_sma_period,
+            )
+            return
+        if not sma_stop_valid(side, last, sma_value):
+            log.info(
+                "[SKIP] %s / %s — SMA%s %.4f is not beyond last %.4f (stop_mode sma20)",
+                ev.symbol,
+                ev.rule_id,
+                rule.action.stop_sma_period,
+                sma_value,
+                last,
+            )
+            return
 
     if ev.action_type != "close" and _entry_blocked_by_cutoff(rule, ev.symbol, config, bars):
         log.info(
@@ -140,6 +162,7 @@ def execute_decision(
             account=account,
             last_price=last,
             position=positions.get(ev.symbol),
+            sma_value=sma_value,
         )
         if order is None:
             log.error("Could not build order for %s / %s", ev.symbol, ev.rule_id)
@@ -283,6 +306,18 @@ def _flatten_ema_invalid(
             broker.close_position(symbol)
             if dry_run:
                 log.info("DRY-RUN: EMA-invalid flatten was not sent to Alpaca")
+
+
+def _signal_sma(rule: RuleSpec, symbol: str, bars) -> Optional[float]:
+    """SMA(stop_sma_period) on the finest rule timeframe through the last closed bar."""
+    needed = condition_timeframes(rule.when)
+    if not needed:
+        return None
+    fill_tf = min(needed, key=lambda t: duration(t))
+    series = bars.get((symbol.upper(), fill_tf), []) or []
+    if not series:
+        return None
+    return sma([b.close for b in series], rule.action.stop_sma_period)
 
 
 def _entry_blocked_by_cutoff(
