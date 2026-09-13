@@ -38,6 +38,21 @@ def test_bracket_buy():
     assert take == pytest.approx(120.0)
 
 
+def test_ema_invalid_ignores_percent_take_keeps_optional_stop():
+    action = ActionSpec(
+        type="buy",
+        size=SizeSpec(type="shares", value=1),
+        exit="ema_invalid",
+        stop_loss_pct=10,
+        take_profit_pct=20,
+    )
+    stop, take = bracket_prices(action, 100.0, "buy")
+    assert stop == pytest.approx(90.0)
+    assert take is None
+    off = ActionSpec(type="buy", size=SizeSpec(type="shares", value=1), exit="ema_invalid")
+    assert bracket_prices(off, 100.0, "buy") == (None, None)
+
+
 def test_build_market_buy_order():
     action = ActionSpec(type="buy", size=SizeSpec(type="shares", value=5), stop_loss_pct=2)
     order = build_order(symbol="AAPL", action=action, account=_acct(), last_price=100.0, position=None)

@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from dta_bot.backtest import OpenLot, _mark_to_market, run_backtest, summarize
 from dta_bot.config import ActionSpec, BotConfig, RuleSpec, Settings, SizeSpec, parse_condition
 from dta_bot.models import Bar
@@ -175,6 +177,66 @@ def test_same_bar_stop_and_take_uses_stop():
     ]
     result = run_backtest(_cfg(_buy_rule()), {("AAPL", "15Min"): bars})
     assert result.trades[0].exit_reason == "stop"
+
+
+def test_ema_invalid_exits_at_close_below_ema9():
+    bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(12)]
+    bars[-2] = Bar(bars[-2].timestamp, 10.0, 10.1, 9.9, 10.0, 1000)
+    bars[-1] = Bar(bars[-1].timestamp, 10.0, 12.5, 9.9, 12.0, 1000)
+    fill = Bar(bar(12, 12.0, 12.3, 11.8, 12.1).timestamp, 12.0, 12.3, 11.8, 12.1, 1000)
+    drop = Bar(bar(13, 12.1, 12.2, 9.4, 9.5).timestamp, 12.1, 12.2, 9.4, 9.5, 1000)
+    rule = _buy_rule(
+        id="ema9",
+        when=parse_condition({"ema_cross": {"period": 9, "timeframe": "15m", "direction": "bullish"}}),
+        action=ActionSpec(type="buy", size=SizeSpec(type="shares", value=10), exit="ema_invalid"),
+    )
+    result = run_backtest(_cfg(rule), {("AAPL", "15Min"): bars + [fill, drop]}, starting_equity=100_000)
+    assert result.report.signals == 1
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.exit_reason == "ema_invalid"
+    assert trade.entry_price == 12.0
+    assert trade.exit_price == 9.5
+    assert result.report.exit_reasons == {"ema_invalid": 1}
+
+
+def test_ema_invalid_does_not_exit_when_close_equals_or_holds_above_ema():
+    bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(12)]
+    bars[-2] = Bar(bars[-2].timestamp, 10.0, 10.1, 9.9, 10.0, 1000)
+    bars[-1] = Bar(bars[-1].timestamp, 10.0, 12.5, 9.9, 12.0, 1000)
+    hold = [
+        Bar(bar(12 + i, 12.0, 12.2, 11.9, 12.05).timestamp, 12.0, 12.2, 11.9, 12.05, 1000)
+        for i in range(3)
+    ]
+    rule = _buy_rule(
+        id="ema9",
+        when=parse_condition({"ema_cross": {"period": 9, "timeframe": "15m", "direction": "bullish"}}),
+        action=ActionSpec(type="buy", size=SizeSpec(type="shares", value=10), exit="ema_invalid"),
+    )
+    result = run_backtest(_cfg(rule), {("AAPL", "15Min"): bars + hold}, starting_equity=100_000)
+    assert result.report.trades == 1
+    assert result.trades[0].exit_reason == "eod"
+    assert result.trades[0].exit_price == 12.05
+
+
+def test_ema_invalid_optional_stop_still_fires_first():
+    bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(12)]
+    bars[-2] = Bar(bars[-2].timestamp, 10.0, 10.1, 9.9, 10.0, 1000)
+    bars[-1] = Bar(bars[-1].timestamp, 10.0, 12.5, 9.9, 12.0, 1000)
+    fill = Bar(bar(12, 12.0, 12.1, 11.5, 11.6).timestamp, 12.0, 12.1, 11.5, 11.6, 1000)
+    rule = _buy_rule(
+        id="ema9",
+        when=parse_condition({"ema_cross": {"period": 9, "timeframe": "15m", "direction": "bullish"}}),
+        action=ActionSpec(
+            type="buy",
+            size=SizeSpec(type="shares", value=10),
+            exit="ema_invalid",
+            stop_loss_pct=2.0,
+        ),
+    )
+    result = run_backtest(_cfg(rule), {("AAPL", "15Min"): bars + [fill]}, starting_equity=100_000)
+    assert result.trades[0].exit_reason == "stop"
+    assert result.trades[0].exit_price == pytest.approx(12.0 * 0.98)
 
 
 def test_ema_cross_entry_takes_profit():

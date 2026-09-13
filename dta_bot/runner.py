@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from dta_bot.broker import Broker
-from dta_bot.config import BotConfig, RuleSpec
+from dta_bot.config import BotConfig, RuleSpec, condition_timeframes
 from dta_bot.engine import cooldown_key, evaluate_all, fire_key
 from dta_bot.killswitch import is_active, reason as kill_reason
 from dta_bot.market_data import MarketData
@@ -25,7 +25,8 @@ from dta_bot.orb_engine import (
     setup_from_eval,
 )
 from dta_bot.sizing import build_order
-from dta_bot.state import BotState, save_state
+from dta_bot.state import BotState, parse_ts, save_state
+from dta_bot.timeframes import duration
 
 log = logging.getLogger("dta_bot.runner")
 
@@ -157,6 +158,67 @@ def execute_decision(
         log.info("DRY-RUN: order was not sent to Alpaca")
 
 
+def last_rule_fire_ts(state: BotState, rule_id: str, symbol: str) -> Optional[datetime]:
+    """Latest signal-bar timestamp marked fired for this rule+symbol."""
+    prefix = f"{rule_id}:{symbol.upper()}:"
+    times: list[datetime] = []
+    for key in state.fired_keys:
+        if key.startswith(prefix):
+            times.append(parse_ts(key[len(prefix) :]))
+    return max(times) if times else None
+
+
+def _flatten_ema_invalid(
+    config: BotConfig,
+    broker: Broker,
+    bars,
+    state: BotState,
+    *,
+    dry_run: bool,
+) -> None:
+    """Close paper/live lots when a signal-timeframe close invalidates EMA.
+
+    Long: close < EMA. If we cannot prove the bar is after entry (no fire key),
+    skip flatten so a restart cannot dump a fresh fill. Optional catastrophic
+    stop stays on the broker when stop_loss_pct is set.
+    """
+    kill_file = config.settings.kill_switch_file
+    if is_active(kill_file):
+        return
+    positions = _position_map(broker.get_positions())
+    for rule in config.rules:
+        if not rule.enabled or rule.action.exit != "ema_invalid":
+            continue
+        needed = condition_timeframes(rule.when)
+        if not needed:
+            continue
+        fill_tf = min(needed, key=lambda t: duration(t))
+        for symbol in config.symbols_for(rule):
+            pos = positions.get(symbol.upper())
+            if pos is None:
+                continue
+            series = bars.get((symbol.upper(), fill_tf), []) or []
+            after = last_rule_fire_ts(state, rule.id, symbol)
+            hit = ema_cross_flatten_bar(
+                pos, series, after=after, period=rule.action.exit_ema_period
+            )
+            if hit is None:
+                continue
+            log.info(
+                "EMA-invalid flatten %s %s entry=%.4f close=%.4f EMA%s @%s rule=%s",
+                pos.side,
+                symbol,
+                pos.avg_entry_price,
+                hit.close,
+                rule.action.exit_ema_period,
+                hit.timestamp.isoformat(),
+                rule.id,
+            )
+            broker.close_position(symbol)
+            if dry_run:
+                log.info("DRY-RUN: EMA-invalid flatten was not sent to Alpaca")
+
+
 def run_once(
     config: BotConfig,
     *,
@@ -173,6 +235,8 @@ def run_once(
         kill_reason(config.settings.kill_switch_file) or "off",
     )
     bars = fetch_bars(config, data)
+    if any(rule.enabled and rule.action.exit == "ema_invalid" for rule in config.rules):
+        _flatten_ema_invalid(config, broker, bars, state, dry_run=dry_run)
     results = evaluate_all(config, bars, state)
     rules = {r.id: r for r in config.rules}
     fired = [ev for ev in results if ev.matched]

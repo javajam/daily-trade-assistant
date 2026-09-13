@@ -11,6 +11,7 @@ from dta_bot.compare import (
     pattern_hits_from_result,
     rank_books,
     rule_book_plan,
+    run_rule_books,
     sample_size_caveat,
 )
 from dta_bot.config import load_config
@@ -100,6 +101,10 @@ def test_assumptions_orb_document_new_defaults():
 def test_assumptions_rules_mention_ma_cross():
     notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0)
     assert any("MA-cross" in n for n in notes)
+    assert any("ema_invalid" in n and "close < EMA" in n for n in notes)
+    cfg = load_config("config/ema9_trend.example.yaml")
+    ema_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, cfg)
+    assert any("ema_invalid" in n and "close < EMA(9)" in n for n in ema_notes)
 
 
 def test_pattern_hits_count_ema_cross():
@@ -153,6 +158,27 @@ def test_ema9_rule_book_plan_isolates_each_entry():
     assert [label for label, _ids, _note in rule_book_plan(five)][:3] == labels[:3]
 
 
+def test_run_rule_books_prefixes_and_soxl_breakout():
+    cfg = load_config("config/ema9_trend.example.yaml")
+    runs = run_rule_books(
+        cfg,
+        {},
+        starting_equity=100_000,
+        commission=0.0,
+        slippage_pct=0.0,
+        data_source="fixture",
+        assumptions=["x"],
+        label_prefix="15m",
+        breakout_symbols=["SOXL"],
+    )
+    labels = [block["label"] for block in runs]
+    assert "15m ema9_trend" in labels
+    assert "15m ema9_trend SOXL" in labels
+    soxl = next(block for block in runs if block["label"] == "15m ema9_trend SOXL")
+    assert soxl["report"]["trades"] == 0
+    assert any("Isolated SOXL" in n for n in soxl["report"]["notes"])
+
+
 def test_format_side_by_side_table_lists_requested_metrics():
     left = {
         "report": {
@@ -186,6 +212,19 @@ def test_format_side_by_side_table_lists_requested_metrics():
     assert "| Max DD | $407.70 | $50.00 |" in text
     assert "take 21, stop 22, eod 1" in text
     assert "take 4, stop 6" in text
+    mixed = {
+        "report": {
+            "trades": 8,
+            "win_rate_pct": 50.0,
+            "total_pnl": 10.0,
+            "max_drawdown": 4.0,
+            "avg_win": 5.0,
+            "avg_loss": -2.5,
+            "exit_reasons": {"ema_invalid": 7, "eod": 1},
+        }
+    }
+    ema_lines = "\n".join(format_side_by_side_table([("15m ema9_trend", mixed)]))
+    assert "ema_invalid 7, take 0, stop 0, eod 1" in ema_lines
 
 
 def test_rule_book_plan_includes_entries_and_combined():

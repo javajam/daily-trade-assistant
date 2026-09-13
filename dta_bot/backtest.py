@@ -16,6 +16,7 @@ from typing import Any, Optional
 from dta_bot.config import AnyCondition, BotConfig, GroupCond, RuleSpec
 from dta_bot.engine import BarMap, cooldown_key, evaluate_rule, fire_key
 from dta_bot.models import Account, Bar
+from dta_bot.orb import ema_cross_exit, ema_through
 from dta_bot.sizing import bracket_prices, shares_for
 from dta_bot.state import BotState
 from dta_bot.timeframes import duration, normalize
@@ -117,6 +118,8 @@ class OpenLot:
     take: Optional[float]
     signal_time: datetime
     tf: str
+    exit_mode: str = "fixed_bracket"
+    exit_ema_period: int = 9
 
 
 @dataclass
@@ -133,6 +136,8 @@ class PendingOrder:
     signal_time: datetime
     signal_price: float
     entry_rule_id: str = ""
+    exit_mode: str = "fixed_bracket"
+    exit_ema_period: int = 9
 
 
 @dataclass
@@ -492,11 +497,15 @@ def run_backtest(
                     take=order.take,
                     signal_time=order.signal_time,
                     tf=order.tf,
+                    exit_mode=order.exit_mode,
+                    exit_ema_period=order.exit_ema_period,
                 )
             )
         pending = still_pending
 
         # 2) Stop / take on the bar that just completed (after any fill at its open).
+        #    ema_invalid then exits at this bar's close when the close is on the
+        #    wrong side of EMA (long: close < EMA). Same-bar stop + invalid → stop.
         for symbol, tf, bar in closing:
             last_price[symbol] = bar.close
             survivors: list[OpenLot] = []
@@ -505,6 +514,10 @@ def run_backtest(
                     survivors.append(lot)
                     continue
                 hit = _stop_take_hit(bar, lot)
+                if hit is None and lot.exit_mode == "ema_invalid":
+                    ema_val = ema_through(series_map.get((symbol, tf), []), bar, lot.exit_ema_period)
+                    if ema_cross_exit(side=lot.side, close=bar.close, ema_value=ema_val):
+                        hit = ("ema_invalid", bar.close)
                 if hit is None:
                     survivors.append(lot)
                     continue
@@ -566,6 +579,8 @@ def run_backtest(
                                 take=None,
                                 signal_time=now,
                                 signal_price=last_price.get(symbol, nxt.open),
+                                exit_mode=rule.action.exit,
+                                exit_ema_period=rule.action.exit_ema_period,
                             )
                         )
                 elif not allow_pyramid and symbol in symbols_in_position():
@@ -608,6 +623,8 @@ def run_backtest(
                                     take=take,
                                     signal_time=now,
                                     signal_price=px,
+                                    exit_mode=rule.action.exit,
+                                    exit_ema_period=rule.action.exit_ema_period,
                                 )
                             )
 

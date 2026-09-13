@@ -23,6 +23,19 @@ class SizeSpec(BaseModel):
         return v.lower()
 
 
+EXIT_MODES = ("fixed_bracket", "ema_invalid")
+EXIT_ALIASES = {
+    "ema_invalid": "ema_invalid",
+    "ema_invalidation": "ema_invalid",
+    "ema9_invalid": "ema_invalid",
+    "hold_ema": "ema_invalid",
+    "invalid": "ema_invalid",
+    "fixed_bracket": "fixed_bracket",
+    "bracket": "fixed_bracket",
+    "fixed": "fixed_bracket",
+}
+
+
 class ActionSpec(BaseModel):
     type: Literal["buy", "sell", "close"]
     size: Optional[SizeSpec] = None
@@ -30,7 +43,22 @@ class ActionSpec(BaseModel):
     limit_offset_pct: Optional[float] = None
     stop_loss_pct: Optional[float] = Field(default=None, gt=0)
     take_profit_pct: Optional[float] = Field(default=None, gt=0)
+    # fixed_bracket = optional % stop/take. ema_invalid = hold until a
+    # signal-timeframe close is on the wrong side of EMA (long: close < EMA).
+    # Optional stop_loss_pct is then a catastrophic stop only; take is ignored.
+    exit: Literal["fixed_bracket", "ema_invalid"] = "fixed_bracket"
+    exit_ema_period: int = Field(default=9, ge=2)
     time_in_force: str = "day"
+
+    @field_validator("exit", mode="before")
+    @classmethod
+    def _exit(cls, v: Any) -> str:
+        if v is None or str(v).strip() == "":
+            return "fixed_bracket"
+        key = str(v).strip().lower().replace("-", "_").replace(" ", "_")
+        if key not in EXIT_ALIASES:
+            raise ValueError("exit must be 'ema_invalid' or 'fixed_bracket'")
+        return EXIT_ALIASES[key]
 
     @model_validator(mode="after")
     def _size_required(self) -> "ActionSpec":
@@ -243,6 +271,37 @@ def with_timeframe(config: BotConfig, timeframe: str) -> BotConfig:
     return BotConfig(settings=settings, universe=list(config.universe), rules=rules)
 
 
+def restrict_universe(config: BotConfig, symbols: Optional[list[str]]) -> BotConfig:
+    """Keep only ``symbols`` in the universe and on each rule's symbol list."""
+    if not symbols:
+        return config
+    wanted = [s.strip().upper() for s in symbols if s and str(s).strip()]
+    wanted_set = set(wanted)
+    if not wanted_set:
+        return config
+    rules: list[RuleSpec] = []
+    for rule in config.rules:
+        if rule.symbols:
+            kept = [s for s in rule.symbols if s in wanted_set]
+            if not kept:
+                continue
+            rules.append(rule.model_copy(update={"symbols": kept}))
+        else:
+            rules.append(rule)
+    if not rules:
+        raise ValueError(f"No rules remain after restricting universe to {wanted}")
+    return BotConfig(settings=config.settings, universe=wanted, rules=rules)
+
+
+def timeframe_label(config: BotConfig) -> str:
+    """Short bar-size tag for book labels (15m / 5m). Empty if unset."""
+    tf = config.settings.timeframe
+    if not tf:
+        return ""
+    aliases = {"15Min": "15m", "5Min": "5m", "1Min": "1m", "30Min": "30m", "1Hour": "1h", "1Day": "1d"}
+    return aliases.get(tf, tf)
+
+
 def _parse_ma_cross(raw: dict[str, Any], default_timeframe: Optional[str] = None) -> MaCrossCond:
     block = (
         raw.get("ema_cross")
@@ -372,6 +431,8 @@ def _parse_action(raw: dict[str, Any]) -> ActionSpec:
         limit_offset_pct=raw.get("limit_offset_pct"),
         stop_loss_pct=raw.get("stop_loss_pct"),
         take_profit_pct=raw.get("take_profit_pct"),
+        exit=raw.get("exit", "fixed_bracket"),
+        exit_ema_period=raw.get("exit_ema_period", 9),
         time_in_force=raw.get("time_in_force", "day"),
     )
 

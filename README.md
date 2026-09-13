@@ -190,8 +190,10 @@ rules:
       size: { type: shares | percent_equity, value: 10 }  # required for buy/sell
       order: market | limit
       limit_offset_pct: 0.05
-      stop_loss_pct: 1.5     # optional Alpaca bracket
-      take_profit_pct: 3.0
+      exit: ema_invalid | fixed_bracket   # default fixed_bracket
+      exit_ema_period: 9                  # used when exit is ema_invalid
+      stop_loss_pct: 1.5     # optional; catastrophic-only when exit is ema_invalid
+      take_profit_pct: 3.0   # ignored when exit is ema_invalid
 ```
 
 **Patterns:** `doji`, `bullish_engulfing`, `bearish_engulfing`, `hammer`, `inverted_hammer`, `shooting_star`, `morning_star`, `evening_star`, `three_white_soldiers`, `three_black_crows`.
@@ -202,30 +204,32 @@ rules:
 
 ### 9 EMA trend (sample strategy)
 
-`config/ema9_trend.example.yaml` is a long-only book on AAPL/MSFT that **reuses the engulfing-with-trend filter and risk**: close above SMA(20), RSI(14) below 70, buy 10 shares, stop 1.5%, take 3.0%, 60-minute **wall-clock** cooldown. The trigger is a bullish **EMA(9) cross** instead of a bullish engulfing candle. Paper / `dry_run` defaults; no live.
+`config/ema9_trend.example.yaml` is a long-only book on **AAPL / MSFT / SOXL**. Entry reuses the engulfing-with-trend filter: close above SMA(20), RSI(14) below 70, buy 10 shares, 60-minute **wall-clock** cooldown. The trigger is a bullish **EMA(9) cross** instead of a bullish engulfing candle.
+
+Default exit is **`action.exit: ema_invalid`**: stay in the long until a signal-timeframe bar **closes < EMA(9)** and flatten at that close. Close == EMA9 stays valid. There is no 1.5%/3.0% bracket on the 9 EMA rules. Optional `stop_loss_pct` is a catastrophic stop only and is **off** in the example configs. Set `exit: fixed_bracket` plus `stop_loss_pct` / `take_profit_pct` to restore the old brackets. Paper / `dry_run` defaults; no live.
 
 Bar size is `settings.timeframe` (default **15m**). The same rules on 5-minute bars (every indicator on 5m; cooldown still 60 minutes):
 
 ```bash
-python -m dta_bot backtest --config config/ema9_trend.example.yaml --timeframe 5m --source yahoo
+python -m dta_bot backtest --config config/ema9_trend.example.yaml --timeframe 5m --source yahoo --breakout SOXL
 # or
-python -m dta_bot backtest --config config/ema9_trend_5m.example.yaml --source yahoo \
-  --output artifacts/ema9_5m.json --report artifacts/ema9_5m.md
+python -m dta_bot backtest --config config/ema9_trend_5m.example.yaml --source yahoo --breakout SOXL \
+  --output artifacts/ema9_ema_invalid_5m.json --report artifacts/ema9_ema_invalid_5m.md
 ```
 
-The same file also ships `ema9_cross_raw` (cross, no trend filter) and `engulfing-with-trend` (the control) so one backtest is a head-to-head on the same tape:
+The same file also ships `ema9_cross_raw` (cross, no trend filter, same EMA-invalid exit) and `engulfing-with-trend` (the control, still 1.5/3.0 brackets) so one backtest is a head-to-head on the same tape:
 
 ```bash
 python -m dta_bot validate --config config/ema9_trend.example.yaml
-python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yahoo \
-  --output artifacts/ema9_vs_engulfing.json --report artifacts/ema9_vs_engulfing.md
+python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yahoo --breakout SOXL \
+  --output artifacts/ema9_ema_invalid.json --report artifacts/ema9_ema_invalid.md
 ```
 
 Copy to `config/ema9_trend.yaml` or `config/ema9_trend_5m.yaml` (gitignored) and disable the ablation/control rules if you only want to paper the 9 EMA book.
 
-On the Yahoo 15m window 2026-06-17 → 2026-09-11 (AAPL/MSFT, 1560 bars each), isolated books were: **ema9_trend 44 trades, 50.00%, $1,404.89**; ablation `ema9_cross_raw` 53 trades, 49.06%, $1,236.03; **engulfing-with-trend 39 trades, 43.59%, $697.90** (reproduced again on this replay). Writeup: `artifacts/ema9_vs_engulfing.md`.
+On the Yahoo window 2026-06-17 → 2026-09-11, **EMA-invalidation** isolated books were: **15m AAPL/MSFT/SOXL 240 trades, 36.25%, $626.64**, max DD $850.25; **5m AAPL/MSFT/SOXL 498 trades, 30.72%, $-312.80**, max DD $722.18. Isolated SOXL: 15m 86 trades, 29.07%, $-835.05; 5m 170 trades, 28.24%, $-707.46. AAPL/MSFT only (same exit): 15m 154 / 40.26% / $1,461.69; 5m 328 / 32.01% / $394.66. Writeup: `artifacts/ema9_ema_invalid_5m_vs_15m.md`.
 
-Same calendar start on 5m (Yahoo `range=60d` still served 2026-06-17 → 2026-09-11; AAPL 4677 / MSFT 4676 closed 5m bars): **5m ema9_trend 56 trades, 48.21%, $1,305.23**, max DD $422.43, take 26 / stop 28 / eod 2. 5m engulfing-with-trend on that tape was 49 trades, 53.06%, $1,520.70. Side-by-side: `artifacts/ema9_5m_vs_15m.md`. Yahoo 5m/15m history is still documented as a ~60-day cap.
+Prior **fixed-bracket** AAPL/MSFT books (1.5/3.0) on the same tape, reproduced again: **15m 44 trades, 50.00%, $1,404.89**; **5m 56 trades, 48.21%, $1,305.23**. Writeups: `artifacts/ema9_vs_engulfing.md`, `artifacts/ema9_5m_vs_15m.md`. Yahoo 5m/15m history is still documented as a ~60-day cap.
 
 ### CLI
 

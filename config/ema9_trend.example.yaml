@@ -1,8 +1,13 @@
 # 9 EMA trend — long-only v1 (paper / dry_run).
 #
-# Same universe, SMA20 + RSI14 trend filter, 10-share size, 1.5/3.0 brackets,
-# and 60-minute wall-clock cooldown as engulfing-with-trend. The entry trigger
-# is a bullish close-across-EMA(9) instead of a bullish engulfing candle.
+# Universe AAPL / MSFT / SOXL. Entry is unchanged: bullish close-across-EMA(9)
+# plus close > SMA20 and RSI14 < 70. Default exit for this experiment is
+# EMA-invalidation — hold until a signal-timeframe bar closes < EMA(9)
+# (equals EMA stays valid) and flatten at that close. No 1.5/3.0 bracket.
+# Optional stop_loss_pct is a catastrophic stop only (omit / leave unset = off).
+#
+#   action.exit: ema_invalid     # this file's default
+#   action.exit: fixed_bracket   # restore percent stop/take (set stop_loss_pct / take_profit_pct)
 #
 # Bar size is parameterized: settings.timeframe (or --timeframe on the CLI)
 # rewrites every condition. Default here is 15m. Same book on 5m:
@@ -15,16 +20,18 @@
 # on that same bar (all indicators use the chosen timeframe).
 #
 # This file also ships:
-#   - ema9_cross_raw — same cross and risk, no SMA/RSI filter (ablation)
-#   - engulfing-with-trend — the control book on the same tape
+#   - ema9_cross_raw — same cross and EMA-invalid exit, no SMA/RSI filter (ablation)
+#   - engulfing-with-trend — control book on the same tape (still 1.5/3.0 brackets)
 # Isolated backtest books stay separate (one lot per symbol per book).
 # Copy to config/ema9_trend.yaml (gitignored) and disable unused rules to paper-trade.
 #
 #   python -m dta_bot validate --config config/ema9_trend.example.yaml
 #   python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yahoo \
-#     --output artifacts/ema9_vs_engulfing.json --report artifacts/ema9_vs_engulfing.md
+#     --breakout SOXL --output artifacts/ema9_ema_invalid.json \
+#     --report artifacts/ema9_ema_invalid.md
 #   python -m dta_bot backtest --config config/ema9_trend.example.yaml --timeframe 5m \
-#     --source yahoo --output artifacts/ema9_5m.json --report artifacts/ema9_5m.md
+#     --source yahoo --breakout SOXL --output artifacts/ema9_ema_invalid_5m.json \
+#     --report artifacts/ema9_ema_invalid_5m.md
 
 settings:
   paper: true
@@ -41,13 +48,14 @@ settings:
 universe:
   - AAPL
   - MSFT
+  - SOXL
 
 rules:
   - id: ema9_trend
     enabled: true
-    symbols: [AAPL, MSFT]
+    symbols: [AAPL, MSFT, SOXL]
     cooldown_minutes: 60
-    notes: "15m bullish EMA(9) cross while price holds above the 20-SMA and RSI is not overbought."
+    notes: "15m bullish EMA(9) cross while price holds above the 20-SMA and RSI is not overbought. Exit when a 15m bar closes < EMA9."
     when:
       all:
         - ema_cross:
@@ -68,14 +76,14 @@ rules:
         type: shares
         value: 10
       order: market
-      stop_loss_pct: 1.5
-      take_profit_pct: 3.0
+      exit: ema_invalid
+      exit_ema_period: 9
 
   - id: ema9_cross_raw
     enabled: true
-    symbols: [AAPL, MSFT]
+    symbols: [AAPL, MSFT, SOXL]
     cooldown_minutes: 60
-    notes: "Ablation: 15m bullish EMA(9) cross with no SMA/RSI trend filter. Same 10-share 1.5/3.0 brackets."
+    notes: "Ablation: 15m bullish EMA(9) cross with no SMA/RSI trend filter. Same 10-share EMA-invalidation exit."
     when:
       ema_cross:
         period: 9
@@ -87,14 +95,14 @@ rules:
         type: shares
         value: 10
       order: market
-      stop_loss_pct: 1.5
-      take_profit_pct: 3.0
+      exit: ema_invalid
+      exit_ema_period: 9
 
   - id: engulfing-with-trend
     enabled: true
-    symbols: [AAPL, MSFT]
+    symbols: [AAPL, MSFT, SOXL]
     cooldown_minutes: 60
-    notes: "Control: 15m bullish engulfing while price holds above the 20-SMA and RSI is not overbought."
+    notes: "Control: 15m bullish engulfing while price holds above the 20-SMA and RSI is not overbought. Still uses 1.5/3.0 fixed brackets."
     when:
       all:
         - pattern: bullish_engulfing
@@ -113,5 +121,6 @@ rules:
         type: shares
         value: 10
       order: market
+      exit: fixed_bracket
       stop_loss_pct: 1.5
       take_profit_pct: 3.0
