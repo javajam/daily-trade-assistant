@@ -81,6 +81,24 @@ def test_risk_pct_matches_locked_formula():
     assert shares_for(action, _acct(101_500), 210.0) == 322
 
 
+def test_risk_pct_tighter_stop_sizes_more_shares():
+    wide = ActionSpec(
+        type="buy",
+        size=SizeSpec(type="risk_pct", equity_risk=0.01, stop_pct=1.5),
+        stop_loss_pct=1.5,
+        take_profit_pct=3.0,
+    )
+    tight = ActionSpec(
+        type="buy",
+        size=SizeSpec(type="risk_pct", equity_risk=0.01, stop_pct=1.0),
+        stop_loss_pct=1.0,
+        take_profit_pct=2.0,
+    )
+    # Same 1% equity risk: 1.0% stop → floor(1000 / (0.01 * 200)) = 500
+    assert shares_for(wide, _acct(100_000), 200.0) == 333
+    assert shares_for(tight, _acct(100_000), 200.0) == 500
+
+
 def test_risk_pct_uses_action_stop_when_size_omits_it():
     action = ActionSpec(
         type="buy",

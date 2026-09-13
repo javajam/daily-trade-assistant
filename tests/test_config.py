@@ -192,8 +192,59 @@ def test_ema9_trend_bracket_nobe_disables_breakeven():
     assert cfg.settings.entry_cutoff == "12:00"
     assert cfg.settings.flatten_by == "15:55"
     assert cfg.rules[0].action.breakeven_after_bars == 0
+    assert cfg.rules[0].action.exit == "fixed_bracket"
     assert cfg.rules[0].action.stop_loss_pct == 1.5
     assert cfg.rules[0].action.take_profit_pct == 3.0
+    assert isinstance(cfg.rules[0].when, GroupCond)
+    assert any(isinstance(c, MaCrossCond) for c in cfg.rules[0].when.conditions)
+    rsi = find_rsi_condition(cfg.rules[0].when)
+    assert rsi is not None and rsi.below == 70
+
+
+def test_ema9_trend_bracket_nobe_12_uses_tighter_brackets():
+    cfg = load_config("config/ema9_trend_bracket_nobe_12.example.yaml")
+    assert cfg.universe == ["AAPL", "MSFT"]
+    assert cfg.settings.entry_cutoff == "12:00"
+    assert cfg.settings.flatten_by == "15:55"
+    rule = cfg.rules[0]
+    assert rule.action.breakeven_after_bars == 0
+    assert rule.action.exit == "fixed_bracket"
+    assert rule.action.stop_loss_pct == 1.0
+    assert rule.action.take_profit_pct == 2.0
+    assert rule.action.size and rule.action.size.type == "shares"
+    assert rule.action.size.value == 10
+    assert isinstance(rule.when, GroupCond)
+    assert any(isinstance(c, MaCrossCond) for c in rule.when.conditions)
+    rsi = find_rsi_condition(rule.when)
+    assert rsi is not None and rsi.below == 70
+
+
+def test_ema9_trend_risk_nobe_matches_stop_pct_to_bracket():
+    wide = load_config("config/ema9_trend_risk_nobe.example.yaml")
+    tight = load_config("config/ema9_trend_risk_nobe_12.example.yaml")
+    assert wide.rules[0].action.size is not None
+    assert wide.rules[0].action.size.type == "risk_pct"
+    assert wide.rules[0].action.size.equity_risk == 0.01
+    assert wide.rules[0].action.size.stop_pct == 1.5
+    assert wide.rules[0].action.stop_loss_pct == 1.5
+    assert wide.rules[0].action.take_profit_pct == 3.0
+    assert wide.rules[0].action.exit == "fixed_bracket"
+    assert wide.rules[0].action.breakeven_after_bars == 0
+    assert tight.rules[0].action.size is not None
+    assert tight.rules[0].action.size.type == "risk_pct"
+    assert tight.rules[0].action.size.equity_risk == 0.01
+    assert tight.rules[0].action.size.stop_pct == 1.0
+    assert tight.rules[0].action.stop_loss_pct == 1.0
+    assert tight.rules[0].action.take_profit_pct == 2.0
+    assert tight.rules[0].action.exit == "fixed_bracket"
+    assert tight.rules[0].action.breakeven_after_bars == 0
+    for cfg in (wide, tight):
+        assert cfg.settings.entry_cutoff == "12:00"
+        assert cfg.settings.flatten_by == "15:55"
+        assert isinstance(cfg.rules[0].when, GroupCond)
+        assert any(isinstance(c, MaCrossCond) for c in cfg.rules[0].when.conditions)
+        rsi = find_rsi_condition(cfg.rules[0].when)
+        assert rsi is not None and rsi.below == 70
 
 
 def test_exit_alias_and_unknown_rejected(tmp_path: Path):
