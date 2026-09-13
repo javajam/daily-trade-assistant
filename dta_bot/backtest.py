@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -17,7 +17,8 @@ from dta_bot.config import AnyCondition, BotConfig, GroupCond, RuleSpec
 from dta_bot.engine import BarMap, cooldown_key, evaluate_rule, fire_key
 from dta_bot.models import Account, Bar
 from dta_bot.orb import ema_cross_exit, ema_through
-from dta_bot.sizing import bracket_prices, shares_for
+from dta_bot.period_stats import build_period_stats, format_period_stats_md, session_date
+from dta_bot.sizing import bracket_prices, buy_notional, shares_for
 from dta_bot.state import BotState
 from dta_bot.timeframes import duration, normalize
 
@@ -177,6 +178,7 @@ class BacktestResult:
     signals: list[Signal]
     equity_curve: list[tuple[datetime, float]]
     bars_used: dict[str, int] = field(default_factory=dict)
+    period_stats: Optional[dict[str, Any]] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -186,6 +188,7 @@ class BacktestResult:
             "signals": [s.to_dict() for s in self.signals],
             "equity_curve": [[_iso(t), eq] for t, eq in self.equity_curve],
             "bars_used": self.bars_used,
+            "period_stats": self.period_stats,
         }
 
 
@@ -379,6 +382,8 @@ def run_backtest(
     label: Optional[str] = None,
     data_source: str = "",
     notes: Optional[list[str]] = None,
+    trade_start: Optional[datetime] = None,
+    trade_end: Optional[datetime] = None,
 ) -> BacktestResult:
     """Walk closed bars in time order and evaluate ``config.rules`` at each close."""
     logging.getLogger("dta_bot.engine").setLevel(logging.WARNING)
@@ -409,6 +414,11 @@ def run_backtest(
     signals: list[Signal] = []
     equity_curve: list[tuple[datetime, float]] = []
     last_price: dict[str, float] = {}
+    cash_skips = 0
+    max_concurrent = 0
+    both_open_ticks = 0
+    window_start = _aware(trade_start) if trade_start is not None else None
+    window_end = _aware(trade_end) if trade_end is not None else None
 
     def symbols_in_position() -> set[str]:
         return {lot.symbol for lot in lots}
@@ -419,6 +429,21 @@ def run_backtest(
     def account() -> Account:
         eq = equity_now()
         return Account(equity=eq, cash=cash, buying_power=cash, status="ACTIVE")
+
+    def reserved_buy_cash() -> float:
+        return sum(
+            (order.qty or 0.0) * order.signal_price
+            for order in pending
+            if order.kind == "enter" and order.side == "buy" and order.qty
+        )
+
+    def note_open_book() -> None:
+        nonlocal max_concurrent, both_open_ticks
+        n = len(symbols_in_position())
+        if n > max_concurrent:
+            max_concurrent = n
+        if n >= 2:
+            both_open_ticks += 1
 
     def flatten_symbol(symbol: str, when: datetime, price: float, reason: str, rule_id: str) -> None:
         nonlocal cash
@@ -444,6 +469,8 @@ def run_backtest(
     cursors: dict[tuple[str, str], int] = {k: 0 for k in series_map}
 
     for now in unique_times:
+        if window_end is not None and now >= window_end:
+            break
         # Advance each series to bars whose close <= now.
         windows: BarMap = {}
         for key, series in series_map.items():
@@ -482,7 +509,11 @@ def run_backtest(
                 continue
             fill_px = _apply_slippage(fill_bar.open, order.side, slippage_pct, is_entry=True)
             if order.side == "buy":
-                cash -= order.qty * fill_px + commission
+                cost = buy_notional(order.qty, fill_px, commission)
+                if cost > cash + 1e-9:
+                    cash_skips += 1
+                    continue
+                cash -= cost
             else:
                 cash += order.qty * fill_px - commission
             lots.append(
@@ -501,6 +532,7 @@ def run_backtest(
                     exit_ema_period=order.exit_ema_period,
                 )
             )
+            note_open_book()
         pending = still_pending
 
         # 2) Stop / take on the bar that just completed (after any fill at its open).
@@ -538,6 +570,11 @@ def run_backtest(
         newly_closed_tf: dict[str, set[str]] = {}
         for symbol, tf, _bar in closing:
             newly_closed_tf.setdefault(symbol, set()).add(tf)
+
+        allow_entries = window_start is None or now >= window_start
+        if not allow_entries:
+            equity_curve.append((now, equity_now()))
+            continue
 
         for rule in config.rules:
             if not rule.enabled:
@@ -607,7 +644,20 @@ def run_backtest(
                         if accepted and nxt is None:
                             accepted = False
                             skip_reason = "no_next_bar"
-                        elif accepted:
+                        elif (
+                            accepted
+                            and nxt is not None
+                            and window_end is not None
+                            and _aware(nxt.timestamp) >= window_end
+                        ):
+                            accepted = False
+                            skip_reason = "outside_window"
+                        elif accepted and action == "buy":
+                            available = cash - reserved_buy_cash()
+                            if buy_notional(qty, px, commission) > available + 1e-9:
+                                accepted = False
+                                skip_reason = "insufficient_cash"
+                        if accepted and nxt is not None:
                             side = "buy" if action == "buy" else "sell"
                             stop, take = bracket_prices(rule.action, px, side)
                             pending.append(
@@ -651,7 +701,11 @@ def run_backtest(
         equity_curve.append((now, equity_now()))
 
     if flatten_at_end and lots:
-        end_ts = unique_times[-1] if unique_times else datetime.now(timezone.utc)
+        end_ts = (
+            equity_curve[-1][0]
+            if equity_curve
+            else (unique_times[-1] if unique_times else datetime.now(timezone.utc))
+        )
         remaining = list(lots)
         lots.clear()
         for lot in remaining:
@@ -671,10 +725,50 @@ def run_backtest(
     ending = cash if not lots else equity_now()
     starts = [series[0].timestamp for series in series_map.values() if series]
     ends = [series[-1].timestamp for series in series_map.values() if series]
-    period_start = min(starts) if starts else None
-    period_end = max(ends) if ends else None
+    tape_start = min(starts) if starts else None
+    tape_end = max(ends) if ends else None
+    period_start = window_start or tape_start
+    if window_end is not None:
+        period_end = window_end - timedelta(microseconds=1)
+    else:
+        period_end = tape_end
     used = {f"{s}:{tf}": len(series) for (s, tf), series in series_map.items()}
     tag = label or ",".join(r.id for r in config.rules) or "backtest"
+    extra_notes = list(notes or [])
+    if window_start is not None or window_end is not None:
+        extra_notes.append(
+            "Trade window "
+            f"{_iso(window_start) or 'tape start'} → {_iso(window_end) or 'tape end'} "
+            "(prior bars kept for indicator warmup; no new entries outside the window)."
+        )
+        extra_notes.append(
+            f"Downloaded tape span {_iso(tape_start)} → {_iso(tape_end)}."
+        )
+    extra_notes.append(
+        f"One lot per symbol; both names may be open at once if cash covers the second "
+        f"risk-sized entry, otherwise the later signal is skipped. "
+        f"Max concurrent symbols this run: {max_concurrent}. "
+        f"Ticks with 2+ names open: {both_open_ticks}."
+    )
+    if cash_skips:
+        extra_notes.append(
+            f"{cash_skips} accepted signal(s) skipped at fill for insufficient cash."
+        )
+    cash_signal_skips = sum(1 for s in signals if s.skip_reason == "insufficient_cash")
+    if cash_signal_skips:
+        extra_notes.append(
+            f"{cash_signal_skips} signal(s) skipped at size time for insufficient cash."
+        )
+    session_start = session_date(window_start) if window_start is not None else None
+    session_end = session_date(window_end - timedelta(seconds=1)) if window_end is not None else None
+    stats = build_period_stats(
+        trades=trades,
+        equity_curve=equity_curve,
+        starting_equity=starting_equity,
+        ending_equity=ending,
+        session_start=session_start,
+        session_end=session_end,
+    )
     report = summarize(
         label=tag,
         starting_equity=starting_equity,
@@ -685,7 +779,7 @@ def run_backtest(
         period_start=period_start,
         period_end=period_end,
         data_source=data_source,
-        notes=notes,
+        notes=extra_notes,
     )
     return BacktestResult(
         label=tag,
@@ -694,6 +788,7 @@ def run_backtest(
         signals=signals,
         equity_curve=equity_curve,
         bars_used=used,
+        period_stats=stats,
     )
 
 
@@ -738,6 +833,10 @@ def format_report_md(payload: dict[str, Any]) -> str:
         extra_notes = [n for n in (r.get("notes") or []) if n.startswith("Exit-only")]
         for note in extra_notes:
             lines.append(f"- {note}")
+        stats = block.get("period_stats")
+        if stats:
+            lines.append("")
+            lines.extend(format_period_stats_md(stats))
         lines.append("")
     extra = payload.get("assumptions") or []
     if extra:

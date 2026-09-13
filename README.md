@@ -187,7 +187,9 @@ rules:
       # any: [ ... ]         # OR; groups nest
     action:
       type: buy | sell | close
-      size: { type: shares | percent_equity, value: 10 }  # required for buy/sell
+      size: { type: shares | percent_equity | risk_pct, value: 10 }  # required for buy/sell
+      # risk_pct: { type: risk_pct, equity_risk: 0.01, stop_pct: 1.5 }
+      #   shares = floor( (equity_risk * equity) / ((stop_pct/100) * price) )
       order: market | limit
       limit_offset_pct: 0.05
       exit: ema_invalid | fixed_bracket   # default fixed_bracket
@@ -207,6 +209,16 @@ rules:
 `config/ema9_trend.example.yaml` is a long-only book on **AAPL / MSFT / SOXL**. Entry reuses the engulfing-with-trend filter: close above SMA(20), RSI(14) below 70, buy 10 shares, 60-minute **wall-clock** cooldown. The trigger is a bullish **EMA(9) cross** instead of a bullish engulfing candle.
 
 Default exit is **`action.exit: ema_invalid`**: stay in the long until a signal-timeframe bar **closes < EMA(9)** and flatten at that close. Close == EMA9 stays valid. There is no 1.5%/3.0% bracket on the 9 EMA rules. Optional `stop_loss_pct` is a catastrophic stop only and is **off** in the example configs. Set `exit: fixed_bracket` plus `stop_loss_pct` / `take_profit_pct` to restore the old brackets. Paper / `dry_run` defaults; no live.
+
+`config/ema9_trend_risk.example.yaml` is the same 15m entry on **AAPL / MSFT only**, but restores **`exit: fixed_bracket`** (stop 1.5% / take 3.0%) and sizes each long to risk ~1% of current equity at that stop (`size.type: risk_pct`). Both names may be open at once when cash covers the second notional; otherwise the later signal is skipped. `--start` / `--end` bound the trade window (prior bars stay for SMA/RSI/EMA warmup):
+
+```bash
+python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml --source yahoo \
+  --start 2026-08-01 --end 2026-08-31 --combined-only \
+  --output artifacts/ema9_aug2026_risk.json --report artifacts/ema9_aug2026_risk.md
+```
+
+The 10-share control on the same window is `config/ema9_trend_bracket.example.yaml`.
 
 Bar size is `settings.timeframe` (default **15m**). The same rules on 5-minute bars (every indicator on 5m; cooldown still 60 minutes):
 
@@ -228,6 +240,8 @@ python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yaho
 Copy to `config/ema9_trend.yaml` or `config/ema9_trend_5m.yaml` (gitignored) and disable the ablation/control rules if you only want to paper the 9 EMA book.
 
 On the Yahoo window 2026-06-17 → 2026-09-11, **EMA-invalidation** isolated books were: **15m AAPL/MSFT/SOXL 240 trades, 36.25%, $626.64**, max DD $850.25; **5m AAPL/MSFT/SOXL 498 trades, 30.72%, $-312.80**, max DD $722.18. Isolated SOXL: 15m 86 trades, 29.07%, $-835.05; 5m 170 trades, 28.24%, $-707.46. AAPL/MSFT only (same exit): 15m 154 / 40.26% / $1,461.69; 5m 328 / 32.01% / $394.66. Writeup: `artifacts/ema9_ema_invalid_5m_vs_15m.md`.
+
+August 2026 only (2026-08-01 → 2026-08-31 RTH, same Yahoo 15m tape, AAPL/MSFT, `exit: fixed_bracket` 1.5/3.0, $100k start): **1% equity-risk sizing 7 trades, 57.14%, $5,502.59**, max DD $3,282.83; **10-share control 11 trades, 54.55%, $430.47**, max DD $251.10. August was not clipped (tape 2026-06-17 → 2026-09-11). Writeup: `artifacts/ema9_aug2026_risk.md`.
 
 Prior **fixed-bracket** AAPL/MSFT books (1.5/3.0) on the same tape, reproduced again: **15m 44 trades, 50.00%, $1,404.89**; **5m 56 trades, 48.21%, $1,305.23**. Writeups: `artifacts/ema9_vs_engulfing.md`, `artifacts/ema9_5m_vs_15m.md`. Yahoo 5m/15m history is still documented as a ~60-day cap.
 

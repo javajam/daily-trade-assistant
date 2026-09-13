@@ -53,6 +53,45 @@ def test_ema_invalid_ignores_percent_take_keeps_optional_stop():
     assert bracket_prices(off, 100.0, "buy") == (None, None)
 
 
+def test_risk_pct_matches_locked_formula():
+    action = ActionSpec(
+        type="buy",
+        size=SizeSpec(type="risk_pct", equity_risk=0.01, stop_pct=1.5),
+        stop_loss_pct=1.5,
+        take_profit_pct=3.0,
+    )
+    # floor( (0.01 * 100000) / (0.015 * 200) ) = floor(100000 / (1.5 * 200)) = 333
+    assert shares_for(action, _acct(100_000), 200.0) == 333
+    # Recalculate from a later equity print.
+    assert shares_for(action, _acct(101_500), 210.0) == 322
+
+
+def test_risk_pct_uses_action_stop_when_size_omits_it():
+    action = ActionSpec(
+        type="buy",
+        size=SizeSpec(type="risk_pct", equity_risk=0.01),
+        stop_loss_pct=1.5,
+    )
+    assert shares_for(action, _acct(100_000), 200.0) == 333
+
+
+def test_risk_pct_rejects_missing_stop_and_zero_shares():
+    missing = ActionSpec(type="buy", size=SizeSpec(type="risk_pct", equity_risk=0.01))
+    with pytest.raises(ValueError, match="stop_pct"):
+        shares_for(missing, _acct(), 50.0)
+    tiny = ActionSpec(
+        type="buy",
+        size=SizeSpec(type="risk_pct", equity_risk=0.01, stop_pct=1.5),
+    )
+    with pytest.raises(ValueError, match="0 shares"):
+        shares_for(tiny, _acct(100), 200.0)
+
+
+def test_risk_pct_equity_risk_must_be_a_fraction():
+    with pytest.raises(ValueError, match="fraction"):
+        SizeSpec(type="risk_pct", equity_risk=1.5, stop_pct=1.5)
+
+
 def test_build_market_buy_order():
     action = ActionSpec(type="buy", size=SizeSpec(type="shares", value=5), stop_loss_pct=2)
     order = build_order(symbol="AAPL", action=action, account=_acct(), last_price=100.0, position=None)

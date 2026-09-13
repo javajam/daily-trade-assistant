@@ -1,0 +1,53 @@
+# 9 EMA trend — same locked entry/exit as ema9_trend_risk.example.yaml
+# but the old fixed 10-share size (comparison book).
+#
+#   python -m dta_bot backtest --config config/ema9_trend_bracket.example.yaml \
+#     --source yahoo --start 2026-08-01 --end 2026-08-31 --combined-only \
+#     --output artifacts/ema9_aug2026_10share.json \
+#     --report artifacts/ema9_aug2026_10share.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Same 15m EMA9 trend + 1.5/3.0 brackets as the risk book, fixed 10 shares."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      exit: fixed_bracket
+      stop_loss_pct: 1.5
+      take_profit_pct: 3.0

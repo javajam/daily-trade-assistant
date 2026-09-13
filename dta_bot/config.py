@@ -14,13 +14,34 @@ from dta_bot.timeframes import normalize
 
 
 class SizeSpec(BaseModel):
-    type: Literal["shares", "percent_equity"] = "shares"
-    value: float = Field(..., gt=0)
+    type: Literal["shares", "percent_equity", "risk_pct"] = "shares"
+    # shares / percent_equity: share count or percent of equity (2 = 2%).
+    # risk_pct may omit value and use equity_risk / stop_pct instead.
+    value: Optional[float] = Field(default=None, gt=0)
+    # Fraction of current equity to risk (0.01 = 1%). Used when type is risk_pct.
+    equity_risk: Optional[float] = Field(default=None, gt=0)
+    # Stop distance in percent (1.5 = 1.5%). Used when type is risk_pct.
+    # If omitted, shares_for falls back to action.stop_loss_pct.
+    stop_pct: Optional[float] = Field(default=None, gt=0)
 
     @field_validator("type")
     @classmethod
     def _type(cls, v: str) -> str:
         return v.lower()
+
+    @model_validator(mode="after")
+    def _fields(self) -> "SizeSpec":
+        if self.type in {"shares", "percent_equity"}:
+            if self.value is None:
+                raise ValueError(f"{self.type} sizing requires value")
+        elif self.type == "risk_pct":
+            risk = self.equity_risk if self.equity_risk is not None else self.value
+            if risk is None:
+                raise ValueError("risk_pct sizing requires equity_risk (e.g. 0.01 for 1%)")
+            if risk > 1:
+                raise ValueError("equity_risk is a fraction of equity (0.01 = 1%), not a percent")
+            self.equity_risk = risk
+        return self
 
 
 EXIT_MODES = ("fixed_bracket", "ema_invalid")
@@ -63,7 +84,7 @@ class ActionSpec(BaseModel):
     @model_validator(mode="after")
     def _size_required(self) -> "ActionSpec":
         if self.type in {"buy", "sell"} and self.size is None:
-            raise ValueError("buy/sell actions require size (shares or percent_equity)")
+            raise ValueError("buy/sell actions require size (shares, percent_equity, or risk_pct)")
         return self
 
 
@@ -423,7 +444,7 @@ def _parse_action(raw: dict[str, Any]) -> ActionSpec:
     if isinstance(size_raw, dict):
         size = SizeSpec.model_validate(size_raw)
     elif size_raw is not None:
-        raise ValueError("action.size must be {type, value}")
+        raise ValueError("action.size must be a mapping (type + value, or risk_pct fields)")
     return ActionSpec(
         type=raw["type"],
         size=size,

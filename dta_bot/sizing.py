@@ -9,6 +9,15 @@ from dta_bot.config import ActionSpec
 from dta_bot.models import Account, OrderRequest, Position, Side
 
 
+def stop_pct_for(action: ActionSpec) -> Optional[float]:
+    """Stop distance in percent (1.5 = 1.5%) for risk_pct sizing."""
+    if action.size is not None and action.size.stop_pct:
+        return action.size.stop_pct
+    if action.stop_loss_pct:
+        return action.stop_loss_pct
+    return None
+
+
 def shares_for(action: ActionSpec, account: Account, last_price: float) -> float:
     if action.type == "close":
         return 0.0
@@ -17,15 +26,32 @@ def shares_for(action: ActionSpec, account: Account, last_price: float) -> float
         raise ValueError("last_price must be positive")
     if action.size.type == "shares":
         qty = action.size.value
-    else:
+    elif action.size.type == "percent_equity":
         notional = account.equity * (action.size.value / 100.0)
         qty = notional / last_price
+    elif action.size.type == "risk_pct":
+        risk_frac = action.size.equity_risk
+        if risk_frac is None:
+            raise ValueError("risk_pct sizing requires equity_risk")
+        stop_pct = stop_pct_for(action)
+        if stop_pct is None or stop_pct <= 0:
+            raise ValueError("risk_pct sizing requires stop_pct or action.stop_loss_pct")
+        # shares = floor( (equity_risk * equity) / ((stop_pct/100) * price) )
+        #        = floor( equity / ((stop_pct / (100 * equity_risk)) * price) )
+        # With equity_risk=0.01 and stop_pct=1.5: floor(equity / (1.5 * price))
+        qty = (risk_frac * account.equity) / ((stop_pct / 100.0) * last_price)
+    else:
+        raise ValueError(f"unknown size type {action.size.type!r}")
     qty = math.floor(qty)
     if qty < 1:
         raise ValueError(
             f"size rounds to 0 shares (equity={account.equity:.2f} price={last_price:.4f})"
         )
     return float(qty)
+
+
+def buy_notional(qty: float, price: float, commission: float = 0.0) -> float:
+    return qty * price + commission
 
 
 def limit_price(action: ActionSpec, last_price: float, side: Side) -> Optional[float]:
