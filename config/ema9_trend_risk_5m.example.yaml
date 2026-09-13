@@ -1,0 +1,66 @@
+# Refined EMA9 day-trade — 1% equity-risk on 5-minute bars.
+#
+# Same noon stack + lock-+1% as config/ema9_trend_risk.example.yaml, every
+# indicator on 5m. flatten_by 15:55 ET maps to the 15:50 ET 5m bar close.
+# Cooldown stays 60 wall-clock minutes.
+#
+#   python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml \
+#     --compare-config config/ema9_trend_risk_5m.example.yaml \
+#     --source yahoo --start 2026-08-01 --end 2026-08-31 --combined-only \
+#     --symbols AAPL,MSFT \
+#     --output artifacts/ema9_aug2026_risk_lock_5m_vs_15m.json \
+#     --report artifacts/ema9_aug2026_risk_lock_5m_vs_15m.md
+#
+# Equivalent: --config config/ema9_trend_risk.example.yaml --timeframe 5m
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 5m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"
+  flatten_by: "15:55"
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Noon book: 5m price crosses EMA(9) while above SMA20 and RSI < 70. 1% equity risk at a 1.0% fill stop; lock to +1% on first touch of entry×1.01; no take."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 5m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 5m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 5m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: risk_pct
+        equity_risk: 0.01
+        stop_pct: 1.0
+      order: market
+      exit: fixed_bracket
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      lock_trigger_pct: 1.0
+      lock_stop_pct: 1.0

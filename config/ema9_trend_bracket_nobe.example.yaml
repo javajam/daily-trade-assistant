@@ -1,11 +1,8 @@
-# Prior noon day-trade book — old entry, preserved for comparison.
+# Prior noon day-trade book — 1.5/3.0 brackets, preserved for comparison.
 #
-# This is *not* the current product. It keeps the previous 12:00 / 15:55
-# 10-share book: price crosses EMA(9) while close > SMA(20) and RSI14 < 70,
-# 1.5/3.0 fixed brackets, no break-even. Use it only to replay the old
-# noon day-trade numbers against the new EMA(9)/SMA(20) pair-cross book.
-#
-# Current product: config/ema9_trend_bracket.example.yaml
+# Same entry as the current product (price×EMA9 + SMA20 + RSI14 < 70) but
+# with 1.5/3.0 percent brackets from the signal close, not lock-+1%.
+# Current product: config/ema9_trend.example.yaml (lock_plus, no take).
 # Tight 1.0/2.0 sibling (same old entry, no BE):
 #   config/ema9_trend_bracket_nobe_12.example.yaml
 # August 1% risk restore (same old entry, 1.5/3.0, no BE):

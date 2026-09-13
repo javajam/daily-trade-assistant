@@ -498,6 +498,30 @@ def has_pair_cross(cond: AnyCondition) -> bool:
     return False
 
 
+def _flatten_conditions(cond: AnyCondition) -> list[AnyCondition]:
+    if isinstance(cond, GroupCond):
+        out: list[AnyCondition] = []
+        for child in cond.conditions:
+            out.extend(_flatten_conditions(child))
+        return out
+    return [cond]
+
+
+def has_noon_stack(cond: AnyCondition) -> bool:
+    """Price EMA-cross + SMA-above + RSI — the default ema9_trend entry."""
+    leaves = _flatten_conditions(cond)
+    has_cross = any(
+        isinstance(leaf, MaCrossCond) and leaf.ma == "ema" and leaf.direction == "bullish"
+        for leaf in leaves
+    )
+    has_sma = any(
+        isinstance(leaf, MaCond) and leaf.ma == "sma" and leaf.compare == "above"
+        for leaf in leaves
+    )
+    has_rsi = any(isinstance(leaf, RsiCond) for leaf in leaves)
+    return has_cross and has_sma and has_rsi
+
+
 def rsi_filter_label(config: BotConfig) -> Optional[str]:
     """Short book-label tag such as ``RSI14 < 70`` (pair-cross books only)."""
     for rule in config.rules:

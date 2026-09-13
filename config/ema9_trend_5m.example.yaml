@@ -1,16 +1,17 @@
-# 9/20 MA-cross on 5-minute bars — same rules as ema9_trend.example.yaml.
+# Refined EMA9 day-trade on 5-minute bars — same rules as ema9_trend.example.yaml.
 #
 # Identical except settings.timeframe / every condition is 5m. Cooldown stays
 # 60 wall-clock minutes. Yahoo 5m history is capped at ~60 days.
 #
-# Session gates (America/New_York) — toggle either to null / off:
-#   entry_cutoff: "12:00"   # skip fills at/after this clock
-#   flatten_by: "15:55"     # 5m force-flat at the 15:50 ET bar close
+# flatten_by 15:55 ET force-flats at the 15:50 ET 5m bar close (last 5m bar
+# that completes at/before 15:55).
 #
 #   python -m dta_bot validate --config config/ema9_trend_5m.example.yaml
-#   python -m dta_bot backtest --config config/ema9_trend_5m.example.yaml --source yahoo \
-#     --output artifacts/ema9_ma_cross_5m.json \
-#     --report artifacts/ema9_ma_cross_5m.md
+#   python -m dta_bot backtest --config config/ema9_trend.example.yaml \
+#     --compare-config config/ema9_trend_5m.example.yaml --source yahoo \
+#     --combined-only --symbols AAPL,MSFT \
+#     --output artifacts/ema9_lock_5m_vs_15m.json \
+#     --report artifacts/ema9_lock_5m_vs_15m.md
 #
 # Equivalent: --config config/ema9_trend.example.yaml --timeframe 5m
 
@@ -38,21 +39,29 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "5m EMA(9) cross over SMA(20). Flatten next bar open on EMA(9) cross under SMA(20). 1.5% stop; no take-profit; no break-even."
+    notes: "Noon book: 5m price crosses EMA(9) while above SMA20 and RSI < 70. 10 shares, lock stop to +1% on first touch of entry×1.01, no take."
     when:
-      ema_sma_cross:
-        ema_period: 9
-        sma_period: 20
-        timeframe: 5m
-        direction: bullish
-      # rsi: { period: 14, below: 70 }   # optional; omit = no RSI filter
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 5m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 5m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 5m
+            below: 70
     action:
       type: buy
       size:
         type: shares
         value: 10
       order: market
-      exit: ma_cross
-      ema_period: 9
-      sma_period: 20
-      stop_loss_pct: 1.5
+      exit: fixed_bracket
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      lock_trigger_pct: 1.0
+      lock_stop_pct: 1.0

@@ -1,6 +1,9 @@
-# Book B — price×EMA9 noon stack, lock stop to +1% after first +1% touch.
+# Same as the default product (config/ema9_trend.example.yaml) — lock-+1%.
 #
-# Same entry / session as Book A (config/ema9_trend_bracket_nobe_fixed1.example.yaml).
+# Named sibling so A/B/C stop-manage compares stay explicit:
+#   A fixed 1%: config/ema9_trend_bracket_nobe_fixed1.example.yaml
+#   B lock +1% (default): this file / ema9_trend.example.yaml
+#   C trail 1%: config/ema9_trend_bracket_nobe_trail1.example.yaml
 # Stop (stop_mode: lock_plus):
 #   initial stop = fill × 0.99
 #   first trade/touch of fill × 1.01 (bar high ≥ trigger) moves the stop to

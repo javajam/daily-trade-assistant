@@ -1,13 +1,13 @@
-# 9/20 MA-cross — 1% equity-risk book with RSI14 < 70 entry filter.
+# Prior EMA(9)/SMA(20) pair-cross — 1% equity-risk book (preserved).
 #
-# Same pair-cross as config/ema9_trend_risk_pair.example.yaml except the entry
-# also requires RSI(14) on the signal 15m bar to be below 70.
+# Same locked pair-cross as config/ema9_trend_pair.example.yaml, sized to
+# risk ~1% of current equity at the 1.5% stop. This is *not* the current
+# product (that is config/ema9_trend_risk.example.yaml: noon stack + lock-+1%).
 #
 #   python -m dta_bot backtest --config config/ema9_trend_risk_pair.example.yaml \
-#     --compare-config config/ema9_trend_risk_rsi.example.yaml \
 #     --source yahoo --start 2026-08-01 --end 2026-08-31 --combined-only \
-#     --output artifacts/ema9_aug2026_risk_rsi.json \
-#     --report artifacts/ema9_aug2026_risk_rsi.md
+#     --output artifacts/ema9_aug2026_risk.json \
+#     --report artifacts/ema9_aug2026_risk.md
 
 settings:
   paper: true
@@ -33,14 +33,14 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "15m EMA(9) cross over SMA(20) only when RSI14 < 70. 1% equity risk at a 1.5% stop. Flatten next open on EMA(9) cross under SMA(20). No take-profit; no break-even."
+    notes: "Prior pair-cross: 15m EMA(9) cross over SMA(20). 1% equity risk at a 1.5% stop. Flatten next open on EMA(9) cross under SMA(20). No take-profit; no break-even."
     when:
       ema_sma_cross:
         ema_period: 9
         sma_period: 20
         timeframe: 15m
         direction: bullish
-      rsi: { period: 14, below: 70 }
+      # rsi: { period: 14, below: 70 }   # optional; omit = no RSI filter
     action:
       type: buy
       size:

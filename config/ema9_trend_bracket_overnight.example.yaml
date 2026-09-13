@@ -1,11 +1,11 @@
 # 9/20 MA-cross — 10-share book with session gates OFF.
-# Same entry/exit/size as ema9_trend_bracket.example.yaml so overnight holds
-# can be compared to the gated product on the same tape.
+# Same pair-cross as config/ema9_trend_pair.example.yaml so overnight holds
+# can be compared to the gated pair-cross book on the same tape.
 #
 # Toggle back on with entry_cutoff / flatten_by (see the gated file).
 #
 #   python -m dta_bot backtest --config config/ema9_trend_bracket_overnight.example.yaml \
-#     --compare-config config/ema9_trend_bracket.example.yaml --source yahoo \
+#     --compare-config config/ema9_trend_pair.example.yaml --source yahoo \
 #     --combined-only --symbols AAPL,MSFT \
 #     --output artifacts/ema9_session_gates.json \
 #     --report artifacts/ema9_session_gates.md
