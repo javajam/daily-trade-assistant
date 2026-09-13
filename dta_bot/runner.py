@@ -17,6 +17,7 @@ from dta_bot.orb_config import OrbBotConfig
 from dta_bot.orb_engine import (
     RULE_ID as ORB_RULE_ID,
     build_orb_order,
+    ema_cross_flatten_bar,
     evaluate_orb,
     first_profit_flatten_bar,
     last_reversal_ts,
@@ -302,7 +303,7 @@ def _flatten_first_profit(
     *,
     dry_run: bool,
 ) -> None:
-    """Close paper/live lots at the first profitable closed signal bar.
+    """Close paper/live lots on a close-based take (EMA-cross or first-profit).
 
     Stop stays on the broker. If we cannot prove the bar is after entry
     (no fire key), skip flatten so a restart cannot dump a fresh fill.
@@ -317,13 +318,20 @@ def _flatten_first_profit(
         if pos is None:
             continue
         series = bars.get((symbol.upper(), sig_tf), []) or []
-        hit = first_profit_flatten_bar(
-            pos, series, after=last_reversal_ts(state, symbol)
-        )
+        after = last_reversal_ts(state, symbol)
+        if config.orb.take_profit_mode == "ema_cross":
+            hit = ema_cross_flatten_bar(
+                pos, series, after=after, period=config.orb.ema_period
+            )
+            why = "EMA-cross"
+        else:
+            hit = first_profit_flatten_bar(pos, series, after=after)
+            why = "first-profit"
         if hit is None:
             continue
         log.info(
-            "ORB first-profit flatten %s %s entry=%.4f close=%.4f @%s",
+            "ORB %s flatten %s %s entry=%.4f close=%.4f @%s",
+            why,
             pos.side,
             symbol,
             pos.avg_entry_price,
@@ -332,7 +340,7 @@ def _flatten_first_profit(
         )
         broker.close_position(symbol)
         if dry_run:
-            log.info("DRY-RUN: first-profit flatten was not sent to Alpaca")
+            log.info("DRY-RUN: %s flatten was not sent to Alpaca", why)
 
 
 def run_orb_once(
@@ -353,7 +361,10 @@ def run_orb_once(
         scan_all,
     )
     bars = fetch_bars(config, data)
-    if not scan_all and config.orb.take_profit_mode == "first_profitable_close":
+    if not scan_all and config.orb.take_profit_mode in {
+        "first_profitable_close",
+        "ema_cross",
+    }:
         _flatten_first_profit(config, broker, bars, state, dry_run=dry_run)
     results = evaluate_orb(config, bars, state, scan_all=scan_all)
     fired = [ev for ev in results if ev.matched]

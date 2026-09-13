@@ -7,12 +7,15 @@ from dta_bot.models import Bar
 from dta_bot.orb import (
     aggregate_opening_range,
     build_opening_range,
+    ema_through,
     find_setups,
+    ema_cross_exit,
     first_profitable_close,
     gate_setups,
     live_setup,
     next_signal_bar,
     one_r_take,
+    reversal_clears_ema,
     reversal_in_opening_range,
 )
 from dta_bot.orb_config import load_orb_config
@@ -25,6 +28,19 @@ ET = ZoneInfo("America/New_York")
 
 def _b(minutes: int, o: float, h: float, l: float, c: float) -> Bar:
     return Bar(SESSION + timedelta(minutes=minutes), o, h, l, c, 1000)
+
+
+def _find(symbol, bars, rng, **kwargs):
+    """Short-tape helper: isolate other rules from the default-on EMA filter."""
+    kwargs.setdefault("ema_filter", False)
+    return find_setups(symbol, bars, rng, **kwargs)
+
+
+def _warmup(price: float, n: int = 9, start_minutes: int = -45) -> list[Bar]:
+    return [
+        _b(start_minutes + 5 * i, price, price + 0.10, price - 0.10, price)
+        for i in range(n)
+    ]
 
 
 def test_example_orb_config_is_paper_only():
@@ -42,7 +58,10 @@ def test_example_orb_config_is_paper_only():
     assert cfg.orb.session_timezone == "America/New_York"
     assert cfg.orb.on_open_position == "skip"
     assert cfg.orb.reversal_in_range == "close"
-    assert cfg.orb.take_profit_mode == "one_r"
+    assert cfg.orb.take_profit_mode == "ema_cross"
+    assert cfg.orb.ema_filter is True
+    assert cfg.orb.ema_period == 9
+    assert cfg.orb.ema_require_open is False
     assert cfg.orb.stop_mode == "orb_extreme"
     assert cfg.orb.min_or_height_pct == 0.01
     assert cfg.orb.entry_cutoff == "10:30"
@@ -109,7 +128,7 @@ sizing: {type: shares, value: 1}
 """,
         encoding="utf-8",
     )
-    with pytest.raises(Exception, match="one_r"):
+    with pytest.raises(Exception, match="ema_cross"):
         load_orb_config(path)
 
 
@@ -221,11 +240,11 @@ def test_close_in_band_without_touch_does_not_fire():
     mid = _b(15, 101.0, 101.4, 100.6, 100.8)
     assert rng.classify_close(probe.close, 0.05) == "top"
     assert probe.high < rng.high
-    assert find_setups("AAPL", [mid, probe, reversal, entry], rng) == []
-    assert find_setups("AAPL", [mid, probe, reversal, entry], rng, probe_mode="touch") == []
-    assert find_setups("AAPL", [mid, probe, reversal, entry], rng, probe_mode="touch_and_band") == []
+    assert _find("AAPL", [mid, probe, reversal, entry], rng) == []
+    assert _find("AAPL", [mid, probe, reversal, entry], rng, probe_mode="touch") == []
+    assert _find("AAPL", [mid, probe, reversal, entry], rng, probe_mode="touch_and_band") == []
     # Close-in-band-only behavior still available.
-    band = find_setups(
+    band = _find(
         "AAPL", [mid, probe, reversal, entry], rng, probe_mode="edge_band", edge_pct=0.05
     )
     assert len(band) == 1
@@ -243,9 +262,9 @@ def test_bottom_close_in_band_without_touch_does_not_fire():
     series = [_b(15, 205, 205.4, 204.6, 205.1), probe, reversal, entry]
     assert rng.classify_close(probe.close, 0.05) == "bottom"
     assert probe.low > rng.low
-    assert find_setups("MSFT", series, rng) == []
-    assert find_setups("MSFT", series, rng, probe_mode="touch_and_band") == []
-    band = find_setups("MSFT", series, rng, probe_mode="edge_band")
+    assert _find("MSFT", series, rng) == []
+    assert _find("MSFT", series, rng, probe_mode="touch_and_band") == []
+    band = _find("MSFT", series, rng, probe_mode="edge_band")
     assert len(band) == 1
     assert band[0].side == "buy"
 
@@ -259,11 +278,11 @@ def test_hybrid_requires_touch_and_close_in_same_band():
     both = _b(20, 103.20, 104.00, 103.10, 103.80)
     wick_only = _b(20, 103.20, 104.25, 102.80, 102.90)
     band_only = _b(20, 103.20, 103.85, 103.10, 103.80)
-    assert find_setups("AAPL", [mid, both, reversal, entry], rng)[0].probe_mode == "touch_and_band"
-    assert find_setups("AAPL", [mid, wick_only, reversal, entry], rng) == []
-    assert find_setups("AAPL", [mid, band_only, reversal, entry], rng) == []
-    assert find_setups("AAPL", [mid, wick_only, reversal, entry], rng, probe_mode="touch")
-    assert find_setups("AAPL", [mid, band_only, reversal, entry], rng, probe_mode="edge_band")
+    assert _find("AAPL", [mid, both, reversal, entry], rng)[0].probe_mode == "touch_and_band"
+    assert _find("AAPL", [mid, wick_only, reversal, entry], rng) == []
+    assert _find("AAPL", [mid, band_only, reversal, entry], rng) == []
+    assert _find("AAPL", [mid, wick_only, reversal, entry], rng, probe_mode="touch")
+    assert _find("AAPL", [mid, band_only, reversal, entry], rng, probe_mode="edge_band")
 
 
 def test_touch_plus_opposite_color_still_fires():
@@ -273,16 +292,16 @@ def test_touch_plus_opposite_color_still_fires():
     reversal = _b(25, 103.70, 103.90, 102.50, 102.60)
     entry = _b(30, 102.55, 102.70, 102.40, 102.45)
     mid = _b(15, 101.0, 101.4, 100.6, 100.8)
-    setups = find_setups("AAPL", [mid, probe, reversal, entry], rng, probe_mode="touch")
+    setups = _find("AAPL", [mid, probe, reversal, entry], rng, probe_mode="touch")
     assert len(setups) == 1
     assert setups[0].zone == "top"
     assert setups[0].side == "sell"
     assert setups[0].probe_mode == "touch"
     assert setups[0].probe.high >= rng.high
     assert setups[0].stop == 104.0
-    assert setups[0].take == pytest.approx(101.10)
-    assert setups[0].take_profit_mode == "one_r"
-    hybrid = find_setups("AAPL", [mid, probe, reversal, entry], rng)
+    assert setups[0].take is None
+    assert setups[0].take_profit_mode == "ema_cross"
+    hybrid = _find("AAPL", [mid, probe, reversal, entry], rng)
     assert len(hybrid) == 1
     assert hybrid[0].probe_mode == "touch_and_band"
     assert hybrid[0].probe.close >= rng.top_zone(0.05)[0]
@@ -296,12 +315,12 @@ def test_touch_wick_through_or_extreme_still_fires():
     reversal = _b(25, 102.80, 103.00, 101.50, 101.60)
     entry = _b(30, 101.55, 101.70, 101.40, 101.45)
     series = [_b(15, 101.0, 101.4, 100.6, 100.8), probe, reversal, entry]
-    setups = find_setups("AAPL", series, rng, probe_mode="touch")
+    setups = _find("AAPL", series, rng, probe_mode="touch")
     assert len(setups) == 1
     assert setups[0].side == "sell"
-    assert find_setups("AAPL", series, rng, probe_mode="edge_band") == []
-    assert find_setups("AAPL", series, rng, probe_mode="touch_and_band") == []
-    assert find_setups("AAPL", series, rng) == []
+    assert _find("AAPL", series, rng, probe_mode="edge_band") == []
+    assert _find("AAPL", series, rng, probe_mode="touch_and_band") == []
+    assert _find("AAPL", series, rng) == []
 
 
 def test_aggregate_or_from_signal_bars():
@@ -331,7 +350,7 @@ def test_top_fade_short_probe_reversal_entry_stop_target():
     reversal = _b(25, 103.70, 103.90, 102.50, 102.60)
     entry = _b(30, 102.55, 102.70, 102.40, 102.45)
     mid = _b(15, 101.0, 101.4, 100.6, 100.8)
-    setups = find_setups("AAPL", [mid, probe, reversal, entry], rng, edge_pct=0.05)
+    setups = _find("AAPL", [mid, probe, reversal, entry], rng, edge_pct=0.05)
     assert len(setups) == 1
     setup = setups[0]
     assert setup.zone == "top"
@@ -342,15 +361,20 @@ def test_top_fade_short_probe_reversal_entry_stop_target():
     assert setup.entry_bar.timestamp == entry.timestamp
     assert setup.entry_bar.open == 102.55
     assert setup.stop == 104.0  # opening-range high (orb_extreme)
-    # R = |102.55 − 104| = 1.45; short TP = 102.55 − 1.45 = 101.10
-    assert setup.take == pytest.approx(101.10)
-    assert setup.take_profit_mode == "one_r"
+    assert setup.take is None
+    assert setup.take_profit_mode == "ema_cross"
     assert setup.reversal_in_range == "close"
-    mid_tp = find_setups(
+    mid_tp = _find(
         "AAPL", [mid, probe, reversal, entry], rng, take_profit_mode="or_midpoint"
     )
-    assert mid_tp[0].take == 100.0
-    first_tp = find_setups(
+    assert mid_tp[0].take == pytest.approx(100.0)
+    one_r = _find(
+        "AAPL", [mid, probe, reversal, entry], rng, take_profit_mode="one_r"
+    )
+    # R = |102.55 − 104| = 1.45; short TP = 102.55 − 1.45 = 101.10
+    assert one_r[0].take == pytest.approx(101.10)
+    assert one_r[0].take_profit_mode == "one_r"
+    first_tp = _find(
         "AAPL", [mid, probe, reversal, entry], rng, take_profit_mode="first_profitable_close"
     )
     assert first_tp[0].take is None
@@ -364,16 +388,23 @@ def test_bottom_fade_long_probe_reversal_entry_stop_target():
     probe = _b(20, 200.80, 200.90, 200.00, 200.30)
     reversal = _b(25, 200.40, 201.50, 200.20, 201.40)
     entry = _b(30, 201.50, 201.80, 201.30, 201.60)
-    setups = find_setups("MSFT", [_b(15, 205, 205.4, 204.6, 205.1), probe, reversal, entry], rng)
+    setups = _find("MSFT", [_b(15, 205, 205.4, 204.6, 205.1), probe, reversal, entry], rng)
     assert len(setups) == 1
     setup = setups[0]
     assert setup.zone == "bottom"
     assert setup.side == "buy"
     assert setup.stop == 200.0  # opening-range low (orb_extreme)
-    # R = |201.50 − 200| = 1.50; long TP = 201.50 + 1.50 = 203.00
-    assert setup.take == pytest.approx(203.00)
-    assert setup.take_profit_mode == "one_r"
+    assert setup.take is None
+    assert setup.take_profit_mode == "ema_cross"
     assert setup.entry_bar.open == 201.50
+    one_r = _find(
+        "MSFT",
+        [_b(15, 205, 205.4, 204.6, 205.1), probe, reversal, entry],
+        rng,
+        take_profit_mode="one_r",
+    )
+    # R = |201.50 − 200| = 1.50; long TP = 201.50 + 1.50 = 203.00
+    assert one_r[0].take == pytest.approx(203.00)
 
 
 def test_no_trade_when_close_outside_band():
@@ -381,7 +412,7 @@ def test_no_trade_when_close_outside_band():
     assert rng is not None
     outside = _b(20, 496.2, 498.4, 496.0, 498.0)
     nxt = _b(25, 498.0, 498.6, 497.2, 497.4)
-    assert find_setups("SPY", [_b(15, 496, 496.8, 495.5, 496.2), outside, nxt], rng) == []
+    assert _find("SPY", [_b(15, 496, 496.8, 495.5, 496.2), outside, nxt], rng) == []
 
 
 def test_no_trade_when_same_color_reversal():
@@ -391,7 +422,7 @@ def test_no_trade_when_same_color_reversal():
     same = _b(35, 499.70, 500.10, 499.50, 499.95)  # bullish after top probe
     assert probe.close >= 499.5
     assert same.is_bullish()
-    assert find_setups("SPY", [probe, same], rng) == []
+    assert _find("SPY", [probe, same], rng) == []
 
 
 def test_doji_reversal_is_not_opposite_color():
@@ -399,7 +430,7 @@ def test_doji_reversal_is_not_opposite_color():
     assert rng is not None
     probe = _b(20, 103.2, 104.0, 103.1, 103.8)
     doji = _b(25, 103.5, 103.6, 103.4, 103.5)
-    assert find_setups("AAPL", [probe, doji], rng) == []
+    assert _find("AAPL", [probe, doji], rng) == []
 
 
 def test_live_setup_only_when_last_closed_bar_is_the_reversal():
@@ -409,7 +440,7 @@ def test_live_setup_only_when_last_closed_bar_is_the_reversal():
     reversal = _b(25, 103.7, 103.9, 102.5, 102.6)
     entry = _b(30, 102.55, 102.7, 102.4, 102.45)
     series = [_b(15, 101, 101.4, 100.6, 100.8), probe, reversal, entry]
-    setups = find_setups("AAPL", series, rng)
+    setups = _find("AAPL", series, rng)
     assert live_setup(setups, series[:-1]) is setups[0]
     assert live_setup(setups, series) is None  # last bar is the entry, too late to fire live
 
@@ -420,17 +451,22 @@ def test_demo_fixture_helpers_match_locked_math():
     setups = find_setups("AAPL", aapl["5Min"], rng)
     assert setups[0].side == "sell"
     assert setups[0].stop == 104.0
-    assert setups[0].take == pytest.approx(101.10)
+    assert setups[0].take is None
     assert setups[0].entry_bar.open == 102.55
     assert setups[0].stop_mode == "orb_extreme"
-    assert setups[0].take_profit_mode == "one_r"
+    assert setups[0].take_profit_mode == "ema_cross"
+    assert setups[0].ema_filter is True
+    assert setups[0].ema_value is not None
+    assert setups[0].reversal.close < setups[0].ema_value
 
     msft = msft_bottom_fade_long()
     rng = build_opening_range(msft["15Min"], date(2026, 9, 11), orb_timeframe="15m")
     setups = find_setups("MSFT", msft["5Min"], rng)
     assert setups[0].side == "buy"
     assert setups[0].stop == 200.0
-    assert setups[0].take == pytest.approx(203.00)
+    assert setups[0].take is None
+    assert setups[0].ema_value is not None
+    assert setups[0].reversal.close > setups[0].ema_value
 
     spy = spy_no_trade()
     rng = build_opening_range(spy["15Min"], date(2026, 9, 11), orb_timeframe="15m")
@@ -443,7 +479,7 @@ def test_reversal_candle_stop_uses_candle_extreme():
     probe = _b(20, 103.20, 104.00, 103.10, 103.80)
     reversal = _b(25, 103.70, 103.90, 102.50, 102.60)
     entry = _b(30, 102.55, 102.70, 102.40, 102.45)
-    setups = find_setups(
+    setups = _find(
         "AAPL",
         [_b(15, 101.0, 101.4, 100.6, 100.8), probe, reversal, entry],
         rng,
@@ -467,7 +503,7 @@ def test_gate_keeps_first_pre_cutoff_entry_only():
         _b(45, 103.60, 103.85, 102.80, 102.90),
         _b(50, 102.85, 102.95, 102.70, 102.80),  # 10:20 would-be entry
     ]
-    setups = find_setups("AAPL", signal, rng)
+    setups = _find("AAPL", signal, rng)
     assert len(setups) == 2
     gated = gate_setups(setups)
     assert gated[0][1] is None
@@ -484,7 +520,7 @@ def test_gate_rejects_entry_at_or_after_1030():
         _b(55, 103.70, 103.90, 102.50, 102.60),  # 10:25 reversal
         _b(60, 102.55, 102.70, 102.40, 102.50),  # 10:30 entry
     ]
-    setups = find_setups("AAPL", signal, rng)
+    setups = _find("AAPL", signal, rng)
     assert len(setups) == 1
     assert setups[0].entry_bar is not None
     assert setups[0].entry_bar.timestamp.astimezone(ET).hour == 10
@@ -502,7 +538,7 @@ def test_gate_allows_post_cutoff_when_configured():
         _b(55, 103.70, 103.90, 102.50, 102.60),
         _b(60, 102.55, 102.70, 102.40, 102.50),
     ]
-    setups = find_setups("AAPL", signal, rng)
+    setups = _find("AAPL", signal, rng)
     gated = gate_setups(setups, allow_entries_after_cutoff=True)
     assert gated[0][1] is None
 
@@ -543,7 +579,7 @@ def test_min_or_height_gate_skips_quiet_session():
         _b(25, 100.36, 100.38, 100.10, 100.12),  # bearish, close inside OR
         _b(30, 100.12, 100.16, 100.08, 100.10),
     ]
-    setups = find_setups("AAPL", signal, rng, probe_mode="touch")
+    setups = _find("AAPL", signal, rng, probe_mode="touch")
     assert len(setups) == 1
     gated = gate_setups(setups)
     assert gated[0][1] == "min_or_height"
@@ -600,10 +636,10 @@ def test_reversal_close_outside_or_is_rejected():
     entry = _b(30, 95.40, 95.60, 95.20, 95.30)
     series = [mid, probe, outside, entry]
     assert reversal_in_opening_range(outside, rng, "close") is False
-    assert find_setups("AAPL", series, rng) == []
-    assert find_setups("AAPL", series, rng, reversal_in_range="close") == []
+    assert _find("AAPL", series, rng) == []
+    assert _find("AAPL", series, rng, reversal_in_range="close") == []
     # Same tape still fires when the in-range filter is off.
-    off = find_setups("AAPL", series, rng, reversal_in_range="off")
+    off = _find("AAPL", series, rng, reversal_in_range="off")
     assert len(off) == 1
     assert off[0].side == "sell"
 
@@ -616,8 +652,8 @@ def test_reversal_close_above_or_high_is_rejected():
     outside = _b(25, 200.40, 210.40, 200.20, 210.20)
     entry = _b(30, 210.10, 210.30, 209.80, 210.00)
     series = [_b(15, 205, 205.4, 204.6, 205.1), probe, outside, entry]
-    assert find_setups("MSFT", series, rng) == []
-    assert find_setups("MSFT", series, rng, reversal_in_range="off")
+    assert _find("MSFT", series, rng) == []
+    assert _find("MSFT", series, rng, reversal_in_range="off")
 
 
 def test_reversal_body_mode_rejects_wick_outside_or():
@@ -631,8 +667,8 @@ def test_reversal_body_mode_rejects_wick_outside_or():
     series = [mid, probe, wick, entry]
     assert reversal_in_opening_range(wick, rng, "close") is True
     assert reversal_in_opening_range(wick, rng, "body") is False
-    assert find_setups("AAPL", series, rng, reversal_in_range="close")
-    assert find_setups("AAPL", series, rng, reversal_in_range="body") == []
+    assert _find("AAPL", series, rng, reversal_in_range="close")
+    assert _find("AAPL", series, rng, reversal_in_range="body") == []
 
 
 def test_reversal_in_range_aliases(tmp_path):
@@ -682,6 +718,14 @@ sizing: {type: shares, value: 1}
     assert cfg.orb.take_profit_mode == "or_midpoint"
 
 
+def test_ema_cross_exit_helper():
+    assert ema_cross_exit(side="buy", close=100.0, ema_value=100.01)
+    assert not ema_cross_exit(side="buy", close=100.0, ema_value=100.0)
+    assert ema_cross_exit(side="sell", close=100.01, ema_value=100.0)
+    assert not ema_cross_exit(side="sell", close=100.0, ema_value=100.0)
+    assert not ema_cross_exit(side="buy", close=99.0, ema_value=None)
+
+
 def test_first_profitable_close_helper():
     assert first_profitable_close(side="buy", entry_price=100.0, close=100.01)
     assert not first_profitable_close(side="buy", entry_price=100.0, close=100.0)
@@ -717,4 +761,130 @@ sizing: {type: shares, value: 1}
 """,
         encoding="utf-8",
     )
-    assert load_orb_config(omitted).orb.take_profit_mode == "one_r"
+    assert load_orb_config(omitted).orb.take_profit_mode == "ema_cross"
+    assert load_orb_config(omitted).orb.ema_filter is True
+    assert load_orb_config(omitted).orb.ema_period == 9
+    alias = tmp_path / "ema.yaml"
+    alias.write_text(
+        """
+strategy: orb_reversal
+universe: [AAPL]
+orb: {take_profit_mode: ema9}
+sizing: {type: shares, value: 1}
+""",
+        encoding="utf-8",
+    )
+    assert load_orb_config(alias).orb.take_profit_mode == "ema_cross"
+
+
+def test_reversal_clears_ema_long_and_short():
+    bar = _b(25, 201.00, 201.50, 200.80, 201.40)
+    assert reversal_clears_ema(bar, 201.00, side="buy") is True
+    assert reversal_clears_ema(bar, 201.40, side="buy") is False  # close == ema
+    assert reversal_clears_ema(bar, 201.50, side="buy") is False
+    assert reversal_clears_ema(bar, None, side="buy") is False
+    short = _b(25, 103.70, 103.90, 102.50, 102.60)
+    assert reversal_clears_ema(short, 103.00, side="sell") is True
+    assert reversal_clears_ema(short, 102.60, side="sell") is False
+    assert reversal_clears_ema(short, 102.00, side="sell") is False
+    # Optional open-and-close: long open 201.00 is not above 201.10.
+    assert reversal_clears_ema(bar, 201.10, side="buy", require_open=True) is False
+    assert reversal_clears_ema(bar, 200.50, side="buy", require_open=True) is True
+
+
+def test_ema_filter_allows_long_when_close_above_ema():
+    rng = build_opening_range([_b(0, 204, 210, 200, 205)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    probe = _b(20, 200.80, 200.90, 200.00, 200.30)
+    reversal = _b(25, 200.40, 201.50, 200.20, 201.40)
+    entry = _b(30, 201.50, 201.80, 201.30, 201.60)
+    series = [*_warmup(200.20), _b(15, 205, 205.4, 204.6, 205.1), probe, reversal, entry]
+    ema9 = ema_through(series, reversal, 9)
+    assert ema9 is not None
+    assert reversal.close > ema9
+    setups = find_setups("MSFT", series, rng)
+    assert len(setups) == 1
+    assert setups[0].side == "buy"
+    assert setups[0].ema_filter is True
+    assert setups[0].ema_period == 9
+    assert setups[0].ema_value == pytest.approx(ema9)
+    assert "above EMA" in setups[0].explain()
+
+
+def test_ema_filter_allows_short_when_close_below_ema():
+    rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    mid = _b(15, 101.0, 101.4, 100.6, 100.8)
+    probe = _b(20, 103.20, 104.00, 103.10, 103.80)
+    reversal = _b(25, 103.70, 103.90, 102.50, 102.60)
+    entry = _b(30, 102.55, 102.70, 102.40, 102.45)
+    series = [*_warmup(103.80), mid, probe, reversal, entry]
+    ema9 = ema_through(series, reversal, 9)
+    assert ema9 is not None
+    assert reversal.close < ema9
+    setups = find_setups("AAPL", series, rng)
+    assert len(setups) == 1
+    assert setups[0].side == "sell"
+    assert setups[0].ema_value == pytest.approx(ema9)
+    assert "below EMA" in setups[0].explain()
+
+
+def test_ema_filter_rejects_long_on_wrong_side():
+    rng = build_opening_range([_b(0, 204, 210, 200, 205)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    probe = _b(20, 200.80, 200.90, 200.00, 200.30)
+    reversal = _b(25, 200.40, 201.50, 200.20, 201.40)
+    entry = _b(30, 201.50, 201.80, 201.30, 201.60)
+    # Warmup well above the reversal close so EMA9 > 201.40.
+    series = [*_warmup(205.00), _b(15, 205, 205.4, 204.6, 205.1), probe, reversal, entry]
+    ema9 = ema_through(series, reversal, 9)
+    assert ema9 is not None
+    assert reversal.close < ema9
+    assert find_setups("MSFT", series, rng) == []
+    assert _find("MSFT", series, rng)  # still a valid fade when the filter is off
+
+
+def test_ema_filter_rejects_short_on_wrong_side():
+    rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    mid = _b(15, 101.0, 101.4, 100.6, 100.8)
+    probe = _b(20, 103.20, 104.00, 103.10, 103.80)
+    reversal = _b(25, 103.70, 103.90, 102.50, 102.60)
+    entry = _b(30, 102.55, 102.70, 102.40, 102.45)
+    # Warmup well below the reversal close so EMA9 < 102.60.
+    series = [*_warmup(100.00), mid, probe, reversal, entry]
+    ema9 = ema_through(series, reversal, 9)
+    assert ema9 is not None
+    assert reversal.close > ema9
+    assert find_setups("AAPL", series, rng) == []
+    assert _find("AAPL", series, rng)
+
+
+def test_ema_filter_rejects_when_not_enough_closes():
+    rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    mid = _b(15, 101.0, 101.4, 100.6, 100.8)
+    probe = _b(20, 103.20, 104.00, 103.10, 103.80)
+    reversal = _b(25, 103.70, 103.90, 102.50, 102.60)
+    entry = _b(30, 102.55, 102.70, 102.40, 102.45)
+    series = [mid, probe, reversal, entry]
+    assert ema_through(series, reversal, 9) is None
+    assert find_setups("AAPL", series, rng) == []
+    assert _find("AAPL", series, rng)
+
+
+def test_ema_filter_aliases(tmp_path):
+    off = tmp_path / "off.yaml"
+    off.write_text(
+        """
+strategy: orb_reversal
+universe: [AAPL]
+orb: {ema_filter: off, ema_period: 21, ema_require_open: yes}
+sizing: {type: shares, value: 1}
+""",
+        encoding="utf-8",
+    )
+    cfg = load_orb_config(off)
+    assert cfg.orb.ema_filter is False
+    assert cfg.orb.ema_period == 21
+    assert cfg.orb.ema_require_open is True

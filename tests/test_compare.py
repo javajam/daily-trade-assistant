@@ -46,7 +46,8 @@ def test_assumptions_orb_document_new_defaults():
     cfg = load_orb_config("config/orb_reversal.example.yaml")
     notes = assumptions_orb("commission=$0.00/fill, slippage=0.0%", 100_000.0, cfg)
     assert any("opening-range extreme" in n for n in notes)
-    assert any("one_r" in n and "entry + R" in n for n in notes)
+    assert any("ema_cross" in n and "close < EMA" in n for n in notes)
+    assert any("EMA" in n and "ema_filter: true" in n for n in notes)
     assert any("or_low <= close <= or_high" in n for n in notes)
     assert any("touch_and_band" in n and "high >= OR high" in n and "edge band" in n for n in notes)
     assert any("10:30" in n and "America/New_York" in n for n in notes)
@@ -68,7 +69,15 @@ def test_assumptions_orb_document_new_defaults():
     )
     mid_notes = assumptions_orb("commission=$0.00/fill, slippage=0.0%", 100_000.0, mid)
     assert any("or_midpoint" in n and "OR midpoint" in n for n in mid_notes)
-    assert any("in-range filter is off" in n for n in mid_notes)
+    one_r = cfg.model_copy(
+        update={"orb": cfg.orb.model_copy(update={"take_profit_mode": "one_r", "reversal_in_range": "off"})}
+    )
+    one_r_notes = assumptions_orb("commission=$0.00/fill, slippage=0.0%", 100_000.0, one_r)
+    assert any("one_r" in n and "entry + R" in n for n in one_r_notes)
+    assert any("in-range filter is off" in n for n in one_r_notes)
+    off_ema = cfg.model_copy(update={"orb": cfg.orb.model_copy(update={"ema_filter": False})})
+    off_ema_notes = assumptions_orb("commission=$0.00/fill, slippage=0.0%", 100_000.0, off_ema)
+    assert any("EMA filter is off" in n for n in off_ema_notes)
     first = cfg.model_copy(
         update={"orb": cfg.orb.model_copy(update={"take_profit_mode": "first_profitable_close"})}
     )

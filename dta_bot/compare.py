@@ -114,19 +114,26 @@ def _orb_reversal_range_assumption(config: Optional[OrbBotConfig]) -> str:
 
 def _orb_stop_assumption(config: Optional[OrbBotConfig]) -> str:
     mode = config.orb.stop_mode if config is not None else "orb_extreme"
-    take = config.orb.take_profit_mode if config is not None else "one_r"
-    if take == "or_midpoint":
-        take_txt = "take-profit is the OR midpoint (take_profit_mode: or_midpoint)."
+    take = config.orb.take_profit_mode if config is not None else "ema_cross"
+    period = config.orb.ema_period if config is not None else 9
+    if take == "one_r":
+        take_txt = (
+            "take-profit is 1R from entry (R = |entry − stop|; long: entry + R; "
+            "short: entry − R; take_profit_mode: one_r)."
+        )
     elif take == "first_profitable_close":
         take_txt = (
             "take-profit is the close of the first signal-timeframe bar that is "
             "strictly profitable vs entry (long: close > entry; short: close < entry; "
             "take_profit_mode: first_profitable_close)."
         )
+    elif take == "or_midpoint":
+        take_txt = "take-profit is the OR midpoint (take_profit_mode: or_midpoint)."
     else:
         take_txt = (
-            "take-profit is 1R from entry (R = |entry − stop|; long: entry + R; "
-            "short: entry − R; take_profit_mode: one_r, default)."
+            f"take-profit is the close of the first post-entry signal-timeframe bar "
+            f"on the other side of EMA({period}) (long: close < EMA; short: close > EMA; "
+            f"take_profit_mode: ema_cross, default)."
         )
     if mode == "reversal_candle":
         return f"Stop is the reversal candle extreme; {take_txt}"
@@ -134,7 +141,8 @@ def _orb_stop_assumption(config: Optional[OrbBotConfig]) -> str:
         "Stop is the opening-range extreme (long → OR low, short → OR high); "
         f"{take_txt} "
         "Set orb.stop_mode: reversal_candle to restore the previous candle-extreme stop. "
-        "Set orb.take_profit_mode: or_midpoint to restore the previous midpoint target. "
+        "Set orb.take_profit_mode: or_midpoint for the OR-midpoint target. "
+        "Set orb.take_profit_mode: one_r for a 1R target. "
         "Set orb.take_profit_mode: first_profitable_close to restore the first-profit close exit."
     )
 
@@ -161,6 +169,31 @@ def _orb_frequency_assumption(config: Optional[OrbBotConfig]) -> str:
         f"At most {max_n} {noun} per symbol per session, and only if that entry is "
         f"before {cutoff} {tz} (no new entries at/after the cutoff). "
         "One open position per symbol unless on_open_position=replace."
+    )
+
+
+def _orb_ema_assumption(config: Optional[OrbBotConfig]) -> str:
+    spec = config.orb if config is not None else None
+    on = spec.ema_filter if spec is not None else True
+    period = spec.ema_period if spec is not None else 9
+    require_open = spec.ema_require_open if spec is not None else False
+    if not on:
+        return (
+            "EMA filter is off (ema_filter: false). "
+            "Set orb.ema_filter: true to require the reversal close above "
+            f"EMA({period}) for longs and below it for shorts."
+        )
+    open_bit = (
+        " Also require the reversal open on the same side of the EMA (ema_require_open)."
+        if require_open
+        else " Default compare is close vs EMA (ema_require_open: false)."
+    )
+    return (
+        f"EMA filter (ema_filter: true, default): compute EMA({period}) on the "
+        "signal timeframe through the reversal bar (inclusive). "
+        f"Long: close > EMA{period}; short: close < EMA{period}.{open_bit} "
+        "If EMA cannot be computed (not enough closes), skip the entry. "
+        "Set ema_filter: false to disable."
     )
 
 
@@ -192,11 +225,12 @@ def assumptions_orb(
         _orb_probe_assumption(config),
         "Reversal = the next signal bar, opposite color (top+bearish → short, bottom+bullish → long).",
         _orb_reversal_range_assumption(config),
+        _orb_ema_assumption(config),
         "Entry fills at the open of the bar after the reversal candle.",
         _orb_stop_assumption(config),
         _orb_height_assumption(config),
         _orb_frequency_assumption(config),
-        "If stop and take (1R, midpoint, or first-profit close) both trade in the same bar, the stop is assumed to fill first.",
+        "If stop and take (EMA-cross, 1R, midpoint, or first-profit close) both trade in the same bar, the stop is assumed to fill first.",
         "A gap through stop/take fills at that bar's open.",
         "Open lots still on the last bar are flattened at the last close (exit reason eod).",
         SHORT_MTM_NOTE,
