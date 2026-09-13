@@ -90,17 +90,46 @@ def _orb_probe_assumption(config: Optional[OrbBotConfig]) -> str:
     )
 
 
-def _orb_stop_assumption(config: Optional[OrbBotConfig]) -> str:
-    mode = config.orb.stop_mode if config is not None else "orb_extreme"
-    if mode == "reversal_candle":
+def _orb_reversal_range_assumption(config: Optional[OrbBotConfig]) -> str:
+    mode = config.orb.reversal_in_range if config is not None else "close"
+    if mode == "off":
         return (
-            "Stop is the reversal candle extreme; take-profit is the OR midpoint "
-            "(v1; A/B tested later)."
+            "Reversal in-range filter is off (opposite color alone is enough). "
+            "Set orb.reversal_in_range: close to require the reversal close inside the OR."
+        )
+    if mode == "body":
+        return (
+            "Reversal candle must be fully inside the OR (high and low within "
+            "or_low–or_high; reversal_in_range: body). A close-only filter is "
+            "orb.reversal_in_range: close."
         )
     return (
+        "Reversal close must sit inside the opening range "
+        "(or_low <= close <= or_high; reversal_in_range: close, default). "
+        "If the reversal closes outside the OR, do not enter. "
+        "Set orb.reversal_in_range: body for the stricter fully-inside mode "
+        "(high and low within the OR), or off to disable the filter."
+    )
+
+
+def _orb_stop_assumption(config: Optional[OrbBotConfig]) -> str:
+    mode = config.orb.stop_mode if config is not None else "orb_extreme"
+    take = config.orb.take_profit_mode if config is not None else "first_profitable_close"
+    if take == "or_midpoint":
+        take_txt = "take-profit is the OR midpoint (take_profit_mode: or_midpoint)."
+    else:
+        take_txt = (
+            "take-profit is the close of the first signal-timeframe bar that is "
+            "strictly profitable vs entry (long: close > entry; short: close < entry; "
+            "take_profit_mode: first_profitable_close, default)."
+        )
+    if mode == "reversal_candle":
+        return f"Stop is the reversal candle extreme; {take_txt}"
+    return (
         "Stop is the opening-range extreme (long → OR low, short → OR high); "
-        "take-profit remains the OR midpoint (v1; A/B tested later). "
-        "Set orb.stop_mode: reversal_candle to restore the previous candle-extreme stop."
+        f"{take_txt} "
+        "Set orb.stop_mode: reversal_candle to restore the previous candle-extreme stop. "
+        "Set orb.take_profit_mode: or_midpoint to restore the previous midpoint target."
     )
 
 
@@ -139,10 +168,11 @@ def assumptions_orb(
         "After the OR candle is complete, probe/reversal evaluation uses the signal timeframe.",
         _orb_probe_assumption(config),
         "Reversal = the next signal bar, opposite color (top+bearish → short, bottom+bullish → long).",
+        _orb_reversal_range_assumption(config),
         "Entry fills at the open of the bar after the reversal candle.",
         _orb_stop_assumption(config),
         _orb_frequency_assumption(config),
-        "If stop and take both trade in the fill bar, the stop is assumed to fill first.",
+        "If stop and take (midpoint or first-profit close) both trade in the same bar, the stop is assumed to fill first.",
         "A gap through stop/take fills at that bar's open.",
         "Open lots still on the last bar are flattened at the last close (exit reason eod).",
         SHORT_MTM_NOTE,

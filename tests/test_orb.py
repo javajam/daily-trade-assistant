@@ -8,9 +8,11 @@ from dta_bot.orb import (
     aggregate_opening_range,
     build_opening_range,
     find_setups,
+    first_profitable_close,
     gate_setups,
     live_setup,
     next_signal_bar,
+    reversal_in_opening_range,
 )
 from dta_bot.orb_config import load_orb_config
 from dta_bot.orb_demo_bars import SESSION, aapl_top_fade_short, msft_bottom_fade_long, spy_no_trade
@@ -38,7 +40,8 @@ def test_example_orb_config_is_paper_only():
     assert cfg.orb.session_open == "09:30"
     assert cfg.orb.session_timezone == "America/New_York"
     assert cfg.orb.on_open_position == "skip"
-    assert cfg.orb.take_profit == "midpoint"
+    assert cfg.orb.reversal_in_range == "close"
+    assert cfg.orb.take_profit_mode == "first_profitable_close"
     assert cfg.orb.stop_mode == "orb_extreme"
     assert cfg.orb.entry_cutoff == "10:30"
     assert cfg.orb.max_trades_before_cutoff == 1
@@ -75,6 +78,36 @@ sizing: {type: shares, value: 1}
         encoding="utf-8",
     )
     with pytest.raises(Exception, match="touch_and_band"):
+        load_orb_config(path)
+
+
+def test_reversal_in_range_must_be_known(tmp_path):
+    path = tmp_path / "bad.yaml"
+    path.write_text(
+        """
+strategy: orb_reversal
+universe: [AAPL]
+orb: {reversal_in_range: wicks}
+sizing: {type: shares, value: 1}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="close"):
+        load_orb_config(path)
+
+
+def test_take_profit_mode_must_be_known(tmp_path):
+    path = tmp_path / "bad.yaml"
+    path.write_text(
+        """
+strategy: orb_reversal
+universe: [AAPL]
+orb: {take_profit_mode: trail}
+sizing: {type: shares, value: 1}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="first_profitable_close"):
         load_orb_config(path)
 
 
@@ -243,7 +276,8 @@ def test_touch_plus_opposite_color_still_fires():
     assert setups[0].probe_mode == "touch"
     assert setups[0].probe.high >= rng.high
     assert setups[0].stop == 104.0
-    assert setups[0].take == 100.0
+    assert setups[0].take is None
+    assert setups[0].take_profit_mode == "first_profitable_close"
     hybrid = find_setups("AAPL", [mid, probe, reversal, entry], rng)
     assert len(hybrid) == 1
     assert hybrid[0].probe_mode == "touch_and_band"
@@ -303,7 +337,13 @@ def test_top_fade_short_probe_reversal_entry_stop_target():
     assert setup.entry_bar.timestamp == entry.timestamp
     assert setup.entry_bar.open == 102.55
     assert setup.stop == 104.0  # opening-range high (orb_extreme)
-    assert setup.take == 100.0  # OR midpoint
+    assert setup.take is None  # first_profitable_close has no price target
+    assert setup.take_profit_mode == "first_profitable_close"
+    assert setup.reversal_in_range == "close"
+    mid_tp = find_setups(
+        "AAPL", [mid, probe, reversal, entry], rng, take_profit_mode="or_midpoint"
+    )
+    assert mid_tp[0].take == 100.0
     assert next_signal_bar([mid, probe, reversal, entry], reversal.timestamp) == entry
 
 
@@ -319,7 +359,7 @@ def test_bottom_fade_long_probe_reversal_entry_stop_target():
     assert setup.zone == "bottom"
     assert setup.side == "buy"
     assert setup.stop == 200.0  # opening-range low (orb_extreme)
-    assert setup.take == 205.0
+    assert setup.take is None
     assert setup.entry_bar.open == 201.50
 
 
@@ -367,7 +407,7 @@ def test_demo_fixture_helpers_match_locked_math():
     setups = find_setups("AAPL", aapl["5Min"], rng)
     assert setups[0].side == "sell"
     assert setups[0].stop == 104.0
-    assert setups[0].take == 100.0
+    assert setups[0].take is None
     assert setups[0].entry_bar.open == 102.55
     assert setups[0].stop_mode == "orb_extreme"
 
@@ -376,7 +416,7 @@ def test_demo_fixture_helpers_match_locked_math():
     setups = find_setups("MSFT", msft["5Min"], rng)
     assert setups[0].side == "buy"
     assert setups[0].stop == 200.0
-    assert setups[0].take == 205.0
+    assert setups[0].take is None
 
     spy = spy_no_trade()
     rng = build_opening_range(spy["15Min"], date(2026, 9, 11), orb_timeframe="15m")
@@ -457,3 +497,102 @@ def test_conftest_bar_helper_still_aligned_to_rth():
     # Guard: synthetic 15m index 0 is 9:30 ET on the shared fixture date.
     first = bar(0, 1, 1, 1, 1)
     assert first.timestamp == datetime(2026, 9, 11, 13, 30, tzinfo=timezone.utc)
+
+
+def test_reversal_close_outside_or_is_rejected():
+    rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    mid = _b(15, 101.0, 101.4, 100.6, 100.8)
+    probe = _b(20, 103.20, 104.00, 103.10, 103.80)
+    # Opposite-color but close 95.50 is below OR low 96.
+    outside = _b(25, 103.70, 103.90, 95.20, 95.50)
+    entry = _b(30, 95.40, 95.60, 95.20, 95.30)
+    series = [mid, probe, outside, entry]
+    assert reversal_in_opening_range(outside, rng, "close") is False
+    assert find_setups("AAPL", series, rng) == []
+    assert find_setups("AAPL", series, rng, reversal_in_range="close") == []
+    # Same tape still fires when the in-range filter is off.
+    off = find_setups("AAPL", series, rng, reversal_in_range="off")
+    assert len(off) == 1
+    assert off[0].side == "sell"
+
+
+def test_reversal_close_above_or_high_is_rejected():
+    rng = build_opening_range([_b(0, 204, 210, 200, 205)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    probe = _b(20, 200.80, 200.90, 200.00, 200.30)
+    # Bullish reversal that closes above the OR high.
+    outside = _b(25, 200.40, 210.40, 200.20, 210.20)
+    entry = _b(30, 210.10, 210.30, 209.80, 210.00)
+    series = [_b(15, 205, 205.4, 204.6, 205.1), probe, outside, entry]
+    assert find_setups("MSFT", series, rng) == []
+    assert find_setups("MSFT", series, rng, reversal_in_range="off")
+
+
+def test_reversal_body_mode_rejects_wick_outside_or():
+    rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    mid = _b(15, 101.0, 101.4, 100.6, 100.8)
+    probe = _b(20, 103.20, 104.00, 103.10, 103.80)
+    # Close is inside the OR; low wicked below or_low.
+    wick = _b(25, 103.70, 103.90, 95.80, 102.60)
+    entry = _b(30, 102.55, 102.70, 102.40, 102.45)
+    series = [mid, probe, wick, entry]
+    assert reversal_in_opening_range(wick, rng, "close") is True
+    assert reversal_in_opening_range(wick, rng, "body") is False
+    assert find_setups("AAPL", series, rng, reversal_in_range="close")
+    assert find_setups("AAPL", series, rng, reversal_in_range="body") == []
+
+
+def test_reversal_in_range_aliases(tmp_path):
+    path = tmp_path / "full.yaml"
+    path.write_text(
+        """
+strategy: orb_reversal
+universe: [AAPL]
+orb: {reversal_in_range: reversal_fully_inside}
+sizing: {type: shares, value: 1}
+""",
+        encoding="utf-8",
+    )
+    cfg = load_orb_config(path)
+    assert cfg.orb.reversal_in_range == "body"
+
+
+def test_explicit_take_profit_mode_wins_over_legacy_alias(tmp_path):
+    path = tmp_path / "both.yaml"
+    path.write_text(
+        """
+strategy: orb_reversal
+universe: [AAPL]
+orb:
+  take_profit: midpoint
+  take_profit_mode: first_profitable_close
+sizing: {type: shares, value: 1}
+""",
+        encoding="utf-8",
+    )
+    cfg = load_orb_config(path)
+    assert cfg.orb.take_profit_mode == "first_profitable_close"
+
+
+def test_take_profit_midpoint_alias_when_mode_omitted(tmp_path):
+    path = tmp_path / "old.yaml"
+    path.write_text(
+        """
+strategy: orb_reversal
+universe: [AAPL]
+orb: {take_profit: midpoint}
+sizing: {type: shares, value: 1}
+""",
+        encoding="utf-8",
+    )
+    cfg = load_orb_config(path)
+    assert cfg.orb.take_profit_mode == "or_midpoint"
+
+
+def test_first_profitable_close_helper():
+    assert first_profitable_close(side="buy", entry_price=100.0, close=100.01)
+    assert not first_profitable_close(side="buy", entry_price=100.0, close=100.0)
+    assert first_profitable_close(side="sell", entry_price=100.0, close=99.99)
+    assert not first_profitable_close(side="sell", entry_price=100.0, close=100.0)

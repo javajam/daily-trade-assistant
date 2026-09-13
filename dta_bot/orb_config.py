@@ -28,8 +28,14 @@ class OrbSpec(BaseModel):
     # skip = ignore new entries until flat (default).
     # replace = close the open lot and take the new signal.
     on_open_position: Literal["skip", "replace"] = "skip"
-    # v1 take-profit is the OR midpoint. Exit strategy will be A/B tested later.
-    take_profit: Literal["midpoint"] = "midpoint"
+    # close (default) = reversal close must sit inside the OR.
+    # body = high and low both inside the OR (stricter fully-inside mode).
+    # off = no in-range filter on the reversal candle.
+    reversal_in_range: Literal["close", "body", "off"] = "close"
+    # first_profitable_close (default) = exit at the close of the first
+    # signal-timeframe bar that is strictly profitable vs entry.
+    # or_midpoint = previous OR-midpoint take-profit.
+    take_profit_mode: Literal["first_profitable_close", "or_midpoint"] = "first_profitable_close"
     # orb_extreme = long stop at OR low, short stop at OR high (default).
     # reversal_candle = previous stop at the reversal candle extreme.
     stop_mode: Literal["orb_extreme", "reversal_candle"] = "orb_extreme"
@@ -115,6 +121,72 @@ class OrbSpec(BaseModel):
             raise ValueError("on_open_position must be 'skip' or 'replace'")
         return aliases[key]
 
+    @field_validator("reversal_in_range", mode="before")
+    @classmethod
+    def _reversal_in_range(cls, v: Any) -> str:
+        key = str(v or "close").strip().lower().replace("-", "_")
+        aliases = {
+            "close": "close",
+            "close_inside": "close",
+            "in_range": "close",
+            "inside": "close",
+            "body": "body",
+            "full": "body",
+            "fully_inside": "body",
+            "reversal_fully_inside": "body",
+            "range": "body",
+            "off": "off",
+            "none": "off",
+            "disabled": "off",
+        }
+        if key not in aliases:
+            raise ValueError("reversal_in_range must be 'close', 'body', or 'off'")
+        return aliases[key]
+
+    @field_validator("take_profit_mode", mode="before")
+    @classmethod
+    def _take_profit_mode(cls, v: Any) -> str:
+        key = str(v or "first_profitable_close").strip().lower().replace("-", "_")
+        aliases = {
+            "first_profitable_close": "first_profitable_close",
+            "first_profit": "first_profitable_close",
+            "first_close": "first_profitable_close",
+            "profitable_close": "first_profitable_close",
+            "or_midpoint": "or_midpoint",
+            "midpoint": "or_midpoint",
+            "mid": "or_midpoint",
+            "or_mid": "or_midpoint",
+        }
+        if key not in aliases:
+            raise ValueError("take_profit_mode must be 'first_profitable_close' or 'or_midpoint'")
+        return aliases[key]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _take_profit_alias(cls, data: Any) -> Any:
+        # Older YAML used take_profit: midpoint. Honor it only when the new
+        # field is omitted so an explicit take_profit_mode always wins.
+        if not isinstance(data, dict):
+            return data
+        if data.get("take_profit_mode") not in (None, ""):
+            return data
+        raw = data.get("take_profit")
+        if raw in (None, ""):
+            return data
+        key = str(raw).strip().lower().replace("-", "_")
+        aliases = {
+            "midpoint": "or_midpoint",
+            "or_midpoint": "or_midpoint",
+            "mid": "or_midpoint",
+            "first_profitable_close": "first_profitable_close",
+            "first_profit": "first_profitable_close",
+        }
+        mapped = aliases.get(key)
+        if mapped:
+            data = dict(data)
+            data["take_profit_mode"] = mapped
+        return data
+
     @field_validator("stop_mode", mode="before")
     @classmethod
     def _stop_mode(cls, v: Any) -> str:
@@ -147,6 +219,8 @@ class OrbSpec(BaseModel):
             "edge_pct": self.edge_pct,
             "probe_mode": self.probe_mode,
             "stop_mode": self.stop_mode,
+            "reversal_in_range": self.reversal_in_range,
+            "take_profit_mode": self.take_profit_mode,
         }
 
 

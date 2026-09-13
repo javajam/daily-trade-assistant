@@ -25,7 +25,13 @@ from dta_bot.backtest import (
 from dta_bot.config import ActionSpec
 from dta_bot.engine import BarMap
 from dta_bot.models import Account
-from dta_bot.orb import OrbSetup, find_all_setups, gate_setups, next_signal_bar
+from dta_bot.orb import (
+    OrbSetup,
+    find_all_setups,
+    first_profitable_close,
+    gate_setups,
+    next_signal_bar,
+)
 from dta_bot.orb_config import OrbBotConfig
 from dta_bot.orb_engine import RULE_ID
 from dta_bot.sizing import shares_for
@@ -225,6 +231,9 @@ def run_orb_backtest(
         pending = still_pending
 
         # 2) Stop / take on the bar that just completed (after any fill at its open).
+        #    Stop is always checked first. first_profitable_close then exits at
+        #    this bar's close if it is strictly profitable vs entry. Same-bar
+        #    stop + first-profit (or midpoint) → stop wins.
         for symbol, tf, bar in closing:
             last_price[symbol] = bar.close
             survivors: list[OpenLot] = []
@@ -233,6 +242,11 @@ def run_orb_backtest(
                     survivors.append(lot)
                     continue
                 hit = _stop_take_hit(bar, lot)
+                if hit is None and config.orb.take_profit_mode == "first_profitable_close":
+                    if first_profitable_close(
+                        side=lot.side, entry_price=lot.entry_price, close=bar.close
+                    ):
+                        hit = ("take", bar.close)
                 if hit is None:
                     survivors.append(lot)
                     continue

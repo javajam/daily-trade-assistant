@@ -16,11 +16,19 @@ Locked v1 rules
   the previous close-in-zone rule without requiring a touch.
 - Reversal = the **next** signal bar, opposite color:
   top probe + bearish close → short; bottom probe + bullish close → long.
+  Default ``reversal_in_range: close`` also requires
+  ``or_low <= close <= or_high``. ``body`` is the stricter fully-inside
+  mode (high and low within the OR). ``off`` skips the in-range filter.
+  A reversal that fails the filter is not an entry; that bar may itself
+  be a later probe.
 - Entry fills at the **open of the bar after the reversal**.
 - Stop (default ``orb_extreme``): long → opening-range low; short → opening-range
   high. ``reversal_candle`` keeps the older stop at the reversal extreme.
-- Take profit (v1): OR midpoint ``(or_high + or_low) / 2``.
-  Exit strategy will be A/B tested later.
+- Take profit (default ``first_profitable_close``): after entry, exit at the
+  close of the first signal-timeframe bar that is profitable vs entry
+  (long: ``close > entry``; short: ``close < entry``). ``or_midpoint``
+  restores the previous OR-midpoint target. If stop and first-profit
+  (or midpoint) both trade on the same bar, the stop fills first.
 - Frequency (default): at most one entry per symbol per session, and only if
   that entry is before 10:30 America/New_York. No new entries at/after 10:30.
 """
@@ -39,6 +47,8 @@ Zone = Literal["top", "bottom"]
 Side = Literal["buy", "sell"]
 StopMode = Literal["orb_extreme", "reversal_candle"]
 ProbeMode = Literal["touch_and_band", "touch", "edge_band"]
+ReversalInRange = Literal["close", "body", "off"]
+TakeProfitMode = Literal["first_profitable_close", "or_midpoint"]
 
 
 def _aware(dt: datetime) -> datetime:
@@ -183,6 +193,41 @@ class OpeningRange:
         raise ValueError(f"unknown probe_mode: {probe_mode!r}")
 
 
+def reversal_in_opening_range(
+    bar: Bar,
+    opening_range: OpeningRange,
+    mode: ReversalInRange = "close",
+) -> bool:
+    """Whether the reversal candle satisfies ``reversal_in_range``.
+
+    - ``close`` (default): ``or_low <= close <= or_high``
+    - ``body``: high and low both inside the OR (stricter fully-inside mode)
+    - ``off``: no in-range filter
+    """
+    mode = mode or "close"
+    if mode == "off":
+        return True
+    if opening_range.height <= 0:
+        return False
+    if mode == "close":
+        return opening_range.low <= bar.close <= opening_range.high
+    if mode == "body":
+        return opening_range.low <= bar.low and bar.high <= opening_range.high
+    raise ValueError(f"unknown reversal_in_range: {mode!r}")
+
+
+def first_profitable_close(
+    *,
+    side: Side,
+    entry_price: float,
+    close: float,
+) -> bool:
+    """True when a signal-bar close is strictly profitable vs entry."""
+    if side == "buy":
+        return close > entry_price
+    return close < entry_price
+
+
 @dataclass(frozen=True)
 class OrbSetup:
     symbol: str
@@ -192,10 +237,12 @@ class OrbSetup:
     probe: Bar
     reversal: Bar
     stop: float
-    take: float
+    take: Optional[float] = None
     entry_bar: Optional[Bar] = None
     stop_mode: StopMode = "orb_extreme"
     probe_mode: ProbeMode = "touch_and_band"
+    reversal_in_range: ReversalInRange = "close"
+    take_profit_mode: TakeProfitMode = "first_profitable_close"
 
     @property
     def session_date(self) -> date:
@@ -212,6 +259,12 @@ class OrbSetup:
             stop_why = "reversal candle extreme"
         else:
             stop_why = "OR low" if self.side == "buy" else "OR high"
+        if self.take_profit_mode == "first_profitable_close":
+            take_txt = "take=first profitable signal-bar close"
+        elif self.take is not None:
+            take_txt = f"take={self.take:.4f} (OR midpoint)"
+        else:
+            take_txt = "take=(none)"
         return (
             f"ORB {self.zone}-zone probe + "
             f"{'bearish' if self.side == 'sell' else 'bullish'} reversal → {direction}; "
@@ -220,7 +273,7 @@ class OrbSetup:
             f"probe H={self.probe.high:.4f} L={self.probe.low:.4f} "
             f"C={self.probe.close:.4f}; reversal {self.reversal.summary()}; "
             f"{entry}; stop={self.stop:.4f} ({stop_why}) "
-            f"take={self.take:.4f} (OR midpoint, v1)"
+            f"{take_txt}"
         )
 
 
@@ -349,6 +402,8 @@ def _setup_from_pair(
     stop_mode: StopMode = "orb_extreme",
     probe_mode: ProbeMode = "touch_and_band",
     edge_pct: float = 0.05,
+    reversal_in_range: ReversalInRange = "close",
+    take_profit_mode: TakeProfitMode = "first_profitable_close",
 ) -> Optional[OrbSetup]:
     zone = opening_range.classify_probe(probe, probe_mode=probe_mode, edge_pct=edge_pct)
     if zone is None:
@@ -361,6 +416,13 @@ def _setup_from_pair(
         if not reversal.is_bullish():
             return None
         side = "buy"
+    if not reversal_in_opening_range(reversal, opening_range, reversal_in_range):
+        return None
+    take: Optional[float]
+    if take_profit_mode == "or_midpoint":
+        take = opening_range.midpoint
+    else:
+        take = None
     return OrbSetup(
         symbol=symbol,
         opening_range=opening_range,
@@ -374,10 +436,12 @@ def _setup_from_pair(
             reversal=reversal,
             stop_mode=stop_mode,
         ),
-        take=opening_range.midpoint,
+        take=take,
         entry_bar=entry_bar,
         stop_mode=stop_mode,
         probe_mode=probe_mode,
+        reversal_in_range=reversal_in_range,
+        take_profit_mode=take_profit_mode,
     )
 
 
@@ -391,6 +455,8 @@ def find_setups(
     session_timezone: str = "America/New_York",
     session_close: Optional[str] = "16:00",
     stop_mode: StopMode = "orb_extreme",
+    reversal_in_range: ReversalInRange = "close",
+    take_profit_mode: TakeProfitMode = "first_profitable_close",
 ) -> list[OrbSetup]:
     """Walk probe → next-bar reversal on post-OR signal bars. Multiple setups allowed.
 
@@ -422,9 +488,11 @@ def find_setups(
             stop_mode=stop_mode,
             probe_mode=probe_mode,
             edge_pct=edge_pct,
+            reversal_in_range=reversal_in_range,
+            take_profit_mode=take_profit_mode,
         )
         if setup is None:
-            # Same-color (or doji) "reversal" — no trade. That bar may itself be a probe.
+            # Same-color / doji / reversal outside OR — no trade. That bar may itself be a probe.
             i += 1
             continue
         setups.append(setup)
@@ -446,6 +514,8 @@ def find_session_setups(
     edge_pct: float = 0.05,
     probe_mode: ProbeMode = "touch_and_band",
     stop_mode: StopMode = "orb_extreme",
+    reversal_in_range: ReversalInRange = "close",
+    take_profit_mode: TakeProfitMode = "first_profitable_close",
 ) -> tuple[Optional[OpeningRange], list[OrbSetup]]:
     rng = resolve_opening_range(
         orb_bars=orb_bars,
@@ -467,6 +537,8 @@ def find_session_setups(
         session_timezone=session_timezone,
         session_close=session_close,
         stop_mode=stop_mode,
+        reversal_in_range=reversal_in_range,
+        take_profit_mode=take_profit_mode,
     )
 
 
@@ -483,6 +555,8 @@ def find_all_setups(
     edge_pct: float = 0.05,
     probe_mode: ProbeMode = "touch_and_band",
     stop_mode: StopMode = "orb_extreme",
+    reversal_in_range: ReversalInRange = "close",
+    take_profit_mode: TakeProfitMode = "first_profitable_close",
 ) -> list[OrbSetup]:
     dates = session_dates(orb_bars or signal_bars, session_timezone)
     found: list[OrbSetup] = []
@@ -500,6 +574,8 @@ def find_all_setups(
             edge_pct=edge_pct,
             probe_mode=probe_mode,
             stop_mode=stop_mode,
+            reversal_in_range=reversal_in_range,
+            take_profit_mode=take_profit_mode,
         )
         found.extend(setups)
     return found
@@ -528,6 +604,7 @@ def no_setup_reason(
     session_timezone: str,
     session_close: Optional[str],
     probe_mode: ProbeMode = "touch_and_band",
+    reversal_in_range: ReversalInRange = "close",
 ) -> str:
     if opening_range is None:
         return "opening range not formed (need first orb_timeframe bar at/after session open)"
@@ -587,13 +664,24 @@ def no_setup_reason(
         return _missed(last)
     prev = series[-2]
     prev_zone = opening_range.classify_probe(prev, probe_mode=probe_mode, edge_pct=edge_pct)
-    if prev_zone and zone is None:
+    if prev_zone:
         color = "bullish" if last.is_bullish() else ("bearish" if last.is_bearish() else "doji")
         needed = "bearish" if prev_zone == "top" else "bullish"
-        return (
-            f"probe in {prev_zone} zone but next bar is {color} "
-            f"(need {needed} reversal for a fade)"
+        opposite = (prev_zone == "top" and last.is_bearish()) or (
+            prev_zone == "bottom" and last.is_bullish()
         )
+        if opposite and not reversal_in_opening_range(last, opening_range, reversal_in_range):
+            return (
+                f"opposite-color reversal closed outside the OR "
+                f"({opening_range.low:.4f}–{opening_range.high:.4f}); "
+                f"C={last.close:.4f} H={last.high:.4f} L={last.low:.4f} "
+                f"(reversal_in_range={reversal_in_range})"
+            )
+        if zone is None:
+            return (
+                f"probe in {prev_zone} zone but next bar is {color} "
+                f"(need {needed} reversal for a fade)"
+            )
     if zone:
         return _probe_waiting(last, zone)
     return _missed(last)

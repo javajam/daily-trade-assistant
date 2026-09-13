@@ -33,7 +33,8 @@ def aapl_top_fade_short() -> dict[str, list[Bar]]:
     # 09:15 ET dummy so the OR picker must skip it.
     premkt = _bar(-15, 99.0, 99.4, 98.8, 99.1)
     orb = _bar(0, 100.0, 104.0, 96.0, 101.0, 4_000_000)
-    # 09:45 mid-range, 09:50 top touch, 09:55 bearish reversal, 10:00 entry, 10:05 take at 100.
+    # 09:45 mid-range, 09:50 top touch, 09:55 bearish reversal (close inside OR),
+    # 10:00 entry. Entry-bar close 102.45 is already profitable vs 102.55.
     signal = [
         _bar(15, 101.0, 101.4, 100.6, 100.8),
         _bar(20, 103.20, 104.00, 103.10, 103.80),

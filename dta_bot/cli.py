@@ -134,7 +134,9 @@ def cmd_validate(args: argparse.Namespace) -> int:
             f"session={cfg.orb.session_open} {cfg.orb.session_timezone}"
         )
         print(
-            f"  on_open_position={cfg.orb.on_open_position} take_profit={cfg.orb.take_profit} "
+            f"  on_open_position={cfg.orb.on_open_position} "
+            f"reversal_in_range={cfg.orb.reversal_in_range} "
+            f"take_profit_mode={cfg.orb.take_profit_mode} "
             f"stop_mode={cfg.orb.stop_mode} entry_cutoff={cfg.orb.entry_cutoff} "
             f"max_trades_before_cutoff={cfg.orb.max_trades_before_cutoff} "
             f"allow_entries_after_cutoff={cfg.orb.allow_entries_after_cutoff} "

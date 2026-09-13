@@ -46,6 +46,8 @@ def test_assumptions_orb_document_new_defaults():
     cfg = load_orb_config("config/orb_reversal.example.yaml")
     notes = assumptions_orb("commission=$0.00/fill, slippage=0.0%", 100_000.0, cfg)
     assert any("opening-range extreme" in n for n in notes)
+    assert any("first_profitable_close" in n and "close > entry" in n for n in notes)
+    assert any("or_low <= close <= or_high" in n for n in notes)
     assert any("touch_and_band" in n and "high >= OR high" in n and "edge band" in n for n in notes)
     assert any("10:30" in n and "America/New_York" in n for n in notes)
     touch = cfg.model_copy(update={"orb": cfg.orb.model_copy(update={"probe_mode": "touch"})})
@@ -60,6 +62,15 @@ def test_assumptions_orb_document_new_defaults():
     old_notes = assumptions_orb("commission=$0.00/fill, slippage=0.0%", 100_000.0, old)
     assert any("reversal candle extreme" in n for n in old_notes)
     assert any("no clock cutoff" in n for n in old_notes)
+    mid = cfg.model_copy(
+        update={"orb": cfg.orb.model_copy(update={"take_profit_mode": "or_midpoint", "reversal_in_range": "off"})}
+    )
+    mid_notes = assumptions_orb("commission=$0.00/fill, slippage=0.0%", 100_000.0, mid)
+    assert any("or_midpoint" in n and "OR midpoint" in n for n in mid_notes)
+    assert any("in-range filter is off" in n for n in mid_notes)
+    body = cfg.model_copy(update={"orb": cfg.orb.model_copy(update={"reversal_in_range": "body"})})
+    body_notes = assumptions_orb("commission=$0.00/fill, slippage=0.0%", 100_000.0, body)
+    assert any("fully inside" in n and "body" in n for n in body_notes)
 
 
 def test_rule_book_plan_includes_entries_and_combined():
