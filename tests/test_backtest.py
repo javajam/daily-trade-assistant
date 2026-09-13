@@ -795,6 +795,73 @@ def test_ema_sma_cross_rsi_filter_blocks_high_rsi_entry():
     assert result.report.trades == 0
 
 
+def _short_price_cross_rule(**action_kw) -> RuleSpec:
+    defaults = dict(
+        type="sell",
+        size=SizeSpec(type="shares", value=10),
+        exit="ma_cross",
+        exit_ema_period=9,
+        exit_sma_period=20,
+        stop_loss_pct=50.0,
+    )
+    defaults.update(action_kw)
+    return _buy_rule(
+        id="ema9_trend_short",
+        when=parse_condition(
+            {
+                "all": [
+                    {"ema_cross": {"period": 9, "timeframe": "15m", "direction": "bearish"}},
+                    {"sma": {"period": 20, "timeframe": "15m", "compare": "below"}},
+                ]
+            }
+        ),
+        action=ActionSpec(**defaults),
+    )
+
+
+def test_short_ma_cross_cover_exits_at_next_open():
+    # 20 flats at 100 seed both MAs. Bar 20 close 99 is a bearish price-cross
+    # below SMA20 (no RSI). Fill short at bar 21 open 99. Bar 21 stays soft
+    # (close 98.5 — EMA still under SMA). Bar 22 close 102 lifts EMA over SMA;
+    # wide stop so the cover, not the 1% lock, is what fires. Flatten at bar 23 open.
+    warmup = [bar(i, 100.0, 100.1, 99.9, 100.0) for i in range(20)]
+    signal = Bar(bar(20, 100.0, 100.1, 98.8, 99.0).timestamp, 100.0, 100.1, 98.8, 99.0, 1000)
+    fill = Bar(bar(21, 99.0, 99.2, 98.4, 98.5).timestamp, 99.0, 99.2, 98.4, 98.5, 1000)
+    cross_over = Bar(bar(22, 98.5, 102.2, 98.4, 102.0).timestamp, 98.5, 102.2, 98.4, 102.0, 1000)
+    cover = Bar(bar(23, 101.80, 102.0, 101.6, 101.9).timestamp, 101.80, 102.0, 101.6, 101.9, 1000)
+    result = run_backtest(
+        _cfg(_short_price_cross_rule()),
+        {("AAPL", "15Min"): warmup + [signal, fill, cross_over, cover]},
+    )
+    assert result.report.signals == 1
+    assert "ema_cross matched (bearish)" in result.signals[0].reason
+    assert "RSI14" not in result.signals[0].reason
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.side == "sell"
+    assert trade.entry_price == 99.0
+    assert trade.exit_reason == "ma_cross"
+    assert trade.exit_price == 101.80
+    assert result.report.exit_reasons == {"ma_cross": 1}
+    assert any("cross-over / cover" in n for n in result.report.notes)
+
+
+def test_short_stop_beats_ma_cross_cover_on_same_bar():
+    warmup = [bar(i, 100.0, 100.1, 99.9, 100.0) for i in range(20)]
+    signal = Bar(bar(20, 100.0, 100.1, 98.8, 99.0).timestamp, 100.0, 100.1, 98.8, 99.0, 1000)
+    fill = Bar(bar(21, 99.0, 99.2, 98.4, 98.5).timestamp, 99.0, 99.2, 98.4, 98.5, 1000)
+    # High tags fill×1.01 (99.99) and close 102 would also be a bullish pair-cross.
+    squeeze = Bar(bar(22, 98.5, 102.2, 98.4, 102.0).timestamp, 98.5, 102.2, 98.4, 102.0, 1000)
+    after = Bar(bar(23, 101.80, 102.0, 101.6, 101.9).timestamp, 101.80, 102.0, 101.6, 101.9, 1000)
+    result = run_backtest(
+        _cfg(_short_price_cross_rule(stop_loss_pct=1.0, stop_mode="lock_plus")),
+        {("AAPL", "15Min"): warmup + [signal, fill, squeeze, after]},
+    )
+    assert result.trades[0].side == "sell"
+    assert result.trades[0].exit_reason == "stop"
+    assert result.trades[0].exit_price == pytest.approx(99.0 * 1.01)
+
+
 def test_ema_sma_cross_stop_beats_cross_under_on_same_bar():
     warmup = _pair_cross_warmup()
     fill = Bar(bar(21, 100.5, 100.7, 100.4, 100.5).timestamp, 100.5, 100.7, 100.4, 100.5, 1000)

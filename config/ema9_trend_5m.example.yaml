@@ -69,7 +69,7 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "Noon short: 5m price crosses below EMA(9) while below SMA20 and RSI > 30. 10 shares, lock stop to fill×0.99 on first touch of −1%, no take."
+    notes: "Noon short: 5m price crosses below EMA(9) while below SMA20 (no RSI). Cover when EMA(9) crosses above SMA(20) at the next open. 10 shares, lock stop to fill×0.99 on first touch of −1%."
     when:
       all:
         - ema_cross:
@@ -80,17 +80,15 @@ rules:
             period: 20
             timeframe: 5m
             compare: below
-        - rsi:
-            period: 14
-            timeframe: 5m
-            above: 30
     action:
       type: sell
       size:
         type: shares
         value: 10
       order: market
-      exit: fixed_bracket
+      exit: ma_cross
+      exit_ema_period: 9
+      exit_sma_period: 20
       stop_mode: lock_plus
       stop_loss_pct: 1.0
       lock_trigger_pct: 1.0

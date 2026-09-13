@@ -281,21 +281,40 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
     if modes == {"ma_cross"} and ma_rules:
         action = ma_rules[0].action
         return (
-            f"Exit is MA-cross (action.exit: ma_cross): hold the long until "
-            f"EMA({action.exit_ema_period}) crosses under SMA({action.exit_sma_period}) "
-            "(prev EMA >= prev SMA and curr EMA < curr SMA) and flatten at the next "
-            "bar open — the same fill as entries. Optional stop_loss_pct is the initial "
-            "percent stop (1.5% in the ema9 example). Percent take-profit is ignored. "
-            "Same-bar stop on the cross bar still wins. If the cross bar is also the "
-            "flatten bar, session_flatten at that close wins."
+            f"Exit is MA-cross (action.exit: ma_cross): hold until "
+            f"EMA({action.exit_ema_period}) crosses SMA({action.exit_sma_period}) against "
+            "the position and flatten at the next bar open — the same fill as entries. "
+            "Long: prev EMA >= prev SMA and curr EMA < curr SMA (cross-under). "
+            "Short: prev EMA <= prev SMA and curr EMA > curr SMA (cross-over / cover). "
+            "Optional stop_loss_pct / lock_plus is the protective stop. Percent "
+            "take-profit is ignored. Same-bar stop on the cross bar still wins. If the "
+            "cross bar is also the flatten bar, session_flatten at that close wins."
         )
     if "ma_cross" in modes and ma_rules:
         action = ma_rules[0].action
+        lock_rules = [
+            rule
+            for rule in (config.rules if config is not None else [])
+            if rule.action.type != "close" and rule.action.stop_mode == "lock_plus"
+        ]
+        lock_txt = ""
+        if lock_rules:
+            lock_action = lock_rules[0].action
+            trig = lock_action.resolved_lock_trigger_pct()
+            lock_txt = (
+                f" Lock-plus stop (stop_mode: lock_plus) still applies: initial stop "
+                f"is {lock_action.stop_loss_pct:g}% from the fill (long: below; short: above). "
+                f"First trade/touch of entry×(1+{(trig or 0):g}/100) for a long "
+                f"(bar high ≥ that print) or entry×(1−{(trig or 0):g}/100) for a short "
+                f"(bar low ≤ that print) moves the stop to that same print and leaves it."
+            )
         return (
             f"Mixed exits: ma_cross flattens at the next bar open after "
-            f"EMA({action.exit_ema_period}) crosses under SMA({action.exit_sma_period}). "
-            "fixed_bracket uses stop_loss_pct / take_profit_pct from the signal-bar close. "
+            f"EMA({action.exit_ema_period}) crosses SMA({action.exit_sma_period}) against "
+            "the position (long: EMA under SMA; short: EMA above SMA — cover). "
+            "fixed_bracket uses stop / lock_plus / session_flatten (no MA-cross cover). "
             "ema_invalid holds until a signal-timeframe close < EMA (exit at that close)."
+            + lock_txt
         )
     if modes == {"ema_invalid"} or (config is not None and "ema_invalid" in modes and "fixed_bracket" not in modes and "ma_cross" not in modes):
         return (
@@ -377,7 +396,8 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         "for a fixed percent stop from the fill. Set action.stop_mode: lock_plus to lock the stop "
         "to +stop_loss_pct after the first touch of that print. Set action.stop_mode: trail to "
         "ratchet the stop to peak×(1−stop_loss_pct/100). Set action.exit: ma_cross "
-        "to flatten at the next bar open after EMA crosses under SMA. Set action.exit: ema_invalid "
+        "to flatten at the next bar open after EMA crosses SMA against the position "
+        "(long: under; short: over). Set action.exit: ema_invalid "
         "to hold until a signal-timeframe close is on the wrong side of EMA (long: close < EMA; "
         "exit at that close)."
     )
@@ -474,11 +494,17 @@ def _noon_entry_assumption(config: Optional[BotConfig]) -> Optional[str]:
                 f"RSI({period}) < {below:g}"
             )
         if has_noon_short_stack(rule.when):
-            above = rsi_cond.above if rsi_cond is not None and rsi_cond.above is not None else 30
-            short_txt = (
-                f"Short: close crosses below EMA(9) AND close < SMA(20) AND "
-                f"RSI({period}) > {above:g}"
-            )
+            if rsi_cond is not None and rsi_cond.above is not None:
+                short_txt = (
+                    f"Short: close crosses below EMA(9) AND close < SMA(20) AND "
+                    f"RSI({period}) > {rsi_cond.above:g}"
+                )
+            else:
+                short_txt = (
+                    "Short: close crosses below EMA(9) AND close < SMA(20) "
+                    "(no RSI filter). Cover when EMA(9) crosses above SMA(20) "
+                    "(next bar open) plus stop / lock_stop / session_flatten"
+                )
     if not long_txt and not short_txt:
         return None
     parts = [p for p in (long_txt, short_txt) if p]
@@ -517,7 +543,12 @@ def _fixed_bracket_tag(config: BotConfig) -> Optional[str]:
     rules = [
         r
         for r in config.rules
-        if r.enabled and r.action.type != "close" and r.action.exit == "fixed_bracket"
+        if r.enabled
+        and r.action.type != "close"
+        and (
+            r.action.exit == "fixed_bracket"
+            or r.action.stop_mode in {"entry_pct", "lock_plus", "trail", "sma20"}
+        )
     ]
     if not rules:
         return None
@@ -621,7 +652,17 @@ def session_gate_suffix(config: BotConfig) -> str:
         for r in config.rules
         if r.enabled and r.action.type != "close"
     }
-    if exits == {"ma_cross"}:
+    short_ma = any(
+        r.enabled and r.action.type == "sell" and r.action.exit == "ma_cross"
+        for r in config.rules
+    )
+    long_bracket = any(
+        r.enabled and r.action.type == "buy" and r.action.exit == "fixed_bracket"
+        for r in config.rules
+    )
+    if short_ma and long_bracket:
+        bits.append("short MA-cross")
+    elif exits == {"ma_cross"}:
         bits.append("MA-cross")
     if bracket:
         bits.append(bracket)
@@ -644,7 +685,8 @@ def assumptions_rules(
         _breakeven_assumption(config),
         "If stop and take (or EMA-invalidation) both trade in the fill bar, the stop is assumed to fill first.",
         "A gap through stop/take fills at that bar's open. EMA-invalidation fills at the invalidating close. "
-        "MA-cross exits fill at the next bar open after the EMA/SMA cross-under.",
+        "MA-cross exits fill at the next bar open after the opposing EMA/SMA pair-cross "
+        "(long: EMA under SMA; short: EMA over SMA).",
         "One open lot per symbol (no pyramiding; long or short, not both). "
         "A second signal while that symbol is already open is skipped "
         "(already_in_position, or opposite_signal_in_trade when the new side is the other way).",

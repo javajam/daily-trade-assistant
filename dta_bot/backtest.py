@@ -1224,13 +1224,17 @@ def run_backtest(
         sample = ma_rules[0].action
         extra_notes.append(
             f"MA-cross exit (action.exit: ma_cross): flatten at the next bar open after "
-            f"EMA({sample.exit_ema_period}) crosses under SMA({sample.exit_sma_period}) "
-            f"for a long (prev EMA >= prev SMA and curr EMA < curr SMA). "
+            f"EMA({sample.exit_ema_period}) crosses SMA({sample.exit_sma_period}) against "
+            "the position. Long: prev EMA >= prev SMA and curr EMA < curr SMA (cross-under). "
+            "Short: prev EMA <= prev SMA and curr EMA > curr SMA (cross-over / cover). "
             "Same fill convention as entries. Same-bar stop on the signal bar still wins. "
             "If that signal is also the flatten bar, session_flatten at that close wins."
         )
         ma_exits = sum(1 for t in trades if t.exit_reason == "ma_cross")
-        extra_notes.append(f"{ma_exits} trade(s) exited as ma_cross (EMA/SMA cross-under).")
+        extra_notes.append(
+            f"{ma_exits} trade(s) exited as ma_cross "
+            "(EMA/SMA pair-cross against the position)."
+        )
     pnl_note = _exit_pnl_note(trades)
     if pnl_note:
         extra_notes.append(pnl_note)
