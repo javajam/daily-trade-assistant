@@ -1,0 +1,63 @@
+# ORB (opening-range) edge-fade / reversal — paper defaults.
+# Copy to config/orb_reversal.yaml to customize. Do not enable live by accident.
+#
+# Strategy (locked v1)
+# --------------------
+# 1. Opening range = first orb_timeframe candle at/after session_open
+#    (default 15m → 9:30–9:45 America/New_York high/low).
+# 2. After that candle is fully formed, evaluate signal_timeframe bars (default 5m).
+# 3. Edge band = edge_pct * (or_high - or_low). Default 0.05 = 5% of OR height.
+#    Top zone:  [or_high - band, or_high]   (a close that touches the high is ideal)
+#    Bottom zone: [or_low, or_low + band]
+# 4. Probe = a signal bar whose close is inside the top or bottom zone.
+# 5. Reversal = the next signal bar, opposite color:
+#      top probe + bearish close  → short
+#      bottom probe + bullish close → long
+# 6. Entry fills at the open of the bar after the reversal (one bar later).
+# 7. Stop: long → reversal low; short → reversal high.
+# 8. Take profit (v1): OR midpoint (or_high + or_low) / 2.
+#    Exit strategy will be A/B tested later — do not treat midpoint as final.
+# 9. Multiple trades are allowed; there is no daily cap. One open position per
+#    symbol (no pyramiding). Default is skip new entries while already in a
+#    position; set on_open_position: replace to close/replace on a new signal.
+# 10. Universe is fully configurable below. A morning screener will populate
+#     this list later — edit it by hand for now.
+
+strategy: orb_reversal
+
+settings:
+  paper: true
+  allow_live: false          # keep false
+  dry_run: true              # log decisions; do not submit (override with --live-orders)
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/orb_state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 200         # a full RTH day of 5m bars is 78 prints
+
+# Fully configurable symbol list. A morning screener will populate this later.
+universe:
+  - AAPL
+  - MSFT
+  - SPY
+
+orb:
+  session_open: "09:30"
+  session_close: "16:00"           # do not probe after RTH
+  session_timezone: America/New_York
+  orb_timeframe: 15m               # 5m / 15m / 30m — switch without code changes
+  signal_timeframe: 5m
+  edge_pct: 0.05                   # fraction of OR height (0.05 = 5%), not "5"
+  on_open_position: skip           # skip | replace
+  take_profit: midpoint            # v1; A/B tested later
+  cooldown_minutes: 0              # 0 = no cooldown; multiple trades allowed
+
+sizing:
+  type: shares                     # shares | percent_equity
+  value: 10
+
+order:
+  type: market                     # market | limit
+  time_in_force: day
+  # limit_offset_pct: 0.05

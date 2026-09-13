@@ -216,7 +216,71 @@ State (cooldowns + last-fired bar keys) is stored in `data/state.json` so a rest
 python -m pytest
 ```
 
-Unit tests cover every pattern (synthetic OHLC), AND/OR + cooldown + idempotency, example-config load, sizing, kill switch, and the paper/live URL gates.
+Unit tests cover every pattern (synthetic OHLC), AND/OR + cooldown + idempotency, example-config load, sizing, kill switch, the paper/live URL gates, and the ORB edge-fade state machine (zones, probe/reversal, entry/stop/target).
+
+---
+
+## ORB edge-fade / reversal
+
+A second YAML strategy (`strategy: orb_reversal`) fades failed probes of the opening-range high/low. It uses dedicated helpers (OR builder, edge zones, probe → reversal state machine) and the same paper/live gates, sizing, broker, and backtest fill simulator as the rules bot.
+
+### Rules (v1, locked)
+
+1. **Opening range** — first `orb_timeframe` candle at or after US RTH open **9:30 America/New_York**. Default **15m** (9:30–9:45 ET high/low). Change `orb.orb_timeframe` to `5m` / `15m` / `30m` in YAML; no code change.
+2. After that candle is fully formed, evaluate **`signal_timeframe`** bars (default **5m**).
+3. **Edge zone** — `band = edge_pct * (or_high - or_low)` (default `0.05`). Top: `[or_high - band, or_high]`. Bottom: `[or_low, or_low + band]`. A close that touches the high/low counts; a close through the high/low does not.
+4. **Probe** — a signal bar whose **close** is inside the top or bottom zone.
+5. **Reversal** — the **next** signal bar, opposite color: top + bearish → **short**; bottom + bullish → **long**. Same-color or doji = no trade.
+6. **Entry** — fill at the **open of the bar after the reversal**.
+7. **Stop** — long: reversal low; short: reversal high.
+8. **Take profit** — OR midpoint `(or_high + or_low) / 2`. Exit style will be A/B tested later.
+9. **Frequency** — multiple trades allowed, **no daily cap**. Default is **one open position per symbol**; a new signal is **skipped** while that symbol is still in a trade (`orb.on_open_position: skip`). Set `replace` to close/replace.
+10. **Universe** — YAML list (example: AAPL, MSFT, SPY). A morning screener will populate this later; edit the list by hand for now.
+
+Paper-only defaults: `settings.paper: true`, `allow_live: false`, `dry_run: true`. Live trading still requires the same triple gate as the rules bot.
+
+### Configure symbols and knobs
+
+Copy `config/orb_reversal.example.yaml` to `config/orb_reversal.yaml` (gitignored) and edit:
+
+```yaml
+universe:
+  - AAPL
+  - MSFT
+  - SPY
+  # add/remove tickers; a morning screener will populate this later
+
+orb:
+  session_open: "09:30"
+  session_timezone: America/New_York
+  orb_timeframe: 15m          # 5m / 15m / 30m
+  signal_timeframe: 5m
+  edge_pct: 0.05              # fraction of OR height (not "5")
+  on_open_position: skip      # skip | replace
+  take_profit: midpoint       # v1
+
+sizing:
+  type: shares                # or percent_equity
+  value: 10
+```
+
+### Dry-run on the bundled fixture (no API keys)
+
+```bash
+python -m dta_bot validate --config config/orb_reversal.example.yaml
+python -m dta_bot evaluate --config config/orb_reversal.example.yaml --fixture config/orb_sample_bars.json
+python -m dta_bot backtest --config config/orb_reversal.example.yaml --fixture config/orb_sample_bars.json
+```
+
+The sample tape is one RTH Friday: **AAPL** top-zone fade short (stop = reversal high, take = OR mid 100), **MSFT** bottom-zone fade long (take = mid 205), **SPY** no trade (closes outside the band, then a same-color “reversal”).
+
+Yahoo (no Alpaca keys) or Alpaca paper data:
+
+```bash
+python -m dta_bot backtest --config config/orb_reversal.example.yaml --source yahoo
+```
+
+`evaluate` scans the whole fixture and prints `[FIRE]` / `[NO]`. The live/paper `run` loop only acts when the **latest closed signal bar is the reversal** (so a market order lands on the next bar’s open). `run` still defaults to dry-run unless you pass `--live-orders` (paper unless the live gates are set).
 
 ---
 
