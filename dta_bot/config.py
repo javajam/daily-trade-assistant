@@ -103,7 +103,22 @@ class VolumeCond(BaseModel):
         return normalize(v)
 
 
-LeafCondition = Union[PatternCond, MaCond, RsiCond, VolumeCond]
+class MaCrossCond(BaseModel):
+    """Close crossing an SMA/EMA: prev close vs prev MA, curr close vs curr MA."""
+
+    kind: Literal["ma_cross"] = "ma_cross"
+    ma: Literal["sma", "ema"] = "ema"
+    period: int = Field(..., ge=2)
+    timeframe: str
+    direction: Literal["bullish", "bearish"] = "bullish"
+
+    @field_validator("timeframe")
+    @classmethod
+    def _tf(cls, v: str) -> str:
+        return normalize(v)
+
+
+LeafCondition = Union[PatternCond, MaCond, RsiCond, VolumeCond, MaCrossCond]
 
 
 class GroupCond(BaseModel):
@@ -177,6 +192,46 @@ class BotConfig(BaseModel):
         return pairs
 
 
+def _parse_ma_cross(raw: dict[str, Any]) -> MaCrossCond:
+    block = (
+        raw.get("ema_cross")
+        or raw.get("sma_cross")
+        or raw.get("ma_cross")
+        or raw.get("cross")
+        or {}
+    )
+    if not isinstance(block, dict):
+        block = {}
+    skip = {"ema_cross", "sma_cross", "ma_cross", "cross"}
+    merged = {**block, **{k: v for k, v in raw.items() if k not in skip}}
+    if "ema_cross" in raw:
+        ma = "ema"
+    elif "sma_cross" in raw:
+        ma = "sma"
+    else:
+        ma = merged.get("ma") or merged.get("kind") or "ema"
+        if ma not in {"sma", "ema"}:
+            ma = "ema"
+    direction = merged.get("direction")
+    if direction is None:
+        compare = merged.get("compare")
+        if compare == "below":
+            direction = "bearish"
+        else:
+            direction = "bullish"
+    direction = str(direction).strip().lower()
+    if direction in {"above", "up", "long"}:
+        direction = "bullish"
+    elif direction in {"below", "down", "short"}:
+        direction = "bearish"
+    return MaCrossCond(
+        ma=ma,
+        period=int(merged["period"]),
+        timeframe=merged.get("timeframe") or raw["timeframe"],
+        direction=direction,
+    )
+
+
 def _parse_leaf(raw: dict[str, Any]) -> LeafCondition:
     """Accept several human-friendly YAML shapes for a single condition."""
     if "pattern" in raw:
@@ -184,6 +239,8 @@ def _parse_leaf(raw: dict[str, Any]) -> LeafCondition:
         if isinstance(name, dict):
             return PatternCond(name=name.get("name") or name.get("pattern"), timeframe=name["timeframe"])
         return PatternCond(name=name, timeframe=raw["timeframe"])
+    if any(key in raw for key in ("ema_cross", "sma_cross", "ma_cross", "cross")):
+        return _parse_ma_cross(raw)
     if "sma" in raw or "ema" in raw or "price_vs_ma" in raw:
         block = raw.get("sma") or raw.get("ema") or raw.get("price_vs_ma") or {}
         if not isinstance(block, dict):

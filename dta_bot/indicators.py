@@ -46,3 +46,41 @@ def rsi(closes: Sequence[float], period: int = 14) -> Optional[float]:
 
 def average_volume(volumes: Sequence[float], period: int) -> Optional[float]:
     return sma(volumes, period)
+
+
+def last_two_ma(
+    values: Sequence[float],
+    period: int,
+    kind: str = "ema",
+) -> Optional[tuple[float, float, float, float]]:
+    """Return (prev_close, prev_ma, curr_close, curr_ma) or None if too short.
+
+    Previous MA is computed on ``values[:-1]`` so a cross compares each close
+    to the MA as of that bar, not to a single current-bar MA.
+    Needs ``period + 1`` values.
+    """
+    if period <= 0 or len(values) < period + 1:
+        return None
+    fn = sma if kind == "sma" else ema
+    prev_ma = fn(values[:-1], period)
+    curr_ma = fn(values, period)
+    if prev_ma is None or curr_ma is None:
+        return None
+    return values[-2], prev_ma, values[-1], curr_ma
+
+
+def ma_cross(
+    values: Sequence[float],
+    period: int,
+    *,
+    kind: str = "ema",
+    direction: str = "bullish",
+) -> Optional[bool]:
+    """Bullish: prev close <= prev MA and curr close > curr MA. Bearish is the inverse."""
+    pair = last_two_ma(values, period, kind)
+    if pair is None:
+        return None
+    prev_close, prev_ma, curr_close, curr_ma = pair
+    if direction == "bearish":
+        return prev_close >= prev_ma and curr_close < curr_ma
+    return prev_close <= prev_ma and curr_close > curr_ma

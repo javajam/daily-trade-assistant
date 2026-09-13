@@ -133,3 +133,55 @@ def test_ma_below():
     cond = MaCond(ma="sma", period=20, timeframe="15m", compare="below")
     ev = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): bars}, BotState())
     assert ev.matched
+
+
+def _flat_then(last_close: float, n: int = 11) -> list:
+    bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(n - 1)]
+    bars.append(bar(n - 1, 10.0, max(10.1, last_close), min(9.9, last_close), last_close))
+    return bars
+
+
+def test_ema_cross_bullish_fires():
+    bars = _flat_then(12.0)
+    cond = parse_condition({"ema_cross": {"period": 9, "timeframe": "15m", "direction": "bullish"}})
+    ev = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): bars}, BotState())
+    assert ev.matched
+    assert "ema_cross matched (bullish)" in ev.reasons[0]
+
+
+def test_ema_cross_rejects_when_already_above():
+    # Rising closes stay above the lagging EMA — no fresh cross on the last bar.
+    bars = [bar(i, 10 + i * 0.5, 10.2 + i * 0.5, 9.9 + i * 0.5, 10.1 + i * 0.5) for i in range(16)]
+    cond = parse_condition({"ema_cross": {"period": 9, "timeframe": "15m", "direction": "bullish"}})
+    ev = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): bars}, BotState())
+    assert not ev.matched
+    assert "ema_cross not found (bullish)" in ev.reasons[0]
+
+
+def test_ema_cross_and_trend_filter():
+    # Gentle saw keeps RSI mid-range; last two bars dip under EMA9 then cross back.
+    closes: list[float] = []
+    price = 10.0
+    for i in range(30):
+        price = price + (0.08 if i % 2 == 0 else -0.06)
+        closes.append(round(price, 4))
+    closes[-2] = round(closes[-3] - 0.15, 4)
+    closes[-1] = round(closes[-2] + 0.25, 4)
+    bars = [
+        bar(i, c - 0.02, max(c - 0.02, c) + 0.02, min(c - 0.02, c) - 0.02, c)
+        for i, c in enumerate(closes)
+    ]
+    cond = parse_condition(
+        {
+            "all": [
+                {"ema_cross": {"period": 9, "timeframe": "15m", "direction": "bullish"}},
+                {"sma": {"period": 20, "timeframe": "15m", "compare": "above"}},
+                {"rsi": {"period": 14, "timeframe": "15m", "below": 70}},
+            ]
+        }
+    )
+    ev = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): bars}, BotState())
+    assert ev.matched
+    assert "ema_cross matched" in ev.reasons[0]
+    assert "SMA20" in ev.reasons[0]
+    assert "RSI14" in ev.reasons[0]

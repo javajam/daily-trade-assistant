@@ -43,7 +43,7 @@ Python package `dta_bot`. Rules live in YAML (or JSON), not in code. The runner 
 - OHLCV bars from Alpaca market data (IEX by default) or a local fixture file.
 - Candlestick detectors on the last N **closed** bars of a timeframe (`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1d`, `1w`):
   bullish/bearish engulfing, hammer, inverted hammer, shooting star, doji, morning star, evening star, three white soldiers, three black crows.
-- Rule engine: nested **AND** (`all`) / **OR** (`any`), pattern + SMA/EMA + RSI + volume, symbol universe, per-symbol cooldown, idempotent (same bar cannot fire twice).
+- Rule engine: nested **AND** (`all`) / **OR** (`any`), pattern + SMA/EMA + EMA/SMA **cross** + RSI + volume, symbol universe, per-symbol cooldown, idempotent (same bar cannot fire twice).
 - CLI scheduler (`run`) or one-shot (`evaluate` / `run --once`).
 - Kill switch that stops **new orders** immediately.
 - Secrets via environment variables only.
@@ -139,6 +139,10 @@ Or set `DTA_KILL_SWITCH=1` in the environment. Either the file or the env flag i
             period: 9
             timeframe: 5m
             compare: below
+        - ema_cross:
+            period: 9
+            timeframe: 5m
+            direction: bearish
         - rsi:
             period: 14
             timeframe: 5m
@@ -177,6 +181,7 @@ rules:
         - pattern: bullish_engulfing
           timeframe: 15m
         - sma: { period: 20, timeframe: 15m, compare: above }   # or ema
+        - ema_cross: { period: 9, timeframe: 15m, direction: bullish }  # or sma_cross
         - rsi: { period: 14, timeframe: 15m, below: 70 }        # above and/or below
         - volume: { period: 20, timeframe: 15m, multiplier: 1.2 }
       # any: [ ... ]         # OR; groups nest
@@ -191,7 +196,25 @@ rules:
 
 **Patterns:** `doji`, `bullish_engulfing`, `bearish_engulfing`, `hammer`, `inverted_hammer`, `shooting_star`, `morning_star`, `evening_star`, `three_white_soldiers`, `three_black_crows`.
 
+**MA cross:** `ema_cross` / `sma_cross` with `direction: bullish` or `bearish`. Bullish = previous close ≤ previous MA and current close > current MA (each MA is computed through that bar). Level compares (`sma` / `ema` + `compare: above|below`) still mean “close vs the current MA only.”
+
 `python -m dta_bot patterns` prints the list. Detectors always use **closed** bars (the in-progress candle is dropped).
+
+### 9 EMA trend (sample strategy)
+
+`config/ema9_trend.example.yaml` is a long-only 15m book on AAPL/MSFT that **reuses the engulfing-with-trend filter and risk**: close above SMA(20), RSI(14) below 70, buy 10 shares, stop 1.5%, take 3.0%, 60-minute cooldown. The trigger is a bullish **EMA(9) cross** instead of a bullish engulfing candle. Paper / `dry_run` defaults; no live.
+
+The same file also ships `ema9_cross_raw` (cross, no trend filter) and `engulfing-with-trend` (the control) so one backtest is a head-to-head on the same Yahoo 15m tape:
+
+```bash
+python -m dta_bot validate --config config/ema9_trend.example.yaml
+python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yahoo \
+  --output artifacts/ema9_vs_engulfing.json --report artifacts/ema9_vs_engulfing.md
+```
+
+Copy to `config/ema9_trend.yaml` (gitignored) and disable the ablation/control rules if you only want to paper the 9 EMA book.
+
+On the Yahoo 15m window 2026-06-17 → 2026-09-11 (AAPL/MSFT, 1560 bars each), isolated books were: **ema9_trend 44 trades, 50.00%, $1,404.89**; ablation `ema9_cross_raw` 53 trades, 49.06%, $1,236.03; **engulfing-with-trend 39 trades, 43.59%, $697.90** (reproduced the prior control). Writeup: `artifacts/ema9_vs_engulfing.md`.
 
 ### CLI
 

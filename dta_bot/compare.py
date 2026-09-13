@@ -26,6 +26,8 @@ PATTERN_HIT_NAMES = (
     "bearish_engulfing",
     "evening_star",
     "hammer",
+    "ema_cross",
+    "sma_cross",
 )
 
 EXIT_ONLY_NOTE = (
@@ -242,7 +244,7 @@ def assumptions_orb(
 
 def assumptions_rules(friction: str, starting_equity: float) -> list[str]:
     return [
-        "Signals come from the live evaluate_rule path (same pattern/SMA/RSI/volume detectors).",
+        "Signals come from the live evaluate_rule path (same pattern/SMA/EMA/RSI/volume/MA-cross detectors).",
         "A rule is evaluated when any of its referenced timeframes prints a newly closed bar.",
         "Entries and close-signals fill at the next bar open of the finest rule timeframe.",
         "Stop/take are computed from the signal-bar close (same as live bracket_prices).",

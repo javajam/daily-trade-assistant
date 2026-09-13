@@ -177,6 +177,22 @@ def test_same_bar_stop_and_take_uses_stop():
     assert result.trades[0].exit_reason == "stop"
 
 
+def test_ema_cross_entry_takes_profit():
+    bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(12)]
+    bars[-2] = Bar(bars[-2].timestamp, 10.0, 10.1, 9.9, 10.0, 1000)
+    bars[-1] = Bar(bars[-1].timestamp, 10.0, 12.5, 9.9, 12.0, 1000)
+    fill = Bar(bar(12, 12.0, 12.5, 11.9, 12.2).timestamp, 12.0, 12.5, 11.9, 12.2, 1000)
+    rule = _buy_rule(
+        id="ema9",
+        when=parse_condition({"ema_cross": {"period": 9, "timeframe": "15m", "direction": "bullish"}}),
+    )
+    result = run_backtest(_cfg(rule), {("AAPL", "15Min"): bars + [fill]}, starting_equity=100_000)
+    assert result.report.signals == 1
+    assert result.report.trades == 1
+    assert result.trades[0].exit_reason == "take"
+    assert "ema_cross matched" in result.signals[0].reason
+
+
 def test_unused_series_do_not_widen_period():
     bars = [
         Bar(bar(0, 10, 10.2, 8.0, 8.2).timestamp, 10.0, 10.2, 8.0, 8.2, 1000),
