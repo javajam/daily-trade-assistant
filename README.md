@@ -223,7 +223,9 @@ python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yaho
 
 Copy to `config/ema9_trend.yaml` or `config/ema9_trend_5m.yaml` (gitignored) and disable the ablation/control rules if you only want to paper the 9 EMA book.
 
-On the Yahoo 15m window 2026-06-17 → 2026-09-11 (AAPL/MSFT, 1560 bars each), isolated books were: **ema9_trend 44 trades, 50.00%, $1,404.89**; ablation `ema9_cross_raw` 53 trades, 49.06%, $1,236.03; **engulfing-with-trend 39 trades, 43.59%, $697.90** (reproduced the prior control). Writeup: `artifacts/ema9_vs_engulfing.md`. Yahoo 5m vs 15m comparison: `artifacts/ema9_5m_vs_15m.md` (5m history is capped at ~60 days).
+On the Yahoo 15m window 2026-06-17 → 2026-09-11 (AAPL/MSFT, 1560 bars each), isolated books were: **ema9_trend 44 trades, 50.00%, $1,404.89**; ablation `ema9_cross_raw` 53 trades, 49.06%, $1,236.03; **engulfing-with-trend 39 trades, 43.59%, $697.90** (reproduced again on this replay). Writeup: `artifacts/ema9_vs_engulfing.md`.
+
+Same calendar start on 5m (Yahoo `range=60d` still served 2026-06-17 → 2026-09-11; AAPL 4677 / MSFT 4676 closed 5m bars): **5m ema9_trend 56 trades, 48.21%, $1,305.23**, max DD $422.43, take 26 / stop 28 / eod 2. 5m engulfing-with-trend on that tape was 49 trades, 53.06%, $1,520.70. Side-by-side: `artifacts/ema9_5m_vs_15m.md`. Yahoo 5m/15m history is still documented as a ~60-day cap.
 
 ### CLI
 
