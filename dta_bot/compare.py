@@ -15,7 +15,7 @@ from dta_bot.backtest import (
     restrict_config,
     run_backtest,
 )
-from dta_bot.config import BotConfig
+from dta_bot.config import BotConfig, restrict_universe, timeframe_label
 from dta_bot.history import YAHOO_INTERVAL
 from dta_bot.orb_backtest import run_orb_backtest
 from dta_bot.orb_config import OrbBotConfig
@@ -242,14 +242,50 @@ def assumptions_orb(
     ]
 
 
-def assumptions_rules(friction: str, starting_equity: float) -> list[str]:
+def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
+    modes = {
+        rule.action.exit
+        for rule in (config.rules if config is not None else [])
+        if rule.action.type != "close"
+    }
+    periods = {
+        rule.action.exit_ema_period
+        for rule in (config.rules if config is not None else [])
+        if rule.action.exit == "ema_invalid"
+    }
+    period = next(iter(periods), 9)
+    if modes == {"ema_invalid"} or (config is not None and "ema_invalid" in modes and "fixed_bracket" not in modes):
+        return (
+            f"Exit is EMA-invalidation (action.exit: ema_invalid): hold the long until a "
+            f"signal-timeframe bar closes < EMA({period}) and exit at that close. "
+            f"Close == EMA({period}) stays valid. Optional stop_loss_pct is a catastrophic "
+            "stop only (off when omitted). Percent take-profit is ignored."
+        )
+    if "ema_invalid" in modes:
+        return (
+            f"Mixed exits: ema_invalid holds until a signal-timeframe close < EMA({period}) "
+            "(exit at that close; equals EMA stays valid). fixed_bracket uses stop_loss_pct / "
+            "take_profit_pct from the signal-bar close. Same-bar stop + EMA-invalid → stop."
+        )
+    return (
+        "Stop/take are computed from the signal-bar close (same as live bracket_prices; "
+        "action.exit: fixed_bracket, default). Set action.exit: ema_invalid to hold until "
+        "a signal-timeframe close is on the wrong side of EMA (long: close < EMA; exit at that close)."
+    )
+
+
+def assumptions_rules(
+    friction: str,
+    starting_equity: float,
+    config: Optional[BotConfig] = None,
+) -> list[str]:
     return [
         "Signals come from the live evaluate_rule path (same pattern/SMA/EMA/RSI/volume/MA-cross detectors).",
         "A rule is evaluated when any of its referenced timeframes prints a newly closed bar.",
         "Entries and close-signals fill at the next bar open of the finest rule timeframe.",
-        "Stop/take are computed from the signal-bar close (same as live bracket_prices).",
-        "If stop and take both trade in the fill bar, the stop is assumed to fill first.",
-        "A gap through stop/take fills at that bar's open.",
+        _rules_exit_assumption(config),
+        "If stop and take (or EMA-invalidation) both trade in the fill bar, the stop is assumed to fill first.",
+        "A gap through stop/take fills at that bar's open. EMA-invalidation fills at the invalidating close.",
         "One open lot per symbol (no pyramiding). A second signal while flat-in-symbol is skipped.",
         "Open lots still on the last bar are flattened at the last close (exit reason eod).",
         "Regular-session Yahoo bars when the source is Yahoo (includePrePost=false), unadjusted OHLC.",
@@ -356,12 +392,14 @@ def run_rule_books(
     assumptions: list[str],
     combined_only: bool = False,
     include_entries_only: bool = True,
+    label_prefix: str = "",
+    breakout_symbols: Optional[list[str]] = None,
+    breakout_rule_ids: Optional[list[str]] = None,
 ) -> list[dict[str, Any]]:
     runs: list[dict[str, Any]] = []
-    for label, ids, extra in rule_book_plan(
-        config, combined_only=combined_only, include_entries_only=include_entries_only
-    ):
-        subset = restrict_config(config, ids)
+    prefix = f"{label_prefix} " if label_prefix else ""
+
+    def _run(label: str, subset: BotConfig, extra: Optional[str] = None) -> None:
         notes = list(assumptions)
         if extra:
             notes.append(extra)
@@ -376,6 +414,30 @@ def run_rule_books(
             notes=notes,
         )
         runs.append(compact_run(result))
+
+    for label, ids, extra in rule_book_plan(
+        config, combined_only=combined_only, include_entries_only=include_entries_only
+    ):
+        _run(f"{prefix}{label}", restrict_config(config, ids), extra)
+
+    wanted_breakouts = [s.strip().upper() for s in (breakout_symbols or []) if s and str(s).strip()]
+    if wanted_breakouts and not combined_only:
+        entry_ids = breakout_rule_ids or [
+            rule.id for rule in config.rules if rule.enabled and rule.action.type != "close" and rule.id == "ema9_trend"
+        ]
+        if not entry_ids:
+            entry_ids = entry_rule_ids(config)[:1]
+        for rule_id in entry_ids:
+            for symbol in wanted_breakouts:
+                try:
+                    subset = restrict_universe(restrict_config(config, [rule_id]), [symbol])
+                except ValueError:
+                    continue
+                _run(
+                    f"{prefix}{rule_id} {symbol}",
+                    subset,
+                    f"Isolated {symbol} book — its own equity curve, not mixed with the full universe.",
+                )
     return runs
 
 
@@ -503,13 +565,17 @@ def exit_mix(report: dict[str, Any]) -> str:
     take = int(reasons.get("take") or 0)
     stop = int(reasons.get("stop") or 0)
     eod = int(reasons.get("eod") or 0)
-    parts = [f"take {take}", f"stop {stop}"]
+    ema_inv = int(reasons.get("ema_invalid") or 0)
+    parts: list[str] = []
+    if ema_inv:
+        parts.append(f"ema_invalid {ema_inv}")
+    parts.extend([f"take {take}", f"stop {stop}"])
     if eod:
         parts.append(f"eod {eod}")
     extra = [
         f"{key} {count}"
         for key, count in reasons.items()
-        if key not in {"take", "stop", "eod"} and count
+        if key not in {"take", "stop", "eod", "ema_invalid"} and count
     ]
     parts.extend(extra)
     return ", ".join(parts)

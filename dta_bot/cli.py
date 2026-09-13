@@ -9,7 +9,13 @@ from pathlib import Path
 
 from dta_bot.backtest import format_report_md, write_results_json
 from dta_bot.broker import build_broker, resolve_api_keys, resolve_trading_url
-from dta_bot.config import BotConfig, condition_timeframes, load_config
+from dta_bot.config import (
+    BotConfig,
+    condition_timeframes,
+    load_config,
+    restrict_universe,
+    timeframe_label,
+)
 from dta_bot.compare import (
     MULTI_ENGINE_NOTE,
     assumptions_orb,
@@ -108,6 +114,18 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip per-rule isolated books; run the full rule set once",
     )
+    bt.add_argument(
+        "--symbols",
+        default=None,
+        help="Comma-separated universe override for this run (e.g. SOXL or AAPL,MSFT).",
+    )
+    bt.add_argument(
+        "--breakout",
+        action="append",
+        default=[],
+        help="Also run an isolated book for this symbol (repeatable). "
+        "Default target rule is ema9_trend when present.",
+    )
     return parser
 
 
@@ -157,7 +175,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
         tfs = ",".join(sorted(condition_timeframes(rule.when)))
         print(
             f"    - {rule.id}: enabled={rule.enabled} symbols={syms} "
-            f"action={rule.action.type} cooldown={rule.cooldown_minutes}m tf={tfs}"
+            f"action={rule.action.type} exit={rule.action.exit} "
+            f"cooldown={rule.cooldown_minutes}m tf={tfs}"
         )
     return 0
 
@@ -252,8 +271,14 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     paths = [args.config, *list(args.compare_config or [])]
     loaded: list[tuple[str, str, BotConfig | OrbBotConfig]] = []
     override_tf = getattr(args, "timeframe", None)
+    symbol_filter = None
+    raw_symbols = getattr(args, "symbols", None)
+    if raw_symbols:
+        symbol_filter = [s.strip().upper() for s in str(raw_symbols).split(",") if s.strip()]
     for path in paths:
         kind, cfg = _load_any(path, timeframe=override_tf)
+        if symbol_filter and isinstance(cfg, BotConfig):
+            cfg = restrict_universe(cfg, symbol_filter)
         loaded.append((path, kind, cfg))
     now = datetime.now(timezone.utc)
     bars, sources, spans, source_label = _load_backtest_bars(
@@ -295,7 +320,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             continue
 
         assert isinstance(cfg, BotConfig)
-        notes = assumptions_rules(friction, args.starting_equity)
+        notes = assumptions_rules(friction, args.starting_equity, cfg)
         assumption_blocks.extend(notes)
         books = run_rule_books(
             cfg,
@@ -307,6 +332,8 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             assumptions=notes,
             combined_only=args.combined_only,
             include_entries_only=not args.combined_only,
+            label_prefix=timeframe_label(cfg),
+            breakout_symbols=list(args.breakout or []),
         )
         for compact in books:
             r = compact["report"]
