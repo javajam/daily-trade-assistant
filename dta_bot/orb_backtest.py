@@ -69,8 +69,7 @@ def run_orb_backtest(
             session_close=config.orb.session_close,
             orb_timeframe=orb_tf,
             signal_timeframe=sig_tf,
-            edge_pct=config.orb.edge_pct,
-            stop_mode=config.orb.stop_mode,
+            **config.orb.detector_kwargs(),
         )
         for setup, gate_skip in gate_setups(setups, **config.orb.gate_kwargs()):
             nxt = next_signal_bar(series, setup.reversal.timestamp)

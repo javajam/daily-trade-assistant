@@ -65,6 +65,23 @@ YAHOO_CAP_NOTE = (
 )
 
 
+def _orb_probe_assumption(config: Optional[OrbBotConfig]) -> str:
+    spec = config.orb if config is not None else None
+    mode = spec.probe_mode if spec is not None else "touch"
+    pct = spec.edge_pct if spec is not None else 0.05
+    if mode == "edge_band":
+        return (
+            f"Probe = signal-bar close inside the {pct:.0%} (configurable) edge band "
+            "under the OR high or above the OR low (probe_mode: edge_band)."
+        )
+    return (
+        "Probe = signal bar must touch the opening-range extreme "
+        "(top: high >= OR high; bottom: low <= OR low). "
+        "Close inside the old 5% edge band is not sufficient "
+        "(probe_mode: touch, default)."
+    )
+
+
 def _orb_stop_assumption(config: Optional[OrbBotConfig]) -> str:
     mode = config.orb.stop_mode if config is not None else "orb_extreme"
     if mode == "reversal_candle":
@@ -112,7 +129,7 @@ def assumptions_orb(
     return [
         "Opening range is the first orb_timeframe bar at/after 9:30 America/New_York (configurable).",
         "After the OR candle is complete, probe/reversal evaluation uses the signal timeframe.",
-        "Probe = signal-bar close inside the 5% (configurable) edge band under the OR high or above the OR low.",
+        _orb_probe_assumption(config),
         "Reversal = the next signal bar, opposite color (top+bearish → short, bottom+bullish → long).",
         "Entry fills at the open of the bar after the reversal candle.",
         _orb_stop_assumption(config),

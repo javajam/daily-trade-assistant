@@ -70,22 +70,25 @@ def test_entry_is_open_of_bar_after_reversal():
 
 def test_skip_second_entry_while_still_in_position():
     # Isolate the in-position skip from the default one-trade-before-10:30 gate.
+    # A second same-session top-touch would print the Friday OR-high stop, so the
+    # second fade is the next session on a tighter OR that never trades 104/100.
     cfg = _cfg(max_trades_before_cutoff=5)
     cfg = cfg.model_copy(update={"universe": ["AAPL"]})
-    # First fade enters at 10:00; price never hits stop/take. Second fade at 10:20.
-    orb = [_b(0, 100, 104, 96, 101)]
+    day2 = 3 * 24 * 60  # Monday 2026-09-14
+    orb = [_b(0, 100, 104, 96, 101), _b(day2, 102, 103, 101, 102)]
     signal = [
         _b(15, 101, 101.4, 100.6, 100.8),
-        _b(20, 103.20, 103.85, 103.10, 103.80),  # probe 1
-        _b(25, 103.70, 103.90, 102.50, 102.60),  # reversal 1
-        _b(30, 102.55, 102.70, 102.40, 102.50),  # entry 1; no stop/take
+        _b(20, 103.20, 104.00, 103.10, 103.80),  # Fri probe
+        _b(25, 103.70, 103.90, 102.50, 102.60),
+        _b(30, 102.55, 102.70, 102.40, 102.50),  # Fri entry; no stop/take
         _b(35, 102.50, 102.60, 102.30, 102.40),
-        _b(40, 103.30, 103.80, 103.20, 103.70),  # probe 2
-        _b(45, 103.60, 103.85, 102.80, 102.90),  # reversal 2
-        _b(50, 102.85, 102.95, 102.70, 102.80),  # would-be entry 2
+        _b(day2 + 15, 102.2, 102.4, 102.0, 102.3),
+        _b(day2 + 20, 102.70, 103.00, 102.60, 102.85),  # Mon touch of 103
+        _b(day2 + 25, 102.80, 102.90, 102.20, 102.30),
+        _b(day2 + 30, 102.25, 102.35, 102.15, 102.20),  # would-be entry
     ]
     rng = build_opening_range(orb, date(2026, 9, 11), orb_timeframe="15m")
-    assert len(find_setups("AAPL", signal, rng)) == 2
+    assert len(find_setups("AAPL", signal, rng)) == 1
     result = run_orb_backtest(cfg, {("AAPL", "15Min"): orb, ("AAPL", "5Min"): signal})
     assert result.report.signals == 2
     accepted = [s for s in result.signals if s.accepted]
@@ -116,6 +119,7 @@ def test_evaluate_scan_fires_fixture_setups():
     assert aapl.extra["stop"] == 104.0
     assert aapl.extra["take"] == 100.0
     assert aapl.extra["stop_mode"] == "orb_extreme"
+    assert aapl.extra["probe_mode"] == "touch"
     assert aapl.extra["entry_open"] == 102.55
 
 
@@ -146,11 +150,11 @@ def test_backtest_takes_only_first_pre_1030_entry():
     orb = [_b(0, 100, 104, 96, 101)]
     signal = [
         _b(15, 101, 101.4, 100.6, 100.8),
-        _b(20, 103.20, 103.85, 103.10, 103.80),
+        _b(20, 103.20, 104.00, 103.10, 103.80),
         _b(25, 103.70, 103.90, 102.50, 102.60),
         _b(30, 102.55, 102.70, 102.40, 102.50),  # 10:00 — kept
         _b(35, 102.50, 102.60, 102.30, 102.40),
-        _b(40, 103.30, 103.80, 103.20, 103.70),
+        _b(40, 103.30, 104.00, 103.20, 103.70),
         _b(45, 103.60, 103.85, 102.80, 102.90),
         _b(50, 102.85, 102.95, 102.70, 102.80),  # 10:20 — gated
     ]
@@ -167,7 +171,7 @@ def test_backtest_rejects_entry_at_cutoff():
     orb = [_b(0, 100, 104, 96, 101)]
     signal = [
         _b(15, 101, 101.4, 100.6, 100.8),
-        _b(50, 103.20, 103.85, 103.10, 103.80),
+        _b(50, 103.20, 104.00, 103.10, 103.80),
         _b(55, 103.70, 103.90, 102.50, 102.60),
         _b(60, 102.55, 102.70, 102.40, 102.50),  # 10:30
     ]

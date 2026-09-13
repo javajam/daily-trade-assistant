@@ -6,22 +6,25 @@
 # 1. Opening range = first orb_timeframe candle at/after session_open
 #    (default 15m → 9:30–9:45 America/New_York high/low).
 # 2. After that candle is fully formed, evaluate signal_timeframe bars (default 5m).
-# 3. Edge band = edge_pct * (or_high - or_low). Default 0.05 = 5% of OR height.
-#    Top zone:  [or_high - band, or_high]   (a close that touches the high is ideal)
-#    Bottom zone: [or_low, or_low + band]
-# 4. Probe = a signal bar whose close is inside the top or bottom zone.
-# 5. Reversal = the next signal bar, opposite color:
+# 3. Probe (probe_mode: touch, default): the signal bar must *touch* the OR edge.
+#      top (potential short):  candle high >= or_high  (wick/touch of range high)
+#      bottom (potential long): candle low  <= or_low  (wick/touch of range low)
+#    Close-inside-the-old-5%-band is not enough.
+#    probe_mode: edge_band restores the previous close-in-zone rule:
+#      band = edge_pct * (or_high - or_low)  (0.05 = 5% of OR height)
+#      top zone [or_high - band, or_high]; bottom [or_low, or_low + band].
+# 4. Reversal = the next signal bar, opposite color:
 #      top probe + bearish close  → short
 #      bottom probe + bullish close → long
-# 6. Entry fills at the open of the bar after the reversal (one bar later).
-# 7. Stop (stop_mode: orb_extreme, default):
+# 5. Entry fills at the open of the bar after the reversal (one bar later).
+# 6. Stop (stop_mode: orb_extreme, default):
 #      long  → opening-range low  (bottom of the range)
 #      short → opening-range high (top of the range)
 #    Previous behavior is stop_mode: reversal_candle (reversal low/high).
 #    Take profit stays the OR midpoint either way.
-# 8. Take profit (v1): OR midpoint (or_high + or_low) / 2.
+# 7. Take profit (v1): OR midpoint (or_high + or_low) / 2.
 #    Exit strategy will be A/B tested later — do not treat midpoint as final.
-# 9. Frequency (defaults aimed at fewer late/choppy trades):
+# 8. Frequency (defaults aimed at fewer late/choppy trades):
 #      entry_cutoff: "10:30"          # session timezone (America/New_York)
 #      max_trades_before_cutoff: 1    # per symbol per session
 #      allow_entries_after_cutoff: false
@@ -33,8 +36,8 @@
 #    One open position per symbol (no pyramiding). Default is skip new
 #    entries while already in a position; set on_open_position: replace
 #    to close/replace on a new signal.
-# 10. Universe is fully configurable below. A morning screener will populate
-#     this list later — edit it by hand for now.
+# 9. Universe is fully configurable below. A morning screener will populate
+#    this list later — edit it by hand for now.
 
 strategy: orb_reversal
 
@@ -61,7 +64,8 @@ orb:
   session_timezone: America/New_York
   orb_timeframe: 15m               # 5m / 15m / 30m — switch without code changes
   signal_timeframe: 5m
-  edge_pct: 0.05                   # fraction of OR height (0.05 = 5%), not "5"
+  probe_mode: touch                # touch | edge_band  (touch = wick must reach OR extreme)
+  edge_pct: 0.05                   # used by edge_band; fraction of OR height (0.05 = 5%)
   on_open_position: skip           # skip | replace
   take_profit: midpoint            # v1; A/B tested later
   stop_mode: orb_extreme           # orb_extreme | reversal_candle

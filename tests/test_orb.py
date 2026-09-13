@@ -34,6 +34,7 @@ def test_example_orb_config_is_paper_only():
     assert cfg.orb.orb_timeframe == "15Min"
     assert cfg.orb.signal_timeframe == "5Min"
     assert cfg.orb.edge_pct == 0.05
+    assert cfg.orb.probe_mode == "touch"
     assert cfg.orb.session_open == "09:30"
     assert cfg.orb.session_timezone == "America/New_York"
     assert cfg.orb.on_open_position == "skip"
@@ -59,6 +60,21 @@ sizing: {type: shares, value: 1}
         encoding="utf-8",
     )
     with pytest.raises(Exception, match="0.05"):
+        load_orb_config(path)
+
+
+def test_probe_mode_must_be_known(tmp_path):
+    path = tmp_path / "bad.yaml"
+    path.write_text(
+        """
+strategy: orb_reversal
+universe: [AAPL]
+orb: {probe_mode: wick_only}
+sizing: {type: shares, value: 1}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="touch"):
         load_orb_config(path)
 
 
@@ -116,6 +132,98 @@ def test_classify_close_inclusive_edges_not_breakouts():
     assert rng.classify_close(103.59, 0.05) is None
 
 
+def test_classify_touch_requires_wick_of_or_extreme():
+    rng = build_opening_range(
+        [_b(0, 100, 104, 96, 101)],
+        date(2026, 9, 11),
+        orb_timeframe="15m",
+    )
+    assert rng is not None
+    assert rng.classify_touch(_b(20, 103.20, 104.00, 103.10, 103.80)) == "top"
+    assert rng.classify_touch(_b(20, 103.20, 104.15, 103.10, 102.50)) == "top"  # wick through
+    assert rng.classify_touch(_b(20, 103.20, 103.85, 103.10, 103.80)) is None  # close in band, no touch
+    assert rng.classify_touch(_b(20, 96.40, 96.80, 96.00, 96.20)) == "bottom"
+    assert rng.classify_touch(_b(20, 96.40, 96.80, 95.90, 96.20)) == "bottom"
+    assert rng.classify_touch(_b(20, 96.40, 96.80, 96.10, 96.20)) is None
+    assert rng.classify_touch(_b(20, 96.00, 104.00, 96.00, 100.00)) is None  # both edges
+    assert rng.classify_probe(_b(20, 103.20, 103.85, 103.10, 103.80), probe_mode="touch") is None
+    assert rng.classify_probe(
+        _b(20, 103.20, 103.85, 103.10, 103.80), probe_mode="edge_band", edge_pct=0.05
+    ) == "top"
+
+
+def test_close_in_band_without_touch_does_not_fire():
+    rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    # Close 103.80 is inside the 5% top band [103.60, 104.00]; high 103.85 never reaches 104.
+    probe = _b(20, 103.20, 103.85, 103.10, 103.80)
+    reversal = _b(25, 103.70, 103.90, 102.50, 102.60)
+    entry = _b(30, 102.55, 102.70, 102.40, 102.45)
+    mid = _b(15, 101.0, 101.4, 100.6, 100.8)
+    assert rng.classify_close(probe.close, 0.05) == "top"
+    assert probe.high < rng.high
+    assert find_setups("AAPL", [mid, probe, reversal, entry], rng) == []
+    assert find_setups("AAPL", [mid, probe, reversal, entry], rng, probe_mode="touch") == []
+    # Old behavior still available.
+    band = find_setups(
+        "AAPL", [mid, probe, reversal, entry], rng, probe_mode="edge_band", edge_pct=0.05
+    )
+    assert len(band) == 1
+    assert band[0].side == "sell"
+    assert band[0].probe_mode == "edge_band"
+
+
+def test_bottom_close_in_band_without_touch_does_not_fire():
+    rng = build_opening_range([_b(0, 204, 210, 200, 205)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    # Close 200.30 is inside the 5% bottom band [200.00, 200.50]; low 200.10 never reaches 200.
+    probe = _b(20, 200.80, 200.90, 200.10, 200.30)
+    reversal = _b(25, 200.40, 201.50, 200.20, 201.40)
+    entry = _b(30, 201.50, 201.80, 201.30, 201.60)
+    series = [_b(15, 205, 205.4, 204.6, 205.1), probe, reversal, entry]
+    assert rng.classify_close(probe.close, 0.05) == "bottom"
+    assert probe.low > rng.low
+    assert find_setups("MSFT", series, rng) == []
+    band = find_setups("MSFT", series, rng, probe_mode="edge_band")
+    assert len(band) == 1
+    assert band[0].side == "buy"
+
+
+def test_touch_plus_opposite_color_still_fires():
+    rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    probe = _b(20, 103.20, 104.00, 103.10, 103.80)
+    reversal = _b(25, 103.70, 103.90, 102.50, 102.60)
+    entry = _b(30, 102.55, 102.70, 102.40, 102.45)
+    mid = _b(15, 101.0, 101.4, 100.6, 100.8)
+    setups = find_setups("AAPL", [mid, probe, reversal, entry], rng, probe_mode="touch")
+    assert len(setups) == 1
+    assert setups[0].zone == "top"
+    assert setups[0].side == "sell"
+    assert setups[0].probe_mode == "touch"
+    assert setups[0].probe.high >= rng.high
+    assert setups[0].stop == 104.0
+    assert setups[0].take == 100.0
+
+
+def test_touch_wick_through_or_extreme_still_fires():
+    rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    # High prints through the OR high; close is mid-range (would miss the old 5% band).
+    probe = _b(20, 103.20, 104.25, 102.80, 102.90)
+    reversal = _b(25, 102.80, 103.00, 101.50, 101.60)
+    entry = _b(30, 101.55, 101.70, 101.40, 101.45)
+    setups = find_setups("AAPL", [_b(15, 101.0, 101.4, 100.6, 100.8), probe, reversal, entry], rng)
+    assert len(setups) == 1
+    assert setups[0].side == "sell"
+    assert find_setups(
+        "AAPL",
+        [_b(15, 101.0, 101.4, 100.6, 100.8), probe, reversal, entry],
+        rng,
+        probe_mode="edge_band",
+    ) == []
+
+
 def test_aggregate_or_from_signal_bars():
     # Three 5m slices covering 9:30–9:45: highs 102/104/101, lows 99/97/96.
     slices = [
@@ -138,7 +246,7 @@ def test_aggregate_or_from_signal_bars():
 def test_top_fade_short_probe_reversal_entry_stop_target():
     rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
     assert rng is not None
-    probe = _b(20, 103.20, 103.85, 103.10, 103.80)
+    probe = _b(20, 103.20, 104.00, 103.10, 103.80)
     reversal = _b(25, 103.70, 103.90, 102.50, 102.60)
     entry = _b(30, 102.55, 102.70, 102.40, 102.45)
     mid = _b(15, 101.0, 101.4, 100.6, 100.8)
@@ -160,7 +268,7 @@ def test_top_fade_short_probe_reversal_entry_stop_target():
 def test_bottom_fade_long_probe_reversal_entry_stop_target():
     rng = build_opening_range([_b(0, 204, 210, 200, 205)], date(2026, 9, 11), orb_timeframe="15m")
     assert rng is not None
-    probe = _b(20, 200.80, 200.90, 200.10, 200.30)
+    probe = _b(20, 200.80, 200.90, 200.00, 200.30)
     reversal = _b(25, 200.40, 201.50, 200.20, 201.40)
     entry = _b(30, 201.50, 201.80, 201.30, 201.60)
     setups = find_setups("MSFT", [_b(15, 205, 205.4, 204.6, 205.1), probe, reversal, entry], rng)
@@ -184,7 +292,7 @@ def test_no_trade_when_close_outside_band():
 def test_no_trade_when_same_color_reversal():
     rng = build_opening_range([_b(0, 494, 500, 490, 496)], date(2026, 9, 11), orb_timeframe="15m")
     assert rng is not None
-    probe = _b(30, 499.60, 499.90, 499.40, 499.80)
+    probe = _b(30, 499.60, 500.00, 499.40, 499.80)
     same = _b(35, 499.70, 500.10, 499.50, 499.95)  # bullish after top probe
     assert probe.close >= 499.5
     assert same.is_bullish()
@@ -194,7 +302,7 @@ def test_no_trade_when_same_color_reversal():
 def test_doji_reversal_is_not_opposite_color():
     rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
     assert rng is not None
-    probe = _b(20, 103.2, 103.9, 103.1, 103.8)
+    probe = _b(20, 103.2, 104.0, 103.1, 103.8)
     doji = _b(25, 103.5, 103.6, 103.4, 103.5)
     assert find_setups("AAPL", [probe, doji], rng) == []
 
@@ -202,7 +310,7 @@ def test_doji_reversal_is_not_opposite_color():
 def test_live_setup_only_when_last_closed_bar_is_the_reversal():
     rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
     assert rng is not None
-    probe = _b(20, 103.2, 103.85, 103.1, 103.8)
+    probe = _b(20, 103.2, 104.0, 103.1, 103.8)
     reversal = _b(25, 103.7, 103.9, 102.5, 102.6)
     entry = _b(30, 102.55, 102.7, 102.4, 102.45)
     series = [_b(15, 101, 101.4, 100.6, 100.8), probe, reversal, entry]
@@ -236,7 +344,7 @@ def test_demo_fixture_helpers_match_locked_math():
 def test_reversal_candle_stop_uses_candle_extreme():
     rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
     assert rng is not None
-    probe = _b(20, 103.20, 103.85, 103.10, 103.80)
+    probe = _b(20, 103.20, 104.00, 103.10, 103.80)
     reversal = _b(25, 103.70, 103.90, 102.50, 102.60)
     entry = _b(30, 102.55, 102.70, 102.40, 102.45)
     setups = find_setups(
@@ -255,11 +363,11 @@ def test_gate_keeps_first_pre_cutoff_entry_only():
     # First fade enters 10:00; second would enter 10:20 — both before 10:30.
     signal = [
         _b(15, 101, 101.4, 100.6, 100.8),
-        _b(20, 103.20, 103.85, 103.10, 103.80),
+        _b(20, 103.20, 104.00, 103.10, 103.80),
         _b(25, 103.70, 103.90, 102.50, 102.60),
         _b(30, 102.55, 102.70, 102.40, 102.50),  # 10:00 entry
         _b(35, 102.50, 102.60, 102.30, 102.40),
-        _b(40, 103.30, 103.80, 103.20, 103.70),
+        _b(40, 103.30, 104.00, 103.20, 103.70),
         _b(45, 103.60, 103.85, 102.80, 102.90),
         _b(50, 102.85, 102.95, 102.70, 102.80),  # 10:20 would-be entry
     ]
@@ -276,7 +384,7 @@ def test_gate_rejects_entry_at_or_after_1030():
     # Reversal 10:25 → entry bar 10:30 ET (exactly the cutoff).
     signal = [
         _b(15, 101, 101.4, 100.6, 100.8),
-        _b(50, 103.20, 103.85, 103.10, 103.80),  # 10:20 probe
+        _b(50, 103.20, 104.00, 103.10, 103.80),  # 10:20 probe
         _b(55, 103.70, 103.90, 102.50, 102.60),  # 10:25 reversal
         _b(60, 102.55, 102.70, 102.40, 102.50),  # 10:30 entry
     ]
@@ -294,7 +402,7 @@ def test_gate_allows_post_cutoff_when_configured():
     assert rng is not None
     signal = [
         _b(15, 101, 101.4, 100.6, 100.8),
-        _b(50, 103.20, 103.85, 103.10, 103.80),
+        _b(50, 103.20, 104.00, 103.10, 103.80),
         _b(55, 103.70, 103.90, 102.50, 102.60),
         _b(60, 102.55, 102.70, 102.40, 102.50),
     ]
