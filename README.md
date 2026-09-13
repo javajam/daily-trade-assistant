@@ -250,9 +250,11 @@ Copy to `config/ema9_trend.yaml` or `config/ema9_trend_5m.yaml` (gitignored) and
 
 On the Yahoo window 2026-06-17 → 2026-09-11, **EMA-invalidation** isolated books were: **15m AAPL/MSFT/SOXL 240 trades, 36.25%, $626.64**, max DD $850.25; **5m AAPL/MSFT/SOXL 498 trades, 30.72%, $-312.80**, max DD $722.18. Isolated SOXL: 15m 86 trades, 29.07%, $-835.05; 5m 170 trades, 28.24%, $-707.46. AAPL/MSFT only (same exit): 15m 154 / 40.26% / $1,461.69; 5m 328 / 32.01% / $394.66. Writeup: `artifacts/ema9_ema_invalid_5m_vs_15m.md`.
 
-August 2026 only (2026-08-01 → 2026-08-31 RTH, same Yahoo 15m tape, AAPL/MSFT, `exit: fixed_bracket` 1.5/3.0, $100k start): **1% equity-risk sizing 7 trades, 57.14%, $5,502.59**, max DD $3,282.83; **10-share control 11 trades, 54.55%, $430.47**, max DD $251.10. August was not clipped (tape 2026-06-17 → 2026-09-11). Writeup: `artifacts/ema9_aug2026_risk.md`.
+August 2026 only (2026-08-01 → 2026-08-31 RTH, same Yahoo 15m tape, AAPL/MSFT, `exit: fixed_bracket` 1.5/3.0, $100k start) **with session gates**: **1% equity-risk 17 trades, 70.59%, $3,022.49**, max DD $1,663.57, **16 of 17 exits `session_flatten`**. Prior overnight August risk book (gates off): 7 trades, 57.14%, $5,502.59, max DD $3,282.83. Writeup: `artifacts/ema9_aug2026_risk.md`.
 
-Prior **fixed-bracket** AAPL/MSFT books (1.5/3.0) on the same tape, reproduced again: **15m 44 trades, 50.00%, $1,404.89**; **5m 56 trades, 48.21%, $1,305.23**. Writeups: `artifacts/ema9_vs_engulfing.md`, `artifacts/ema9_5m_vs_15m.md`. Yahoo 5m/15m history is still documented as a ~60-day cap.
+Full-window **15m 10-share** AAPL/MSFT (1.5/3.0) **WITH session gates vs WITHOUT** (same tape 2026-06-17 → 2026-09-11): overnight **44 trades, 50.00%, $1,404.89**, max DD $407.70 (reproduced); gated **64 trades, 60.94%, $419.25**, max DD $298.92, **54 of 64 `session_flatten`**, 33 `entry_cutoff` skips. Writeup: `artifacts/ema9_session_gates.md`.
+
+Prior **fixed-bracket** AAPL/MSFT books (1.5/3.0, overnight) on the same tape: **15m 44 trades, 50.00%, $1,404.89**; **5m 56 trades, 48.21%, $1,305.23**. Writeups: `artifacts/ema9_vs_engulfing.md`, `artifacts/ema9_5m_vs_15m.md`. Yahoo 5m/15m history is still documented as a ~60-day cap.
 
 ### CLI
 
