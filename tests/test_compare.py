@@ -1,8 +1,13 @@
+from datetime import datetime, timezone
+
+from dta_bot.backtest import BacktestResult, RuleReport, Signal
 from dta_bot.cli import main
 from dta_bot.compare import (
     assumptions_orb,
+    assumptions_rules,
     combined_book_effect,
     format_comparison_md,
+    pattern_hits_from_result,
     rank_books,
     rule_book_plan,
     sample_size_caveat,
@@ -89,6 +94,60 @@ def test_assumptions_orb_document_new_defaults():
     body = cfg.model_copy(update={"orb": cfg.orb.model_copy(update={"reversal_in_range": "body"})})
     body_notes = assumptions_orb("commission=$0.00/fill, slippage=0.0%", 100_000.0, body)
     assert any("fully inside" in n and "body" in n for n in body_notes)
+
+
+def test_assumptions_rules_mention_ma_cross():
+    notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0)
+    assert any("MA-cross" in n for n in notes)
+
+
+def test_pattern_hits_count_ema_cross():
+    ts = datetime(2026, 9, 11, tzinfo=timezone.utc)
+    result = BacktestResult(
+        label="ema9_trend",
+        report=RuleReport(
+            rule_id="ema9_trend",
+            signals=1,
+            trades=0,
+            wins=0,
+            losses=0,
+            breakeven=0,
+            win_rate_pct=None,
+            total_pnl=0.0,
+            total_pnl_pct=0.0,
+            avg_win=None,
+            avg_loss=None,
+            max_drawdown=0.0,
+            max_drawdown_pct=0.0,
+            starting_equity=100_000.0,
+            ending_equity=100_000.0,
+            period_start=None,
+            period_end=None,
+            data_source="fixture",
+        ),
+        trades=[],
+        signals=[
+            Signal(
+                rule_id="ema9_trend",
+                symbol="AAPL",
+                action_type="buy",
+                signal_time=ts,
+                bar_ts=None,
+                reason="ema_cross matched (bullish): prev close 10.0000 vs EMA9 10.0000",
+                accepted=True,
+            )
+        ],
+        equity_curve=[],
+    )
+    assert pattern_hits_from_result(result) == {"ema_cross": 1}
+
+
+def test_ema9_rule_book_plan_isolates_each_entry():
+    cfg = load_config("config/ema9_trend.example.yaml")
+    labels = [label for label, _ids, _note in rule_book_plan(cfg)]
+    assert labels[:3] == ["ema9_trend", "ema9_cross_raw", "engulfing-with-trend"]
+    assert "sample-entries" in labels
+    assert "combined" in labels
 
 
 def test_rule_book_plan_includes_entries_and_combined():

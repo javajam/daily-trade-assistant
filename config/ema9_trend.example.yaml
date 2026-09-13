@@ -1,0 +1,108 @@
+# 9 EMA trend — long-only v1 (paper / dry_run).
+#
+# Same universe, 15m tape, SMA20 + RSI14 trend filter, 10-share size, 1.5/3.0
+# brackets, and 60m cooldown as engulfing-with-trend. The entry trigger is a
+# bullish close-across-EMA(9) instead of a bullish engulfing candle.
+#
+# Cross definition (engine MaCrossCond): previous close <= previous EMA9 and
+# current close > current EMA9, evaluated only when the trend filter is true
+# on that same 15m bar.
+#
+# This file also ships:
+#   - ema9_cross_raw — same cross and risk, no SMA/RSI filter (ablation)
+#   - engulfing-with-trend — the control book on the same tape
+# Isolated backtest books stay separate (one lot per symbol per book).
+# Copy to config/ema9_trend.yaml (gitignored) and disable unused rules to paper-trade.
+#
+#   python -m dta_bot validate --config config/ema9_trend.example.yaml
+#   python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yahoo \
+#     --output artifacts/ema9_vs_engulfing.json --report artifacts/ema9_vs_engulfing.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "15m bullish EMA(9) cross while price holds above the 20-SMA and RSI is not overbought."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      stop_loss_pct: 1.5
+      take_profit_pct: 3.0
+
+  - id: ema9_cross_raw
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Ablation: 15m bullish EMA(9) cross with no SMA/RSI trend filter. Same 10-share 1.5/3.0 brackets."
+    when:
+      ema_cross:
+        period: 9
+        timeframe: 15m
+        direction: bullish
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      stop_loss_pct: 1.5
+      take_profit_pct: 3.0
+
+  - id: engulfing-with-trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Control: 15m bullish engulfing while price holds above the 20-SMA and RSI is not overbought."
+    when:
+      all:
+        - pattern: bullish_engulfing
+          timeframe: 15m
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      stop_loss_pct: 1.5
+      take_profit_pct: 3.0

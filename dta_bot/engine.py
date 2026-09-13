@@ -11,12 +11,13 @@ from dta_bot.config import (
     BotConfig,
     GroupCond,
     MaCond,
+    MaCrossCond,
     PatternCond,
     RsiCond,
     RuleSpec,
     VolumeCond,
 )
-from dta_bot.indicators import average_volume, ema, rsi, sma
+from dta_bot.indicators import average_volume, ema, last_two_ma, rsi, sma
 from dta_bot.models import Bar, ConditionResult, EvalResult
 from dta_bot.patterns import detect
 from dta_bot.state import BotState, fmt_ts
@@ -57,6 +58,37 @@ def eval_leaf(cond: AnyCondition, symbol: str, bars_by_key: BarMap) -> Condition
             ok,
             f"close {price:.4f} {cmp} {cond.ma.upper()}{cond.period} {value:.4f} @{cond.timeframe} → {ok}",
             {"price": price, "ma": value},
+        )
+
+    if isinstance(cond, MaCrossCond):
+        bars = bars_by_key.get((symbol, cond.timeframe), [])
+        closes = _closes(bars)
+        pair = last_two_ma(closes, cond.period, cond.ma)
+        need = cond.period + 1
+        if pair is None:
+            return ConditionResult(
+                False,
+                f"{cond.ma}_cross {cond.direction} @{cond.timeframe}: "
+                f"need {need} closes, have {len(closes)}",
+            )
+        prev_close, prev_ma, curr_close, curr_ma = pair
+        if cond.direction == "bearish":
+            ok = prev_close >= prev_ma and curr_close < curr_ma
+        else:
+            ok = prev_close <= prev_ma and curr_close > curr_ma
+        verb = "matched" if ok else "not found"
+        return ConditionResult(
+            ok,
+            f"{cond.ma}_cross {verb} ({cond.direction}): "
+            f"prev close {prev_close:.4f} vs {cond.ma.upper()}{cond.period} {prev_ma:.4f}, "
+            f"close {curr_close:.4f} vs {curr_ma:.4f} @{cond.timeframe} → {ok}",
+            {
+                "prev_close": prev_close,
+                "prev_ma": prev_ma,
+                "price": curr_close,
+                "ma": curr_ma,
+                "direction": cond.direction,
+            },
         )
 
     if isinstance(cond, RsiCond):
