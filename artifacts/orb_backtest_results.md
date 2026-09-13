@@ -1,6 +1,8 @@
 # Rule backtest results
 
-- Generated (UTC): 2026-09-13T13:17:59.262755Z
+BEFORE vs AFTER on this same Yahoo window: `artifacts/orb_stop_cutoff_comparison.md`.
+
+- Generated (UTC): 2026-09-13T14:11:07.072611Z
 - Starting equity: $100,000.00
 - Commission / slippage: commission=$0.00/fill, slippage=0.0%
 - Data: Yahoo Finance v8 chart (unadjusted regular-session OHLC)
@@ -12,15 +14,15 @@
 - Data source: Yahoo Finance v8 chart (unadjusted regular-session OHLC)
 - Signals: 192  (by symbol: {'AAPL': 76, 'MSFT': 60, 'SPY': 56})
 - Pattern hits in those signals: {'orb_reversal': 192}
-- Trades: 182  (by symbol: {'AAPL': 69, 'MSFT': 59, 'SPY': 54})
-- Wins / losses / scratch: 51 / 125 / 6
-- Win rate: 28.02%
-- Total P&L: $7.04 (0.007% of starting equity)
-- Avg win: $12.92
-- Avg loss: $-5.21
-- Max drawdown: $174.39 (0.17%)
-- Ending equity: $100,007.04
-- Exit reasons: {'take': 55, 'stop': 126, 'eod': 1}
+- Trades: 39  (by symbol: {'AAPL': 14, 'MSFT': 15, 'SPY': 10})
+- Wins / losses / scratch: 13 / 23 / 3
+- Win rate: 33.33%
+- Total P&L: $14.63 (0.015% of starting equity)
+- Avg win: $10.22
+- Avg loss: $-5.14
+- Max drawdown: $49.25 (0.05%)
+- Ending equity: $100,014.63
+- Exit reasons: {'take': 16, 'stop': 23}
 
 ## Assumptions
 
@@ -29,8 +31,8 @@
 - Probe = signal-bar close inside the 5% (configurable) edge band under the OR high or above the OR low.
 - Reversal = the next signal bar, opposite color (top+bearish → short, bottom+bullish → long).
 - Entry fills at the open of the bar after the reversal candle.
-- Stop is the reversal candle extreme; take-profit is the OR midpoint (v1; A/B tested later).
-- Multiple trades are allowed (no daily cap). One open position per symbol; new signals skip while in a position unless on_open_position=replace.
+- Stop is the opening-range extreme (long → OR low, short → OR high); take-profit remains the OR midpoint (v1; A/B tested later). Set orb.stop_mode: reversal_candle to restore the previous candle-extreme stop.
+- At most 1 entry per symbol per session, and only if that entry is before 10:30 America/New_York (no new entries at/after the cutoff). One open position per symbol unless on_open_position=replace.
 - If stop and take both trade in the fill bar, the stop is assumed to fill first.
 - A gap through stop/take fills at that bar's open.
 - Open lots still on the last bar are flattened at the last close (exit reason eod).
