@@ -1,0 +1,89 @@
+# Optional EMA9 1% risk short book — parked; not the default product.
+#
+# Same 15m AAPL / MSFT noon stack as config/ema9_trend_risk.example.yaml, plus
+# ema9_trend_short enabled. Long-only is the default.
+#
+# Short: no RSI; cover on EMA(9) over SMA(20) (next bar open) or session
+# flatten. No percent / lock_plus stop, so no R — shorts stay 10 shares
+# (1% risk sizing is not defined without a stop).
+# One position per symbol (long or short). Opposite signal while in a trade
+# is skipped (opposite_signal_in_trade).
+# 5m sibling: --timeframe 5m, or config/ema9_trend_risk_5m_short_optional.example.yaml
+#
+#   python -m dta_bot validate --config config/ema9_trend_risk_short_optional.example.yaml
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"   # null / off disables
+  flatten_by: "15:55"     # null / off disables
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Noon long: 15m price crosses above EMA(9) while above SMA20 and RSI < 70. 1% equity risk at a 1.0% fill stop; lock to +1% on first touch of entry×1.01; no take."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: risk_pct
+        equity_risk: 0.01
+        stop_pct: 1.0
+      order: market
+      exit: fixed_bracket
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      lock_trigger_pct: 1.0
+      lock_stop_pct: 1.0
+  - id: ema9_trend_short
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Noon short: 15m price crosses below EMA(9) while below SMA20 (no RSI). Cover when EMA(9) crosses above SMA(20) at the next open. 10 shares (no stop R, so not 1% risk-sized). No percent / lock_plus stop."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bearish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: below
+    action:
+      type: sell
+      size:
+        type: shares
+        value: 10
+      order: market
+      exit: ma_cross
+      exit_ema_period: 9
+      exit_sma_period: 20
