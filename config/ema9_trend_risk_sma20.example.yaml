@@ -3,6 +3,8 @@
 # Same locked stack as config/ema9_trend_risk_nobe_12.example.yaml except
 # stop_mode: sma20. R for share calc is signal-bar close minus SMA20
 # (distance entry-reference → SMA20 stop). No percent stop_pct.
+# When R is a few cents/dollars (close just above SMA20), 1% equity risk
+# sizes more shares than $100k cash can buy — those signals skip.
 #
 # Control (1.0/2.0 percent): config/ema9_trend_risk_nobe_12.example.yaml
 # No-take sibling: config/ema9_trend_risk_sma20_notake.example.yaml
