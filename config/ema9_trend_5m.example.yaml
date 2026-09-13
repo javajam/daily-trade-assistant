@@ -4,9 +4,10 @@
 # 60 wall-clock minutes (12 five-minute bars, not 4). Yahoo 5m history is
 # capped at ~60 days; requesting more returns HTTP 422.
 #
-# Session gates (America/New_York): no new fills at/after 15:15; force-flat at
+# Session gates (America/New_York): no new fills at/after 12:00; force-flat at
 # the 15:50 ET 5m bar close (last 5m bar that completes at/before flatten_by 15:55).
-# Set entry_cutoff / flatten_by to null to restore overnight holds.
+# Prior cutoffs: 13:00 and 15:15 example YAMLs. Set entry_cutoff / flatten_by
+# to null to restore overnight holds.
 #
 # Default exit is EMA-invalidation (close < EMA9 on a 5m bar, flatten at that
 # close). Optional catastrophic stop_loss_pct is off. Entry is unchanged.
@@ -31,7 +32,7 @@ settings:
   lookback_bars: 80
   timeframe: 5m
   session_timezone: America/New_York
-  entry_cutoff: "15:15"
+  entry_cutoff: "12:00"
   flatten_by: "15:55"
 
 universe:

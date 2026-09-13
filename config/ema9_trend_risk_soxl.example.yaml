@@ -1,0 +1,61 @@
+# 9 EMA trend — August-style 1% risk book with SOXL included.
+#
+# Same locked product as ema9_trend_risk.example.yaml (15m EMA9 + SMA20 +
+# RSI14 < 70, 1.5/3.0 brackets, risk ~1% of equity at the 1.5% stop) plus
+# SOXL. Session gates: no new fills at/after 12:00 ET; flatten_by 15:55.
+#
+#   python -m dta_bot backtest --config config/ema9_trend_risk_soxl.example.yaml \
+#     --source yahoo --start 2026-08-01 --end 2026-08-31 --breakout SOXL \
+#     --output artifacts/ema9_aug2026_risk_soxl.json \
+#     --report artifacts/ema9_aug2026_risk_soxl.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"
+  flatten_by: "15:55"
+
+universe:
+  - AAPL
+  - MSFT
+  - SOXL
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT, SOXL]
+    cooldown_minutes: 60
+    notes: "15m EMA9 trend + 1% equity risk at a 1.5% stop; 3.0% take. Includes SOXL."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: risk_pct
+        equity_risk: 0.01
+        stop_pct: 1.5
+      order: market
+      exit: fixed_bracket
+      stop_loss_pct: 1.5
+      take_profit_pct: 3.0

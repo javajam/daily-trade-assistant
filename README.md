@@ -169,7 +169,7 @@ settings:
   data_feed: iex
   lookback_bars: 80
   session_timezone: America/New_York   # optional session clock
-  entry_cutoff: "15:15"                # skip fills at/after this clock; null = off
+  entry_cutoff: "12:00"                # skip fills at/after this clock; null = off
   flatten_by: "15:55"                  # force-flat at flatten-bar close; null = off
 
 universe: [AAPL, MSFT, SPY]  # default symbols; a rule may override
@@ -215,7 +215,7 @@ Default exit is **`action.exit: ema_invalid`**: stay in the long until a signal-
 
 **Session gates** (America/New_York, on in the ema9 example configs):
 
-- `entry_cutoff: "15:15"` — skip a signal when the next-bar **fill** (bar open) would be at/after 3:15 PM ET. Prior gated books used `13:00` (`config/ema9_trend_bracket_1300.example.yaml`).
+- `entry_cutoff: "12:00"` — skip a signal when the next-bar **fill** (bar open) would be at/after noon ET. Prior gated books: `13:00` (`config/ema9_trend_bracket_1300.example.yaml`) and `15:15` (`config/ema9_trend_bracket_1515.example.yaml`).
 - `flatten_by: "15:55"` — force-flat at the close of the bar that contains 3:55 PM ET. On **15m** RTH bars opening `:00,:15,:30,:45` that is the **15:45 ET bar close** (last regular 15m bar before 16:00, labeled as the end-of-day flatten aligned with “by 15:55”). On **5m** that is the **15:50 ET bar close** (last 5m bar that completes at/before 15:55). Stop/take/EMA-invalid on that bar still win if they hit first. Exit reason: `session_flatten`.
 - Set either knob to `null` / `off` to disable it (overnight control: `config/ema9_trend_bracket_overnight.example.yaml`).
 
