@@ -227,9 +227,9 @@ python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yaho
 
 Copy to `config/ema9_trend.yaml` or `config/ema9_trend_5m.yaml` (gitignored) and disable the ablation/control rules if you only want to paper the 9 EMA book.
 
-Prior **fixed-bracket** books (AAPL/MSFT only, 1.5/3.0) on the Yahoo window 2026-06-17 → 2026-09-11: **15m ema9_trend 44 trades, 50.00%, $1,404.89**; **5m ema9_trend 56 trades, 48.21%, $1,305.23**. Writeups: `artifacts/ema9_vs_engulfing.md`, `artifacts/ema9_5m_vs_15m.md`.
+On the Yahoo window 2026-06-17 → 2026-09-11, **EMA-invalidation** isolated books were: **15m AAPL/MSFT/SOXL 240 trades, 36.25%, $626.64**, max DD $850.25; **5m AAPL/MSFT/SOXL 498 trades, 30.72%, $-312.80**, max DD $722.18. Isolated SOXL: 15m 86 trades, 29.07%, $-835.05; 5m 170 trades, 28.24%, $-707.46. AAPL/MSFT only (same exit): 15m 154 / 40.26% / $1,461.69; 5m 328 / 32.01% / $394.66. Writeup: `artifacts/ema9_ema_invalid_5m_vs_15m.md`.
 
-EMA-invalidation 15m vs 5m (AAPL/MSFT/SOXL, SOXL isolated) is `artifacts/ema9_ema_invalid_5m_vs_15m.md`. Yahoo 5m/15m history is still documented as a ~60-day cap.
+Prior **fixed-bracket** AAPL/MSFT books (1.5/3.0) on the same tape, reproduced again: **15m 44 trades, 50.00%, $1,404.89**; **5m 56 trades, 48.21%, $1,305.23**. Writeups: `artifacts/ema9_vs_engulfing.md`, `artifacts/ema9_5m_vs_15m.md`. Yahoo 5m/15m history is still documented as a ~60-day cap.
 
 ### CLI
 
