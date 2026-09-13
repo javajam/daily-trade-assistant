@@ -8,6 +8,8 @@
 #       shares = floor( (0.01 * equity) / (0.015 * entry_price) )
 #              = floor( equity / (1.5 * entry_price) )
 #   - one lot per symbol; both names may be open if cash covers the second
+#   - session gates (America/New_York): no new fills at/after 13:00;
+#     force-flat at the 15:45 ET 15m bar close (flatten_by 15:55)
 #
 #   python -m dta_bot validate --config config/ema9_trend_risk.example.yaml
 #   python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml \
@@ -26,6 +28,9 @@ settings:
   data_feed: iex
   lookback_bars: 80
   timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "13:00"
+  flatten_by: "15:55"
 
 universe:
   - AAPL

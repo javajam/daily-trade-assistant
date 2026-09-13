@@ -183,6 +183,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
         )
         return 0
     print(f"  rules={len(cfg.rules)}")
+    print(
+        f"  session={cfg.settings.session_timezone} "
+        f"entry_cutoff={cfg.settings.entry_cutoff} "
+        f"flatten_by={cfg.settings.flatten_by}"
+    )
     for rule in cfg.rules:
         syms = cfg.symbols_for(rule)
         tfs = ",".join(sorted(condition_timeframes(rule.when)))

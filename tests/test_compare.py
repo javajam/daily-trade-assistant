@@ -105,6 +105,7 @@ def test_assumptions_rules_mention_ma_cross():
     cfg = load_config("config/ema9_trend.example.yaml")
     ema_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, cfg)
     assert any("ema_invalid" in n and "close < EMA(9)" in n for n in ema_notes)
+    assert any("entry_cutoff=13:00" in n and "flatten_by=15:55" in n for n in ema_notes)
 
 
 def test_pattern_hits_count_ema_cross():
@@ -172,9 +173,10 @@ def test_run_rule_books_prefixes_and_soxl_breakout():
         breakout_symbols=["SOXL"],
     )
     labels = [block["label"] for block in runs]
-    assert "15m ema9_trend" in labels
-    assert "15m ema9_trend SOXL" in labels
-    soxl = next(block for block in runs if block["label"] == "15m ema9_trend SOXL")
+    gated = " (cutoff 13:00, flat 15:55)"
+    assert f"15m ema9_trend{gated}" in labels
+    assert f"15m ema9_trend SOXL{gated}" in labels
+    soxl = next(block for block in runs if block["label"] == f"15m ema9_trend SOXL{gated}")
     assert soxl["report"]["trades"] == 0
     assert any("Isolated SOXL" in n for n in soxl["report"]["notes"])
 
@@ -225,6 +227,19 @@ def test_format_side_by_side_table_lists_requested_metrics():
     }
     ema_lines = "\n".join(format_side_by_side_table([("15m ema9_trend", mixed)]))
     assert "ema_invalid 7, take 0, stop 0, eod 1" in ema_lines
+    sess = {
+        "report": {
+            "trades": 3,
+            "win_rate_pct": 33.0,
+            "total_pnl": 1.0,
+            "max_drawdown": 2.0,
+            "avg_win": 4.0,
+            "avg_loss": -1.5,
+            "exit_reasons": {"take": 1, "stop": 1, "session_flatten": 1},
+        }
+    }
+    sess_lines = "\n".join(format_side_by_side_table([("gated", sess)]))
+    assert "take 1, stop 1, session_flatten 1" in sess_lines
 
 
 def test_rule_book_plan_includes_entries_and_combined():

@@ -274,12 +274,46 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
     )
 
 
+def _session_gate_assumption(config: Optional[BotConfig]) -> Optional[str]:
+    if config is None:
+        return None
+    s = config.settings
+    if not s.entry_cutoff and not s.flatten_by:
+        return None
+    tz = s.session_timezone or "America/New_York"
+    cutoff = s.entry_cutoff or "off"
+    flatten = s.flatten_by or "off"
+    return (
+        f"Session gates ({tz}): entry_cutoff={cutoff} skips a signal when the next-bar "
+        f"fill (bar open) is at/after that clock. flatten_by={flatten} force-flats at "
+        "the close of the bar that contains that clock (exit reason session_flatten): "
+        "15m RTH bars opening :00,:15,:30,:45 flatten on the 15:45 ET bar close when "
+        "flatten_by is 15:55 (last regular 15m bar, aligned with “by 15:55”); "
+        "5m flattens on the 15:50 ET bar close (last 5m bar that completes at/before 15:55). "
+        "Stop/take/ema_invalid on that bar still win if they hit first. "
+        "Set entry_cutoff / flatten_by to null to restore overnight holds."
+    )
+
+
+def session_gate_suffix(config: BotConfig) -> str:
+    """Book-label tag so gated and overnight books stay distinct."""
+    s = config.settings
+    if not s.entry_cutoff and not s.flatten_by:
+        return ""
+    bits: list[str] = []
+    if s.entry_cutoff:
+        bits.append(f"cutoff {s.entry_cutoff}")
+    if s.flatten_by:
+        bits.append(f"flat {s.flatten_by}")
+    return " (" + ", ".join(bits) + ")"
+
+
 def assumptions_rules(
     friction: str,
     starting_equity: float,
     config: Optional[BotConfig] = None,
 ) -> list[str]:
-    return [
+    notes = [
         "Signals come from the live evaluate_rule path (same pattern/SMA/EMA/RSI/volume/MA-cross detectors).",
         "A rule is evaluated when any of its referenced timeframes prints a newly closed bar.",
         "Entries and close-signals fill at the next bar open of the finest rule timeframe.",
@@ -294,6 +328,10 @@ def assumptions_rules(
         f"Starting equity ${starting_equity:,.2f}. Size types: shares, percent_equity, or risk_pct "
         "(shares = floor((equity_risk * equity) / ((stop_pct/100) * price))).",
     ]
+    gate = _session_gate_assumption(config)
+    if gate:
+        notes.insert(-3, gate)
+    return notes
 
 
 def pattern_hits_from_result(result: BacktestResult) -> dict[str, int]:
@@ -403,6 +441,7 @@ def run_rule_books(
 ) -> list[dict[str, Any]]:
     runs: list[dict[str, Any]] = []
     prefix = f"{label_prefix} " if label_prefix else ""
+    suffix = session_gate_suffix(config)
 
     def _run(label: str, subset: BotConfig, extra: Optional[str] = None) -> None:
         notes = list(assumptions)
@@ -425,7 +464,7 @@ def run_rule_books(
     for label, ids, extra in rule_book_plan(
         config, combined_only=combined_only, include_entries_only=include_entries_only
     ):
-        _run(f"{prefix}{label}", restrict_config(config, ids), extra)
+        _run(f"{prefix}{label}{suffix}", restrict_config(config, ids), extra)
 
     wanted_breakouts = [s.strip().upper() for s in (breakout_symbols or []) if s and str(s).strip()]
     if wanted_breakouts and not combined_only:
@@ -441,7 +480,7 @@ def run_rule_books(
                 except ValueError:
                     continue
                 _run(
-                    f"{prefix}{rule_id} {symbol}",
+                    f"{prefix}{rule_id} {symbol}{suffix}",
                     subset,
                     f"Isolated {symbol} book — its own equity curve, not mixed with the full universe.",
                 )
@@ -573,16 +612,19 @@ def exit_mix(report: dict[str, Any]) -> str:
     stop = int(reasons.get("stop") or 0)
     eod = int(reasons.get("eod") or 0)
     ema_inv = int(reasons.get("ema_invalid") or 0)
+    sess = int(reasons.get("session_flatten") or 0)
     parts: list[str] = []
     if ema_inv:
         parts.append(f"ema_invalid {ema_inv}")
     parts.extend([f"take {take}", f"stop {stop}"])
+    if sess:
+        parts.append(f"session_flatten {sess}")
     if eod:
         parts.append(f"eod {eod}")
     extra = [
         f"{key} {count}"
         for key, count in reasons.items()
-        if key not in {"take", "stop", "eod", "ema_invalid"} and count
+        if key not in {"take", "stop", "eod", "ema_invalid", "session_flatten"} and count
     ]
     parts.extend(extra)
     return ", ".join(parts)

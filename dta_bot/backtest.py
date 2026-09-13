@@ -18,6 +18,7 @@ from dta_bot.engine import BarMap, cooldown_key, evaluate_rule, fire_key
 from dta_bot.models import Account, Bar
 from dta_bot.orb import ema_cross_exit, ema_through
 from dta_bot.period_stats import build_period_stats, format_period_stats_md, session_date
+from dta_bot.session import fill_at_or_after_cutoff, is_flatten_bar
 from dta_bot.sizing import bracket_prices, buy_notional, shares_for
 from dta_bot.state import BotState
 from dta_bot.timeframes import duration, normalize
@@ -163,6 +164,7 @@ class RuleReport:
     data_source: str
     notes: list[str] = field(default_factory=list)
     exit_reasons: dict[str, int] = field(default_factory=dict)
+    skip_reasons: dict[str, int] = field(default_factory=dict)
     signals_by_symbol: dict[str, int] = field(default_factory=dict)
     trades_by_symbol: dict[str, int] = field(default_factory=dict)
 
@@ -338,6 +340,10 @@ def summarize(
     reasons: dict[str, int] = {}
     for t in trades:
         reasons[t.exit_reason] = reasons.get(t.exit_reason, 0) + 1
+    skips: dict[str, int] = {}
+    for s in signals:
+        if s.skip_reason:
+            skips[s.skip_reason] = skips.get(s.skip_reason, 0) + 1
     by_sig: dict[str, int] = {}
     for s in signals:
         by_sig[s.symbol] = by_sig.get(s.symbol, 0) + 1
@@ -365,6 +371,7 @@ def summarize(
         data_source=data_source,
         notes=list(notes or []),
         exit_reasons=reasons,
+        skip_reasons=skips,
         signals_by_symbol=by_sig,
         trades_by_symbol=by_tr,
     )
@@ -406,6 +413,9 @@ def run_backtest(
             events.setdefault(close_ts, []).append((symbol, tf, bar))
 
     lookback = config.settings.lookback_bars
+    entry_cutoff = config.settings.entry_cutoff
+    flatten_by = config.settings.flatten_by
+    session_tz = config.settings.session_timezone
     state = BotState()
     cash = starting_equity
     lots: list[OpenLot] = []
@@ -501,6 +511,8 @@ def run_backtest(
                 if order.symbol in symbols_in_position():
                     flatten_symbol(order.symbol, _aware(fill_bar.timestamp), fill_bar.open, "close_signal", order.rule_id)
                 continue
+            if fill_at_or_after_cutoff(_aware(fill_bar.timestamp), entry_cutoff, session_tz):
+                continue
             if not allow_pyramid and order.symbol in symbols_in_position():
                 continue
             if order.qty is None or order.qty < 1:
@@ -565,6 +577,31 @@ def run_backtest(
                 )
                 trades.append(trade)
             lots[:] = survivors
+
+        # 2b) Session flatten at the close of the bar that contains flatten_by.
+        #     15m + 15:55 → 15:45 ET bar close. 5m + 15:55 → 15:50 ET bar close.
+        #     Stop/take/ema_invalid on this bar already ran; they win if they hit.
+        if flatten_by:
+            for symbol, tf, bar in closing:
+                if not is_flatten_bar(bar.timestamp, tf, flatten_by, session_tz):
+                    continue
+                last_price[symbol] = bar.close
+                survivors: list[OpenLot] = []
+                for lot in lots:
+                    if lot.symbol != symbol or lot.tf != tf:
+                        survivors.append(lot)
+                        continue
+                    trade, cash = _close_lot(
+                        lot,
+                        when=now,
+                        price=bar.close,
+                        reason="session_flatten",
+                        cash=cash,
+                        commission=commission,
+                        slippage_pct=slippage_pct,
+                    )
+                    trades.append(trade)
+                lots[:] = survivors
 
         # 3) Evaluate rules whose timeframes just got a newly closed bar.
         newly_closed_tf: dict[str, set[str]] = {}
@@ -652,6 +689,11 @@ def run_backtest(
                         ):
                             accepted = False
                             skip_reason = "outside_window"
+                        elif accepted and nxt is not None and fill_at_or_after_cutoff(
+                            _aware(nxt.timestamp), entry_cutoff, session_tz
+                        ):
+                            accepted = False
+                            skip_reason = "entry_cutoff"
                         elif accepted and action == "buy":
                             available = cash - reserved_buy_cash()
                             if buy_notional(qty, px, commission) > available + 1e-9:
@@ -735,6 +777,27 @@ def run_backtest(
     used = {f"{s}:{tf}": len(series) for (s, tf), series in series_map.items()}
     tag = label or ",".join(r.id for r in config.rules) or "backtest"
     extra_notes = list(notes or [])
+    if entry_cutoff or flatten_by:
+        extra_notes.append(
+            f"Session gates ({session_tz}): entry_cutoff={entry_cutoff or 'off'} "
+            "(skip signals whose next-bar fill is at/after that clock); "
+            f"flatten_by={flatten_by or 'off'} "
+            "(force flat at the close of the bar containing that clock: "
+            "15m RTH → 15:45 ET bar close when flatten_by is 15:55; "
+            "5m RTH → 15:50 ET bar close, the last 5m bar that completes at/before 15:55)."
+        )
+    cutoff_skips = sum(1 for s in signals if s.skip_reason == "entry_cutoff")
+    if cutoff_skips:
+        extra_notes.append(
+            f"{cutoff_skips} signal(s) skipped as entry_cutoff "
+            f"({entry_cutoff} {session_tz}; fill would be at/after the cutoff)."
+        )
+    session_flats = sum(1 for t in trades if t.exit_reason == "session_flatten")
+    if session_flats:
+        extra_notes.append(
+            f"{session_flats} trade(s) exited as session_flatten "
+            f"(time-exit at the flatten bar close; flatten_by {flatten_by} {session_tz})."
+        )
     if window_start is not None or window_end is not None:
         extra_notes.append(
             "Trade window "
@@ -828,9 +891,17 @@ def format_report_md(payload: dict[str, Any]) -> str:
                 f"- Max drawdown: {_fmt_opt_money(r.get('max_drawdown'))} ({_fmt_opt_pct(r.get('max_drawdown_pct'))})",
                 f"- Ending equity: ${r['ending_equity']:,.2f}",
                 f"- Exit reasons: {r.get('exit_reasons')}",
+                f"- Skip reasons: {r.get('skip_reasons')}" if r.get("skip_reasons") else "",
             ]
         )
-        extra_notes = [n for n in (r.get("notes") or []) if n.startswith("Exit-only")]
+        extra_notes = [
+            n
+            for n in (r.get("notes") or [])
+            if n.startswith("Exit-only")
+            or n.startswith("Session gates")
+            or "entry_cutoff" in n
+            or "session_flatten" in n
+        ]
         for note in extra_notes:
             lines.append(f"- {note}")
         stats = block.get("period_stats")

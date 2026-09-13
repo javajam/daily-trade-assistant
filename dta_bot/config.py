@@ -10,6 +10,7 @@ import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from dta_bot.patterns import PATTERN_NAMES
+from dta_bot.session import parse_optional_hhmm, parse_timezone
 from dta_bot.timeframes import normalize
 
 
@@ -208,6 +209,13 @@ class Settings(BaseModel):
     # If set, every rule condition is rewritten to this bar size on load.
     # Per-condition timeframe still documents the default; cooldown stays minutes.
     timeframe: Optional[str] = None
+    # Session clock (product gates for ema9_trend). Null/off disables that gate.
+    # entry_cutoff: reject signals whose fill (next-bar open) is at/after this clock.
+    # flatten_by: force-flat at the close of the bar containing this clock
+    #   (15m + 15:55 → 15:45 ET bar close; 5m + 15:55 → 15:50 ET bar close).
+    session_timezone: str = "America/New_York"
+    entry_cutoff: Optional[str] = None
+    flatten_by: Optional[str] = None
 
     @field_validator("timeframe")
     @classmethod
@@ -215,6 +223,16 @@ class Settings(BaseModel):
         if v is None or str(v).strip() == "":
             return None
         return normalize(v)
+
+    @field_validator("session_timezone")
+    @classmethod
+    def _tz(cls, v: str) -> str:
+        return parse_timezone(v)
+
+    @field_validator("entry_cutoff", "flatten_by")
+    @classmethod
+    def _hhmm(cls, v: Optional[str]) -> Optional[str]:
+        return parse_optional_hhmm(v)
 
 
 class BotConfig(BaseModel):

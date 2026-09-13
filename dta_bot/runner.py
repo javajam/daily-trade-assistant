@@ -24,6 +24,7 @@ from dta_bot.orb_engine import (
     position_blocks_entry,
     setup_from_eval,
 )
+from dta_bot.session import fill_at_or_after_cutoff, is_flatten_bar, wall_clock_at_or_after
 from dta_bot.sizing import build_order
 from dta_bot.state import BotState, parse_ts, save_state
 from dta_bot.timeframes import duration
@@ -108,6 +109,16 @@ def execute_decision(
     last = _last_price(ev.symbol, bars)
     if last is None:
         log.error("No last price for %s — cannot size order", ev.symbol)
+        return
+
+    if ev.action_type != "close" and _entry_blocked_by_cutoff(rule, ev.symbol, config, bars):
+        log.info(
+            "[SKIP] %s / %s — entry_cutoff %s %s (fill would be at/after cutoff)",
+            ev.symbol,
+            ev.rule_id,
+            config.settings.entry_cutoff,
+            config.settings.session_timezone,
+        )
         return
 
     if ev.action_type == "close":
@@ -219,6 +230,86 @@ def _flatten_ema_invalid(
                 log.info("DRY-RUN: EMA-invalid flatten was not sent to Alpaca")
 
 
+def _entry_blocked_by_cutoff(
+    rule: RuleSpec,
+    symbol: str,
+    config: BotConfig,
+    bars,
+    *,
+    now: Optional[datetime] = None,
+) -> bool:
+    """Reject new entries whose fill (next-bar open) is at/after entry_cutoff."""
+    cutoff = config.settings.entry_cutoff
+    tz_name = config.settings.session_timezone
+    if not cutoff:
+        return False
+    now = now or datetime.now(timezone.utc)
+    if wall_clock_at_or_after(now, cutoff, tz_name):
+        return True
+    needed = condition_timeframes(rule.when)
+    if not needed:
+        return False
+    fill_tf = min(needed, key=lambda t: duration(t))
+    series = bars.get((symbol.upper(), fill_tf), []) or []
+    if not series:
+        return False
+    fill_ts = series[-1].timestamp + duration(fill_tf)
+    return fill_at_or_after_cutoff(fill_ts, cutoff, tz_name)
+
+
+def _flatten_session(
+    config: BotConfig,
+    broker: Broker,
+    bars,
+    *,
+    dry_run: bool,
+    now: Optional[datetime] = None,
+) -> None:
+    """Force-flat open lots at/after flatten_by (wall clock or flatten-bar close).
+
+    Live 15m: wall clock >= 15:55 ET closes the book (no 15:55 print on 15m).
+    If the 15:45 bar has already closed, that close is also a flatten trigger.
+    """
+    flatten_by = config.settings.flatten_by
+    tz_name = config.settings.session_timezone
+    if not flatten_by:
+        return
+    kill_file = config.settings.kill_switch_file
+    if is_active(kill_file):
+        return
+    now = now or datetime.now(timezone.utc)
+    due_clock = wall_clock_at_or_after(now, flatten_by, tz_name)
+    positions = _position_map(broker.get_positions())
+    if not positions:
+        return
+    due_symbols: set[str] = set()
+    if due_clock:
+        due_symbols.update(positions)
+    for (symbol, tf), series in bars.items():
+        if not series or symbol not in positions:
+            continue
+        last = series[-1]
+        if is_flatten_bar(last.timestamp, tf, flatten_by, tz_name):
+            close_ts = last.timestamp + duration(tf)
+            if now >= close_ts or due_clock:
+                due_symbols.add(symbol)
+    for symbol in sorted(due_symbols):
+        pos = positions.get(symbol)
+        if pos is None:
+            continue
+        log.info(
+            "Session flatten %s %s entry=%.4f flatten_by=%s %s",
+            pos.side,
+            symbol,
+            pos.avg_entry_price,
+            flatten_by,
+            tz_name,
+        )
+        broker.close_position(symbol)
+        if dry_run:
+            log.info("DRY-RUN: session flatten was not sent to Alpaca")
+
+
 def run_once(
     config: BotConfig,
     *,
@@ -235,6 +326,7 @@ def run_once(
         kill_reason(config.settings.kill_switch_file) or "off",
     )
     bars = fetch_bars(config, data)
+    _flatten_session(config, broker, bars, dry_run=dry_run)
     if any(rule.enabled and rule.action.exit == "ema_invalid" for rule in config.rules):
         _flatten_ema_invalid(config, broker, bars, state, dry_run=dry_run)
     results = evaluate_all(config, bars, state)
