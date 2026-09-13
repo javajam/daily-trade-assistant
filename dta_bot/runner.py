@@ -312,6 +312,9 @@ def run_orb_once(
     bars = fetch_bars(config, data)
     results = evaluate_orb(config, bars, state, scan_all=scan_all)
     fired = [ev for ev in results if ev.matched]
+    for ev in results:
+        # Always echo the decision line so `evaluate` is readable without log filters.
+        print(ev.explain(), flush=True)
     log.info("ORB cycle summary: %s evaluations, %s fires", len(results), len(fired))
     if scan_all:
         return results

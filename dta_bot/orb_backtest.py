@@ -6,7 +6,6 @@ Setups always come from ``find_all_setups`` so the state machine stays in one pl
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -32,8 +31,6 @@ from dta_bot.orb_engine import RULE_ID
 from dta_bot.sizing import shares_for
 from dta_bot.timeframes import duration, normalize
 
-log = logging.getLogger("dta_bot.orb_backtest")
-
 
 def run_orb_backtest(
     config: OrbBotConfig,
@@ -48,8 +45,6 @@ def run_orb_backtest(
     notes: Optional[list[str]] = None,
 ) -> BacktestResult:
     """Walk signal-timeframe bars and take every eligible ORB fade."""
-    logging.getLogger("dta_bot.orb").setLevel(logging.WARNING)
-
     orb_tf = normalize(config.orb.orb_timeframe)
     sig_tf = normalize(config.orb.signal_timeframe)
     needed = {(s.upper(), tf) for s in config.universe for tf in {orb_tf, sig_tf}}
