@@ -1,0 +1,119 @@
+# Example rules for the Daily Trade Assistant paper bot.
+# Edit this file (or copy to config/rules.yaml) — do not bury rules in Python.
+#
+# Schema summary
+# --------------
+# settings:
+#   paper: true              # always talk to Alpaca paper unless live gates pass
+#   allow_live: false        # YAML gate #1 for live (default false)
+#   dry_run: true            # log decisions, do not submit (override with --live-orders)
+#   poll_interval_seconds: 60
+#   kill_switch_file: data/KILL
+#   max_open_positions: 5
+#   data_feed: iex           # Alpaca paper accounts typically get IEX
+#   lookback_bars: 80
+#
+# universe: [AAPL, MSFT, SPY]   # default symbol list; a rule may override
+#
+# rules[]:
+#   id: unique-string
+#   enabled: true
+#   symbols: [AAPL]          # optional override of universe
+#   cooldown_minutes: 60     # per symbol+rule after a fire
+#   when:                    # AND/OR tree
+#     all:                   # every child must match
+#       - pattern: bullish_engulfing
+#         timeframe: 15m     # 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w
+#       - sma: { period: 20, timeframe: 15m, compare: above }
+#       - rsi: { period: 14, timeframe: 15m, below: 70 }
+#       - volume: { period: 20, timeframe: 15m, multiplier: 1.1 }
+#     # any: [ ... ]         # OR
+#   action:
+#     type: buy | sell | close
+#     size: { type: shares | percent_equity, value: 10 }
+#     order: market | limit
+#     limit_offset_pct: 0.05 # optional, limit only
+#     stop_loss_pct: 1.5     # optional bracket
+#     take_profit_pct: 3.0
+#
+# Patterns: doji, bullish_engulfing, bearish_engulfing, hammer, inverted_hammer,
+# shooting_star, morning_star, evening_star, three_white_soldiers, three_black_crows.
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+
+universe:
+  - AAPL
+  - MSFT
+  - SPY
+
+rules:
+  - id: engulfing-with-trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "15m bullish engulfing while price holds above the 20-SMA and RSI is not overbought."
+    when:
+      all:
+        - pattern: bullish_engulfing
+          timeframe: 15m
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      stop_loss_pct: 1.5
+      take_profit_pct: 3.0
+
+  - id: hammer-oversold
+    enabled: true
+    symbols: [SPY]
+    cooldown_minutes: 120
+    notes: "1h hammer plus oversold RSI — small percent-of-equity probe."
+    when:
+      all:
+        - pattern: hammer
+          timeframe: 1h
+        - rsi:
+            period: 14
+            timeframe: 1h
+            below: 40
+    action:
+      type: buy
+      size:
+        type: percent_equity
+        value: 2
+      order: market
+      stop_loss_pct: 1.0
+      take_profit_pct: 2.0
+
+  - id: evening-star-or-engulfing-exit
+    enabled: true
+    cooldown_minutes: 30
+    notes: "Flatten if a 15m evening star OR bearish engulfing prints (any universe symbol)."
+    when:
+      any:
+        - pattern: evening_star
+          timeframe: 15m
+        - pattern: bearish_engulfing
+          timeframe: 15m
+    action:
+      type: close
+      order: market

@@ -1,0 +1,208 @@
+"""Evaluate rules on an interval or once. Idempotent; kill switch blocks orders."""
+
+from __future__ import annotations
+
+import logging
+import time
+from datetime import datetime, timezone
+from typing import Optional
+
+from dta_bot.broker import Broker
+from dta_bot.config import BotConfig, RuleSpec
+from dta_bot.engine import cooldown_key, evaluate_all, fire_key
+from dta_bot.killswitch import is_active, reason as kill_reason
+from dta_bot.market_data import MarketData
+from dta_bot.models import EvalResult, Position
+from dta_bot.sizing import build_order
+from dta_bot.state import BotState, save_state
+
+log = logging.getLogger("dta_bot.runner")
+
+
+def fetch_bars(config: BotConfig, data: MarketData) -> dict[tuple[str, str], list]:
+    bars: dict[tuple[str, str], list] = {}
+    for symbol, tf in sorted(config.all_symbol_timeframes()):
+        try:
+            series = data.get_bars(symbol, tf, limit=config.settings.lookback_bars)
+        except Exception as exc:  # noqa: BLE001 — keep the loop alive
+            log.error("Failed to fetch %s %s: %s", symbol, tf, exc)
+            series = []
+        bars[(symbol, tf)] = series
+        if series:
+            log.info(
+                "bars %s %s: %s closed (last %s)",
+                symbol,
+                tf,
+                len(series),
+                series[-1].summary(),
+            )
+        else:
+            log.warning("bars %s %s: none", symbol, tf)
+    return bars
+
+
+def _position_map(positions: list[Position]) -> dict[str, Position]:
+    return {p.symbol.upper(): p for p in positions}
+
+
+def _last_price(symbol: str, bars) -> Optional[float]:
+    """Most recent closed print for the symbol across fetched timeframes."""
+    latest = None
+    price = None
+    for (sym, _tf), series in bars.items():
+        if sym != symbol or not series:
+            continue
+        ts = series[-1].timestamp
+        if latest is None or ts > latest:
+            latest = ts
+            price = series[-1].close
+    return price
+
+
+def execute_decision(
+    *,
+    ev: EvalResult,
+    rule: RuleSpec,
+    config: BotConfig,
+    broker: Broker,
+    bars,
+    state: BotState,
+    dry_run: bool,
+) -> None:
+    kill_file = config.settings.kill_switch_file
+    if is_active(kill_file):
+        log.warning(
+            "[BLOCKED] %s %s %s — %s — would have acted on: %s",
+            ev.symbol,
+            ev.action_type,
+            ev.rule_id,
+            kill_reason(kill_file),
+            ev.explain(),
+        )
+        return
+
+    account = broker.get_account()
+    positions = _position_map(broker.get_positions())
+    if ev.action_type != "close" and len(positions) >= config.settings.max_open_positions:
+        if ev.symbol not in positions:
+            log.warning(
+                "[BLOCKED] %s / %s — max_open_positions=%s reached",
+                ev.symbol,
+                ev.rule_id,
+                config.settings.max_open_positions,
+            )
+            return
+
+    last = _last_price(ev.symbol, bars)
+    if last is None:
+        log.error("No last price for %s — cannot size order", ev.symbol)
+        return
+
+    if ev.action_type == "close":
+        if ev.symbol not in positions:
+            log.info("[SKIP] close %s / %s — no open position", ev.symbol, ev.rule_id)
+            return
+        log.info(
+            "DECISION close %s | rule=%s | last=%.4f | why: %s",
+            ev.symbol,
+            ev.rule_id,
+            last,
+            ev.explain(),
+        )
+        broker.close_position(ev.symbol)
+    else:
+        order = build_order(
+            symbol=ev.symbol,
+            action=rule.action,
+            account=account,
+            last_price=last,
+            position=positions.get(ev.symbol),
+        )
+        if order is None:
+            log.error("Could not build order for %s / %s", ev.symbol, ev.rule_id)
+            return
+        log.info(
+            "DECISION %s %s x%s %s last=%.4f stop=%s take=%s | rule=%s | why: %s",
+            order.side.upper(),
+            order.symbol,
+            order.qty,
+            order.order_type,
+            last,
+            f"{order.stop_loss_price:.4f}" if order.stop_loss_price else "-",
+            f"{order.take_profit_price:.4f}" if order.take_profit_price else "-",
+            ev.rule_id,
+            ev.explain(),
+        )
+        broker.submit_order(order)
+
+    if ev.signal_bar_ts is not None:
+        state.mark_fired(
+            fire_key(ev.rule_id, ev.symbol, ev.signal_bar_ts),
+            cooldown_key(ev.rule_id, ev.symbol),
+            rule.cooldown_minutes,
+        )
+        save_state(config.settings.state_file, state)
+    if dry_run:
+        log.info("DRY-RUN: order was not sent to Alpaca")
+
+
+def run_once(
+    config: BotConfig,
+    *,
+    broker: Broker,
+    data: MarketData,
+    state: BotState,
+    dry_run: bool,
+) -> list[EvalResult]:
+    log.info(
+        "Cycle start paper=%s dry_run=%s broker=%s kill=%s",
+        config.settings.paper,
+        dry_run,
+        getattr(broker, "mode", "?"),
+        kill_reason(config.settings.kill_switch_file) or "off",
+    )
+    bars = fetch_bars(config, data)
+    results = evaluate_all(config, bars, state)
+    rules = {r.id: r for r in config.rules}
+    fired = [ev for ev in results if ev.matched]
+    log.info(
+        "Cycle summary: %s evaluations, %s fires",
+        len(results),
+        len(fired),
+    )
+    for ev in fired:
+        rule = rules[ev.rule_id]
+        execute_decision(
+            ev=ev,
+            rule=rule,
+            config=config,
+            broker=broker,
+            bars=bars,
+            state=state,
+            dry_run=dry_run,
+        )
+    return results
+
+
+def run_loop(
+    config: BotConfig,
+    *,
+    broker: Broker,
+    data: MarketData,
+    state: BotState,
+    dry_run: bool,
+    once: bool = False,
+) -> None:
+    interval = config.settings.poll_interval_seconds
+    while True:
+        started = datetime.now(timezone.utc)
+        try:
+            run_once(config, broker=broker, data=data, state=state, dry_run=dry_run)
+        except Exception:
+            log.exception("Cycle failed")
+        if once:
+            return
+        elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+        sleep_for = max(1.0, interval - elapsed)
+        log.info("Sleeping %.1fs until next cycle", sleep_for)
+        time.sleep(sleep_for)
