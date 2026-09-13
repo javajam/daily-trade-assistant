@@ -802,7 +802,6 @@ def _short_price_cross_rule(**action_kw) -> RuleSpec:
         exit="ma_cross",
         exit_ema_period=9,
         exit_sma_period=20,
-        stop_loss_pct=50.0,
     )
     defaults.update(action_kw)
     return _buy_rule(
@@ -822,8 +821,9 @@ def _short_price_cross_rule(**action_kw) -> RuleSpec:
 def test_short_ma_cross_cover_exits_at_next_open():
     # 20 flats at 100 seed both MAs. Bar 20 close 99 is a bearish price-cross
     # below SMA20 (no RSI). Fill short at bar 21 open 99. Bar 21 stays soft
-    # (close 98.5 — EMA still under SMA). Bar 22 close 102 lifts EMA over SMA;
-    # wide stop so the cover, not the 1% lock, is what fires. Flatten at bar 23 open.
+    # (close 98.5 — EMA still under SMA). Bar 22 close 102 lifts EMA over SMA
+    # (and would have tagged a +1% short stop if one were set). Cover-only
+    # shorts wait for the pair-cross and flatten at bar 23 open.
     warmup = [bar(i, 100.0, 100.1, 99.9, 100.0) for i in range(20)]
     signal = Bar(bar(20, 100.0, 100.1, 98.8, 99.0).timestamp, 100.0, 100.1, 98.8, 99.0, 1000)
     fill = Bar(bar(21, 99.0, 99.2, 98.4, 98.5).timestamp, 99.0, 99.2, 98.4, 98.5, 1000)
@@ -844,9 +844,10 @@ def test_short_ma_cross_cover_exits_at_next_open():
     assert trade.exit_price == 101.80
     assert result.report.exit_reasons == {"ma_cross": 1}
     assert any("cross-over / cover" in n for n in result.report.notes)
+    assert result.trades[0].lock_armed is False
 
 
-def test_short_stop_beats_ma_cross_cover_on_same_bar():
+def test_short_optional_stop_beats_ma_cross_cover_on_same_bar():
     warmup = [bar(i, 100.0, 100.1, 99.9, 100.0) for i in range(20)]
     signal = Bar(bar(20, 100.0, 100.1, 98.8, 99.0).timestamp, 100.0, 100.1, 98.8, 99.0, 1000)
     fill = Bar(bar(21, 99.0, 99.2, 98.4, 98.5).timestamp, 99.0, 99.2, 98.4, 98.5, 1000)

@@ -67,7 +67,8 @@ def test_ema9_trend_config_loads():
     assert short.action.exit == "ma_cross"
     assert short.action.exit_ema_period == 9
     assert short.action.exit_sma_period == 20
-    assert short.action.stop_mode == "lock_plus"
+    assert short.action.stop_loss_pct is None
+    assert short.action.stop_mode == "percent"
     assert short.action.take_profit_pct is None
     assert has_noon_short_stack(
         parse_condition(
@@ -107,8 +108,10 @@ def test_ema9_trend_risk_config_loads():
     assert has_noon_short_stack(cfg.rules[1].when)
     assert find_rsi_condition(cfg.rules[1].when) is None
     assert cfg.rules[1].action.exit == "ma_cross"
+    assert cfg.rules[1].action.stop_loss_pct is None
     assert cfg.rules[1].action.size is not None
-    assert cfg.rules[1].action.size.type == "risk_pct"
+    assert cfg.rules[1].action.size.type == "shares"
+    assert cfg.rules[1].action.size.value == 10
     assert cfg.settings.entry_cutoff == "12:00"
     assert cfg.settings.flatten_by == "15:55"
     assert cfg.all_symbol_timeframes() == {("AAPL", "15Min"), ("MSFT", "15Min")}
@@ -124,6 +127,9 @@ def test_ema9_trend_risk_config_loads():
     assert has_noon_short_stack(five.rules[1].when)
     assert find_rsi_condition(five.rules[1].when) is None
     assert five.rules[1].action.exit == "ma_cross"
+    assert five.rules[1].action.stop_loss_pct is None
+    assert five.rules[1].action.size is not None
+    assert five.rules[1].action.size.type == "shares"
     assert five.all_symbol_timeframes() == {("AAPL", "5Min"), ("MSFT", "5Min")}
 
 
@@ -497,6 +503,7 @@ def test_cli_validate_timeframe_override(capsys):
     assert "ema_period=9" in out
     assert "sma_period=20" in out
     assert "stop_mode=lock_plus" in out
+    assert "stop=off" in out
     assert "lock_trigger_pct=1" in out
     assert "rsi=RSI14 < 70" in out
     assert "rsi=RSI14 > 30" not in out

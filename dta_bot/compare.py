@@ -286,9 +286,9 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
             "the position and flatten at the next bar open — the same fill as entries. "
             "Long: prev EMA >= prev SMA and curr EMA < curr SMA (cross-under). "
             "Short: prev EMA <= prev SMA and curr EMA > curr SMA (cross-over / cover). "
-            "Optional stop_loss_pct / lock_plus is the protective stop. Percent "
-            "take-profit is ignored. Same-bar stop on the cross bar still wins. If the "
-            "cross bar is also the flatten bar, session_flatten at that close wins."
+            "Optional stop_loss_pct is a catastrophic stop only (off when omitted). "
+            "Percent take-profit is ignored. Same-bar stop on the cross bar still wins. "
+            "If the cross bar is also the flatten bar, session_flatten at that close wins."
         )
     if "ma_cross" in modes and ma_rules:
         action = ma_rules[0].action
@@ -301,13 +301,23 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         if lock_rules:
             lock_action = lock_rules[0].action
             trig = lock_action.resolved_lock_trigger_pct()
-            lock_txt = (
-                f" Lock-plus stop (stop_mode: lock_plus) still applies: initial stop "
-                f"is {lock_action.stop_loss_pct:g}% from the fill (long: below; short: above). "
-                f"First trade/touch of entry×(1+{(trig or 0):g}/100) for a long "
-                f"(bar high ≥ that print) or entry×(1−{(trig or 0):g}/100) for a short "
-                f"(bar low ≤ that print) moves the stop to that same print and leaves it."
-            )
+            lock_sides = {rule.action.type for rule in lock_rules}
+            if lock_sides == {"buy"}:
+                lock_txt = (
+                    f" Lock-plus stop (stop_mode: lock_plus) applies to longs only: "
+                    f"initial stop is {lock_action.stop_loss_pct:g}% below the fill. "
+                    f"First trade/touch of entry×(1+{(trig or 0):g}/100) "
+                    f"(bar high ≥ that print) moves the stop there. "
+                    "Shorts have no percent / lock_plus stop unless stop_loss_pct is set."
+                )
+            else:
+                lock_txt = (
+                    f" Lock-plus stop (stop_mode: lock_plus) still applies: initial stop "
+                    f"is {lock_action.stop_loss_pct:g}% from the fill (long: below; short: above). "
+                    f"First trade/touch of entry×(1+{(trig or 0):g}/100) for a long "
+                    f"(bar high ≥ that print) or entry×(1−{(trig or 0):g}/100) for a short "
+                    f"(bar low ≤ that print) moves the stop to that same print and leaves it."
+                )
         return (
             f"Mixed exits: ma_cross flattens at the next bar open after "
             f"EMA({action.exit_ema_period}) crosses SMA({action.exit_sma_period}) against "
@@ -503,7 +513,7 @@ def _noon_entry_assumption(config: Optional[BotConfig]) -> Optional[str]:
                 short_txt = (
                     "Short: close crosses below EMA(9) AND close < SMA(20) "
                     "(no RSI filter). Cover when EMA(9) crosses above SMA(20) "
-                    "(next bar open) plus stop / lock_stop / session_flatten"
+                    "(next bar open) or session_flatten. No percent / lock_plus stop"
                 )
     if not long_txt and not short_txt:
         return None

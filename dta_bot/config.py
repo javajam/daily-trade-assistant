@@ -122,7 +122,8 @@ class ActionSpec(BaseModel):
     # Optional stop_loss_pct is then a catastrophic stop only; take is ignored.
     # ma_cross = hold until EMA crosses SMA against the position and flatten
     # at the next bar open. Long: EMA under SMA. Short: EMA above SMA (cover).
-    # stop_loss_pct / lock_plus stay as the protective stop; take is ignored.
+    # Optional stop_loss_pct is a catastrophic stop only (off when omitted).
+    # The default noon short omits it. Percent take-profit is ignored.
     exit: Literal["fixed_bracket", "ema_invalid", "ma_cross"] = "fixed_bracket"
     exit_ema_period: int = Field(default=9, ge=2)
     exit_sma_period: int = Field(default=20, ge=2)

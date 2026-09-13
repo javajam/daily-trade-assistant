@@ -1,6 +1,7 @@
 # Refined EMA9 day-trade — 1% equity-risk on 5-minute bars.
 #
-# Same noon long + short + lock-+1% as config/ema9_trend_risk.example.yaml,
+# Same noon long (1% risk, lock-+1%) + cover-only 10-share short as
+# config/ema9_trend_risk.example.yaml.
 # every indicator on 5m. flatten_by 15:55 ET maps to the 15:50 ET 5m bar close.
 # Cooldown stays 60 wall-clock minutes.
 #
@@ -68,7 +69,7 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "Noon short: 5m price crosses below EMA(9) while below SMA20 (no RSI). Cover when EMA(9) crosses above SMA(20) at the next open. 1% equity risk at a 1.0% fill stop; lock to fill×0.99 on first touch of −1%."
+    notes: "Noon short: 5m price crosses below EMA(9) while below SMA20 (no RSI). Cover when EMA(9) crosses above SMA(20) at the next open. 10 shares (no stop R, so not 1% risk-sized). No percent / lock_plus stop."
     when:
       all:
         - ema_cross:
@@ -82,14 +83,9 @@ rules:
     action:
       type: sell
       size:
-        type: risk_pct
-        equity_risk: 0.01
-        stop_pct: 1.0
+        type: shares
+        value: 10
       order: market
       exit: ma_cross
       exit_ema_period: 9
       exit_sma_period: 20
-      stop_mode: lock_plus
-      stop_loss_pct: 1.0
-      lock_trigger_pct: 1.0
-      lock_stop_pct: 1.0

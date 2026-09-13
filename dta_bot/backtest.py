@@ -1304,15 +1304,26 @@ def run_backtest(
         if sample.stop_mode == "lock_plus":
             trig = sample.resolved_lock_trigger_pct()
             lock = sample.resolved_lock_stop_pct()
-            extra_notes.append(
-                f"Lock-plus (stop_mode: lock_plus): first trade/touch of the lock trigger "
-                f"moves the stop to the lock level and leaves it. Long: trigger/lock at "
-                f"entry×(1+{(trig or 0):g}/100) (bar high ≥ that print). Short: trigger/lock "
-                f"at entry×(1−{(lock or 0):g}/100) (bar low ≤ that print). "
-                "The locked stop is live from the next bar; same-bar pullback after the "
-                "tag still uses the initial 1% protective stop. Later hit of the locked "
-                "stop is exit reason lock_stop. Session flatten covers longs and shorts."
-            )
+            lock_sides = {r.action.type for r in entry_stop_rules}
+            if lock_sides == {"buy"}:
+                extra_notes.append(
+                    f"Lock-plus (stop_mode: lock_plus) on longs only: first trade/touch of "
+                    f"entry×(1+{(trig or 0):g}/100) (bar high ≥ that print) moves the stop "
+                    "there and leaves it. Shorts have no percent / lock_plus stop. "
+                    "The locked stop is live from the next bar; same-bar pullback after the "
+                    "tag still uses the initial 1% protective stop. Later hit of the locked "
+                    "stop is exit reason lock_stop. Session flatten covers longs and shorts."
+                )
+            else:
+                extra_notes.append(
+                    f"Lock-plus (stop_mode: lock_plus): first trade/touch of the lock trigger "
+                    f"moves the stop to the lock level and leaves it. Long: trigger/lock at "
+                    f"entry×(1+{(trig or 0):g}/100) (bar high ≥ that print). Short: trigger/lock "
+                    f"at entry×(1−{(lock or 0):g}/100) (bar low ≤ that print). "
+                    "The locked stop is live from the next bar; same-bar pullback after the "
+                    "tag still uses the initial 1% protective stop. Later hit of the locked "
+                    "stop is exit reason lock_stop. Session flatten covers longs and shorts."
+                )
             extra_notes.append(
                 f"{sum(1 for t in trades if t.lock_armed)} trade(s) armed the +lock; "
                 f"{sum(1 for t in trades if t.exit_reason == 'lock_stop')} exited as lock_stop."
