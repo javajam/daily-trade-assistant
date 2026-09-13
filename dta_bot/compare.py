@@ -164,6 +164,23 @@ def _orb_frequency_assumption(config: Optional[OrbBotConfig]) -> str:
     )
 
 
+def _orb_height_assumption(config: Optional[OrbBotConfig]) -> str:
+    spec = config.orb if config is not None else None
+    floor = spec.min_or_height_pct if spec is not None else 0.01
+    if floor is None or floor <= 0:
+        return (
+            "High-vol gate is off (min_or_height_pct 0 / null). "
+            "Set orb.min_or_height_pct: 0.01 to require OR height of at least 1% of OR open."
+        )
+    return (
+        f"High-vol gate: trade only when (or_high − or_low) / or_open "
+        f">= {floor:.2%} (min_or_height_pct, default 1%). "
+        "Denominator is the OR candle open; if that print is missing, the OR midpoint "
+        "is used. Below the threshold, skip the symbol for that session (no entries). "
+        "Set 0 / null to disable."
+    )
+
+
 def assumptions_orb(
     friction: str,
     starting_equity: float,
@@ -177,6 +194,7 @@ def assumptions_orb(
         _orb_reversal_range_assumption(config),
         "Entry fills at the open of the bar after the reversal candle.",
         _orb_stop_assumption(config),
+        _orb_height_assumption(config),
         _orb_frequency_assumption(config),
         "If stop and take (1R, midpoint, or first-profit close) both trade in the same bar, the stop is assumed to fill first.",
         "A gap through stop/take fills at that bar's open.",

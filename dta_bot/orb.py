@@ -32,6 +32,11 @@ Locked v1 rules
   (long: ``close > entry``; short: ``close < entry``). If stop and take
   (1R, midpoint, or first-profit) both trade on the same bar, the stop
   fills first.
+- High-vol gate (default ``min_or_height_pct`` 0.01 = 1%): trade only when
+  ``(or_high - or_low) / or_open >= min_or_height_pct``. Denominator is the
+  OR candle's open; if that print is missing, fall back to the OR midpoint.
+  Below the threshold, skip the symbol for that session (no entries).
+  Set ``0`` / ``null`` to disable.
 - Frequency (default): at most one entry per symbol per session, and only if
   that entry is before 10:30 America/New_York. No new entries at/after 10:30.
 """
@@ -120,6 +125,7 @@ class OpeningRange:
     high: float
     low: float
     source: str = "orb_bar"
+    open_price: Optional[float] = None
 
     @property
     def height(self) -> float:
@@ -128,6 +134,29 @@ class OpeningRange:
     @property
     def midpoint(self) -> float:
         return (self.high + self.low) / 2.0
+
+    @property
+    def reference_price(self) -> Optional[float]:
+        """Height-% denominator: OR open, else midpoint if open is missing."""
+        if self.open_price is not None and self.open_price > 0:
+            return self.open_price
+        mid = self.midpoint
+        return mid if mid > 0 else None
+
+    def height_pct(self) -> Optional[float]:
+        ref = self.reference_price
+        if ref is None:
+            return None
+        return self.height / ref
+
+    def meets_min_height(self, min_or_height_pct: Optional[float]) -> bool:
+        """True when the OR is tall enough, or the gate is off (None/<=0)."""
+        if min_or_height_pct is None or min_or_height_pct <= 0:
+            return True
+        pct = self.height_pct()
+        if pct is None:
+            return False
+        return pct >= min_or_height_pct
 
     def band(self, edge_pct: float) -> float:
         return edge_pct * self.height
@@ -324,6 +353,7 @@ def build_opening_range(
         high=or_bar.high,
         low=or_bar.low,
         source="orb_bar",
+        open_price=or_bar.open,
     )
 
 
@@ -346,6 +376,7 @@ def aggregate_opening_range(
     last_slice = end_dt - duration(signal_timeframe)
     if not any(_aware(b.timestamp) >= last_slice for b in window):
         return None
+    first = min(window, key=lambda b: _aware(b.timestamp))
     return OpeningRange(
         session_date=session_date,
         start=open_dt,
@@ -353,6 +384,7 @@ def aggregate_opening_range(
         high=max(b.high for b in window),
         low=min(b.low for b in window),
         source="aggregated",
+        open_price=first.open,
     )
 
 
@@ -631,11 +663,23 @@ def no_setup_reason(
     session_close: Optional[str],
     probe_mode: ProbeMode = "touch_and_band",
     reversal_in_range: ReversalInRange = "close",
+    min_or_height_pct: Optional[float] = 0.01,
 ) -> str:
     if opening_range is None:
         return "opening range not formed (need first orb_timeframe bar at/after session open)"
     if opening_range.height <= 0:
         return f"opening range has zero height ({opening_range.low:.4f})"
+    if not opening_range.meets_min_height(min_or_height_pct):
+        pct = opening_range.height_pct()
+        ref = opening_range.reference_price
+        denom = "OR open" if opening_range.open_price and opening_range.open_price > 0 else "OR midpoint"
+        pct_txt = f"{pct:.2%}" if pct is not None else "n/a"
+        ref_txt = f"{ref:.4f}" if ref is not None else "n/a"
+        need = f"{min_or_height_pct:.2%}" if min_or_height_pct is not None else "n/a"
+        return (
+            f"opening-range height {pct_txt} of {denom} {ref_txt} is below "
+            f"min_or_height_pct {need}; no entries this session"
+        )
     series = signal_bars_after_or(
         signal_bars,
         opening_range,
@@ -736,18 +780,25 @@ def gate_setups(
     allow_entries_after_cutoff: bool = False,
     session_timezone: str = "America/New_York",
     signal_timeframe: str = "5m",
+    min_or_height_pct: Optional[float] = 0.01,
 ) -> list[tuple[OrbSetup, Optional[str]]]:
     """Tag each setup with a skip reason, or None if the entry window allows it.
 
     Default product rule: at most ``max_trades_before_cutoff`` entries per symbol
     per session whose entry time is strictly before ``entry_cutoff`` (10:30 ET),
     and no entries at/after that cutoff. Counts reset each session date.
+    Sessions whose OR height/open is below ``min_or_height_pct`` are skipped
+    entirely (no entries that day for that symbol).
     """
-    if not entry_cutoff:
-        return [(setup, None) for setup in setups]
     before_count: dict[date, int] = {}
     out: list[tuple[OrbSetup, Optional[str]]] = []
     for setup in setups:
+        if not setup.opening_range.meets_min_height(min_or_height_pct):
+            out.append((setup, "min_or_height"))
+            continue
+        if not entry_cutoff:
+            out.append((setup, None))
+            continue
         entry_ts = setup_entry_time(setup, signal_timeframe)
         cutoff_dt = session_dt(setup.session_date, entry_cutoff, session_timezone)
         if entry_ts >= cutoff_dt:

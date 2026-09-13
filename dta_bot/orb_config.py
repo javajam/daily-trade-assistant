@@ -40,6 +40,10 @@ class OrbSpec(BaseModel):
     # orb_extreme = long stop at OR low, short stop at OR high (default).
     # reversal_candle = previous stop at the reversal candle extreme.
     stop_mode: Literal["orb_extreme", "reversal_candle"] = "orb_extreme"
+    # High-vol gate: skip the symbol/session when OR height / OR open is below
+    # this fraction (0.01 = 1%). Denominator is the OR candle open; if that
+    # print is missing, the OR midpoint is used. 0 / null disables the gate.
+    min_or_height_pct: Optional[float] = 0.01
     # Strict morning window: at most max_trades_before_cutoff entries per symbol
     # whose fill time is strictly before entry_cutoff (session timezone).
     # allow_entries_after_cutoff=false means the session stops taking new entries
@@ -59,6 +63,26 @@ class OrbSpec(BaseModel):
     def _hhmm(cls, v: str) -> str:
         parsed = parse_hhmm(v)
         return f"{parsed.hour:02d}:{parsed.minute:02d}"
+
+    @field_validator("min_or_height_pct", mode="before")
+    @classmethod
+    def _min_or_height(cls, v: Any) -> Optional[float]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            raw = v.strip().lower()
+            if raw in {"", "none", "off", "disabled"}:
+                return None
+            v = float(raw)
+        value = float(v)
+        if value < 0:
+            raise ValueError("min_or_height_pct cannot be negative")
+        if value > 1:
+            raise ValueError(
+                f"min_or_height_pct should be a fraction of OR open (0.01 = 1%), not {value}. "
+                "Use 0.01 for a 1% gate, or 0 / null to disable."
+            )
+        return None if value == 0 else value
 
     @field_validator("entry_cutoff")
     @classmethod
@@ -225,6 +249,7 @@ class OrbSpec(BaseModel):
             "allow_entries_after_cutoff": self.allow_entries_after_cutoff,
             "session_timezone": self.session_timezone,
             "signal_timeframe": self.signal_timeframe,
+            "min_or_height_pct": self.min_or_height_pct,
         }
 
     def detector_kwargs(self) -> dict[str, Any]:

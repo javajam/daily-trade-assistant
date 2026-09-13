@@ -1,5 +1,7 @@
 from datetime import date, timedelta
 
+import pytest
+
 from dta_bot.models import Bar
 from dta_bot.orb import build_opening_range, find_setups
 from dta_bot.orb_backtest import run_orb_backtest
@@ -166,6 +168,7 @@ def test_evaluate_scan_fires_fixture_setups():
     assert ("AAPL", "sell") in fired
     assert ("MSFT", "buy") in fired
     assert "SPY" in missed
+    assert "SOXL" in missed
     aapl = next(r for r in results if r.symbol == "AAPL" and r.matched)
     assert aapl.extra["stop"] == 104.0
     assert aapl.extra["take"] == 101.10
@@ -174,6 +177,8 @@ def test_evaluate_scan_fires_fixture_setups():
     assert aapl.extra["stop_mode"] == "orb_extreme"
     assert aapl.extra["probe_mode"] == "touch_and_band"
     assert aapl.extra["entry_open"] == 102.55
+    assert aapl.extra["or_open"] == 100.0
+    assert aapl.extra["or_height_pct"] == pytest.approx(0.08)
 
 
 def test_cli_evaluate_fixture_prints_fires(capsys):
@@ -193,8 +198,30 @@ def test_cli_evaluate_fixture_prints_fires(capsys):
     assert "[FIRE] AAPL / orb_reversal" in out
     assert "[FIRE] MSFT / orb_reversal" in out
     assert "[NO]   SPY / orb_reversal" in out
+    assert "[NO]   SOXL / orb_reversal" in out
     assert "short" in out
     assert "long" in out
+
+
+def test_backtest_skips_session_when_or_height_below_floor():
+    cfg = _cfg(probe_mode="touch")
+    cfg = cfg.model_copy(update={"universe": ["AAPL"]})
+    # 0.40% OR — probe/reversal still print, but the vol gate blocks the entry.
+    orb = [_b(0, 100, 100.40, 100.00, 100.20)]
+    signal = [
+        _b(15, 100.20, 100.25, 100.15, 100.22),
+        _b(20, 100.30, 100.40, 100.28, 100.38),
+        _b(25, 100.36, 100.38, 100.10, 100.12),
+        _b(30, 100.12, 100.16, 100.08, 100.10),
+    ]
+    result = run_orb_backtest(cfg, {("AAPL", "15Min"): orb, ("AAPL", "5Min"): signal})
+    assert result.report.signals == 1
+    assert result.signals[0].skip_reason == "min_or_height"
+    assert result.report.trades == 0
+    off = _cfg(probe_mode="touch", min_or_height_pct=0)
+    off = off.model_copy(update={"universe": ["AAPL"]})
+    taken = run_orb_backtest(off, {("AAPL", "15Min"): orb, ("AAPL", "5Min"): signal})
+    assert taken.report.trades == 1
 
 
 def test_backtest_takes_only_first_pre_1030_entry():

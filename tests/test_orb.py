@@ -33,7 +33,7 @@ def test_example_orb_config_is_paper_only():
     assert cfg.settings.paper is True
     assert cfg.settings.allow_live is False
     assert cfg.settings.dry_run is True
-    assert cfg.universe == ["AAPL", "MSFT", "SPY"]
+    assert cfg.universe == ["AAPL", "MSFT", "SPY", "SOXL"]
     assert cfg.orb.orb_timeframe == "15Min"
     assert cfg.orb.signal_timeframe == "5Min"
     assert cfg.orb.edge_pct == 0.05
@@ -44,6 +44,7 @@ def test_example_orb_config_is_paper_only():
     assert cfg.orb.reversal_in_range == "close"
     assert cfg.orb.take_profit_mode == "one_r"
     assert cfg.orb.stop_mode == "orb_extreme"
+    assert cfg.orb.min_or_height_pct == 0.01
     assert cfg.orb.entry_cutoff == "10:30"
     assert cfg.orb.max_trades_before_cutoff == 1
     assert cfg.orb.allow_entries_after_cutoff is False
@@ -141,7 +142,9 @@ def test_opening_range_is_first_bar_at_or_after_rth_open():
     assert rng is not None
     assert rng.high == 104
     assert rng.low == 96
+    assert rng.open_price == 100
     assert rng.midpoint == 100
+    assert rng.height_pct() == pytest.approx(0.08)
     assert rng.band(0.05) == pytest.approx(0.4)
     assert rng.top_zone(0.05) == (103.6, 104.0)
     assert rng.bottom_zone(0.05) == (96.0, 96.4)
@@ -317,6 +320,7 @@ def test_aggregate_or_from_signal_bars():
     assert rng is not None
     assert rng.high == 104
     assert rng.low == 96
+    assert rng.open_price == 100
     assert rng.source == "aggregated"
 
 
@@ -501,6 +505,83 @@ def test_gate_allows_post_cutoff_when_configured():
     setups = find_setups("AAPL", signal, rng)
     gated = gate_setups(setups, allow_entries_after_cutoff=True)
     assert gated[0][1] is None
+
+
+def test_or_height_pct_uses_open_then_midpoint():
+    rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    assert rng.open_price == 100
+    assert rng.height_pct() == pytest.approx(0.08)
+    assert rng.meets_min_height(0.01) is True
+    assert rng.meets_min_height(0.09) is False
+    from dta_bot.orb import OpeningRange
+
+    no_open = OpeningRange(
+        session_date=date(2026, 9, 11),
+        start=rng.start,
+        end=rng.end,
+        high=101.0,
+        low=100.0,
+        open_price=None,
+    )
+    # height 1 / midpoint 100.5
+    assert no_open.reference_price == pytest.approx(100.5)
+    assert no_open.height_pct() == pytest.approx(1.0 / 100.5)
+    assert no_open.meets_min_height(0.01) is False
+    assert no_open.meets_min_height(0) is True
+    assert no_open.meets_min_height(None) is True
+
+
+def test_min_or_height_gate_skips_quiet_session():
+    # OR 100.40–100.00 on open 100 → 0.40% < 1%.
+    rng = build_opening_range([_b(0, 100, 100.40, 100.00, 100.20)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    assert rng.height_pct() == pytest.approx(0.004)
+    signal = [
+        _b(15, 100.20, 100.25, 100.15, 100.22),
+        _b(20, 100.30, 100.40, 100.28, 100.38),  # wick touches OR high
+        _b(25, 100.36, 100.38, 100.10, 100.12),  # bearish, close inside OR
+        _b(30, 100.12, 100.16, 100.08, 100.10),
+    ]
+    setups = find_setups("AAPL", signal, rng, probe_mode="touch")
+    assert len(setups) == 1
+    gated = gate_setups(setups)
+    assert gated[0][1] == "min_or_height"
+    allowed = gate_setups(setups, min_or_height_pct=0)
+    assert allowed[0][1] is None
+    exact = build_opening_range([_b(0, 100, 101.00, 100.00, 100.40)], date(2026, 9, 11), orb_timeframe="15m")
+    assert exact is not None
+    assert exact.height_pct() == pytest.approx(0.01)
+    assert exact.meets_min_height(0.01) is True
+
+
+def test_min_or_height_pct_must_be_a_fraction(tmp_path):
+    path = tmp_path / "bad.yaml"
+    path.write_text(
+        """
+strategy: orb_reversal
+universe: [AAPL]
+orb: {min_or_height_pct: 5}
+sizing: {type: shares, value: 1}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="0.01"):
+        load_orb_config(path)
+
+
+def test_min_or_height_off_aliases(tmp_path):
+    path = tmp_path / "off.yaml"
+    path.write_text(
+        """
+strategy: orb_reversal
+universe: [AAPL]
+orb: {min_or_height_pct: off}
+sizing: {type: shares, value: 1}
+""",
+        encoding="utf-8",
+    )
+    assert load_orb_config(path).orb.min_or_height_pct is None
 
 
 def test_conftest_bar_helper_still_aligned_to_rth():

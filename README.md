@@ -233,8 +233,9 @@ A second YAML strategy (`strategy: orb_reversal`) fades failed probes of the ope
 5. **Entry** — fill at the **open of the bar after the reversal**.
 6. **Stop** — default `orb.stop_mode: orb_extreme`: long → opening-range low; short → opening-range high. Set `reversal_candle` to restore the previous stop at the reversal candle extreme.
 7. **Take profit** — default `orb.take_profit_mode: one_r`: R is the absolute distance from entry to stop (long stop = OR low, short stop = OR high). Long TP = entry + R; short TP = entry − R. Set `or_midpoint` to restore the previous OR-midpoint target. Set `first_profitable_close` to exit at the close of the first signal-timeframe bar that is strictly profitable vs entry (long: `close > entry`; short: `close < entry`). If stop and take (1R, midpoint, or first-profit) both trade on the same bar, the stop fills first.
-8. **Frequency** — default is **at most one entry per symbol per session, and only if that entry is before 10:30 America/New_York** (`entry_cutoff: "10:30"`, `max_trades_before_cutoff: 1`, `allow_entries_after_cutoff: false`). No new entries at/after 10:30. Still **one open position per symbol**; a new signal is **skipped** while that symbol is still in a trade (`orb.on_open_position: skip`). Set `replace` to close/replace. Set `allow_entries_after_cutoff: true` to also take post-cutoff signals, or `entry_cutoff: null` to drop the clock gate.
-9. **Universe** — YAML list (example: AAPL, MSFT, SPY). A morning screener will populate this later; edit the list by hand for now.
+8. **High-vol gate** — default `orb.min_or_height_pct: 0.01` (1%). Trade only when `(or_high − or_low) / or_open >= 1%`. Denominator is the **OR candle open**; if that print is missing, fall back to the **OR midpoint**. Below the threshold, skip the symbol for that session (no entries). Set `0` / `null` to disable.
+9. **Frequency** — default is **at most one entry per symbol per session, and only if that entry is before 10:30 America/New_York** (`entry_cutoff: "10:30"`, `max_trades_before_cutoff: 1`, `allow_entries_after_cutoff: false`). No new entries at/after 10:30. Still **one open position per symbol**; a new signal is **skipped** while that symbol is still in a trade (`orb.on_open_position: skip`). Set `replace` to close/replace. Set `allow_entries_after_cutoff: true` to also take post-cutoff signals, or `entry_cutoff: null` to drop the clock gate.
+10. **Universe** — YAML list (example: AAPL, MSFT, SPY, SOXL). A morning screener will populate this later; edit the list by hand for now.
 
 Paper-only defaults: `settings.paper: true`, `allow_live: false`, `dry_run: true`. Live trading still requires the same triple gate as the rules bot.
 
@@ -247,6 +248,7 @@ universe:
   - AAPL
   - MSFT
   - SPY
+  - SOXL
   # add/remove tickers; a morning screener will populate this later
 
 orb:
@@ -260,6 +262,7 @@ orb:
   reversal_in_range: close    # close | body | off
   take_profit_mode: one_r     # one_r | or_midpoint | first_profitable_close
   stop_mode: orb_extreme      # orb_extreme | reversal_candle
+  min_or_height_pct: 0.01     # 1% of OR open; 0 / null disables
   entry_cutoff: "10:30"       # America/New_York; null disables the clock gate
   max_trades_before_cutoff: 1 # per symbol per session
   allow_entries_after_cutoff: false
