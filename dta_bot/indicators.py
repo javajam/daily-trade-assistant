@@ -84,3 +84,42 @@ def ma_cross(
     if direction == "bearish":
         return prev_close >= prev_ma and curr_close < curr_ma
     return prev_close <= prev_ma and curr_close > curr_ma
+
+
+def last_two_ma_pair(
+    values: Sequence[float],
+    ema_period: int,
+    sma_period: int,
+) -> Optional[tuple[float, float, float, float]]:
+    """Return (prev_ema, prev_sma, curr_ema, curr_sma) or None if too short.
+
+    Previous values use ``values[:-1]`` so a cross compares each MA pair as of
+    that bar. Needs ``max(ema_period, sma_period) + 1`` values.
+    """
+    need = max(ema_period, sma_period) + 1
+    if ema_period <= 0 or sma_period <= 0 or len(values) < need:
+        return None
+    prev_ema = ema(values[:-1], ema_period)
+    prev_sma = sma(values[:-1], sma_period)
+    curr_ema = ema(values, ema_period)
+    curr_sma = sma(values, sma_period)
+    if prev_ema is None or prev_sma is None or curr_ema is None or curr_sma is None:
+        return None
+    return prev_ema, prev_sma, curr_ema, curr_sma
+
+
+def ma_pair_cross(
+    values: Sequence[float],
+    ema_period: int = 9,
+    sma_period: int = 20,
+    *,
+    direction: str = "bullish",
+) -> Optional[bool]:
+    """Bullish: prev EMA <= prev SMA and curr EMA > curr SMA. Bearish is the inverse."""
+    pair = last_two_ma_pair(values, ema_period, sma_period)
+    if pair is None:
+        return None
+    prev_ema, prev_sma, curr_ema, curr_sma = pair
+    if direction == "bearish":
+        return prev_ema >= prev_sma and curr_ema < curr_sma
+    return prev_ema <= prev_sma and curr_ema > curr_sma

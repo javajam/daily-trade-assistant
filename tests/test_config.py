@@ -6,6 +6,7 @@ from dta_bot.cli import main
 from dta_bot.config import (
     MaCond,
     MaCrossCond,
+    MaPairCrossCond,
     condition_timeframes,
     load_config,
     parse_condition,
@@ -36,17 +37,20 @@ def test_ema9_trend_config_loads():
     assert cfg.settings.paper is True
     assert cfg.settings.allow_live is False
     assert cfg.settings.dry_run is True
-    assert [r.id for r in cfg.rules] == ["ema9_trend", "ema9_cross_raw", "engulfing-with-trend"]
-    assert all(r.cooldown_minutes == 60 for r in cfg.rules)
-    assert all(r.action.size and r.action.size.value == 10 for r in cfg.rules)
-    by_id = {r.id: r for r in cfg.rules}
-    assert by_id["ema9_trend"].action.exit == "ema_invalid"
-    assert by_id["ema9_cross_raw"].action.exit == "ema_invalid"
-    assert by_id["ema9_trend"].action.stop_loss_pct is None
-    assert by_id["ema9_trend"].action.take_profit_pct is None
-    assert by_id["engulfing-with-trend"].action.exit == "fixed_bracket"
-    assert by_id["engulfing-with-trend"].action.stop_loss_pct == 1.5
-    assert by_id["engulfing-with-trend"].action.take_profit_pct == 3.0
+    assert [r.id for r in cfg.rules] == ["ema9_trend"]
+    rule = cfg.rules[0]
+    assert rule.cooldown_minutes == 60
+    assert rule.action.size and rule.action.size.value == 10
+    assert isinstance(rule.when, MaPairCrossCond)
+    assert rule.when.ema_period == 9
+    assert rule.when.sma_period == 20
+    assert rule.when.direction == "bullish"
+    assert rule.action.exit == "ma_cross"
+    assert rule.action.exit_ema_period == 9
+    assert rule.action.exit_sma_period == 20
+    assert rule.action.stop_loss_pct == 1.5
+    assert rule.action.take_profit_pct is None
+    assert rule.action.breakeven_after_bars == 0
     pairs = cfg.all_symbol_timeframes()
     assert pairs == {("AAPL", "15Min"), ("MSFT", "15Min")}
     assert cfg.settings.timeframe == "15Min"
@@ -61,16 +65,17 @@ def test_ema9_trend_risk_config_loads():
     assert cfg.universe == ["AAPL", "MSFT"]
     assert [r.id for r in cfg.rules] == ["ema9_trend"]
     rule = cfg.rules[0]
-    assert rule.action.exit == "fixed_bracket"
+    assert rule.action.exit == "ma_cross"
     assert rule.action.stop_loss_pct == 1.5
-    assert rule.action.take_profit_pct == 3.0
+    assert rule.action.take_profit_pct is None
     assert rule.action.size is not None
     assert rule.action.size.type == "risk_pct"
     assert rule.action.size.equity_risk == 0.01
     assert rule.action.size.stop_pct == 1.5
-    assert rule.action.breakeven_after_bars == 1
-    assert rule.action.breakeven_requires_valid is True
-    assert rule.action.breakeven_valid == "above_ema"
+    assert rule.action.breakeven_after_bars == 0
+    assert isinstance(rule.when, MaPairCrossCond)
+    assert rule.when.ema_period == 9
+    assert rule.when.sma_period == 20
     assert cfg.settings.entry_cutoff == "12:00"
     assert cfg.settings.flatten_by == "15:55"
     assert cfg.all_symbol_timeframes() == {("AAPL", "15Min"), ("MSFT", "15Min")}
@@ -81,10 +86,12 @@ def test_ema9_trend_bracket_config_keeps_ten_shares():
     assert cfg.universe == ["AAPL", "MSFT"]
     assert cfg.rules[0].action.size and cfg.rules[0].action.size.type == "shares"
     assert cfg.rules[0].action.size.value == 10
-    assert cfg.rules[0].action.exit == "fixed_bracket"
-    assert cfg.rules[0].action.breakeven_after_bars == 1
-    assert cfg.rules[0].action.breakeven_requires_valid is True
-    assert cfg.rules[0].action.breakeven_valid == "above_ema"
+    assert cfg.rules[0].action.exit == "ma_cross"
+    assert cfg.rules[0].action.stop_loss_pct == 1.5
+    assert cfg.rules[0].action.take_profit_pct is None
+    assert cfg.rules[0].action.breakeven_after_bars == 0
+    assert cfg.rules[0].action.exit_ema_period == 9
+    assert cfg.rules[0].action.exit_sma_period == 20
     assert cfg.settings.entry_cutoff == "12:00"
     assert cfg.settings.flatten_by == "15:55"
 
@@ -93,7 +100,7 @@ def test_ema9_trend_bracket_1300_keeps_prior_cutoff():
     cfg = load_config("config/ema9_trend_bracket_1300.example.yaml")
     assert cfg.universe == ["AAPL", "MSFT"]
     assert cfg.rules[0].action.size and cfg.rules[0].action.size.value == 10
-    assert cfg.rules[0].action.exit == "fixed_bracket"
+    assert cfg.rules[0].action.exit == "ma_cross"
     assert cfg.settings.entry_cutoff == "13:00"
     assert cfg.settings.flatten_by == "15:55"
 
@@ -102,7 +109,7 @@ def test_ema9_trend_bracket_1515_keeps_prior_cutoff():
     cfg = load_config("config/ema9_trend_bracket_1515.example.yaml")
     assert cfg.universe == ["AAPL", "MSFT"]
     assert cfg.rules[0].action.size and cfg.rules[0].action.size.value == 10
-    assert cfg.rules[0].action.exit == "fixed_bracket"
+    assert cfg.rules[0].action.exit == "ma_cross"
     assert cfg.settings.entry_cutoff == "15:15"
     assert cfg.settings.flatten_by == "15:55"
 
@@ -111,7 +118,8 @@ def test_ema9_trend_bracket_soxl_includes_soxl():
     cfg = load_config("config/ema9_trend_bracket_soxl.example.yaml")
     assert cfg.universe == ["AAPL", "MSFT", "SOXL"]
     assert cfg.rules[0].action.size and cfg.rules[0].action.size.value == 10
-    assert cfg.rules[0].action.breakeven_after_bars == 1
+    assert cfg.rules[0].action.exit == "ma_cross"
+    assert cfg.rules[0].action.breakeven_after_bars == 0
     assert cfg.settings.entry_cutoff == "12:00"
     assert cfg.settings.flatten_by == "15:55"
     assert cfg.all_symbol_timeframes() == {("AAPL", "15Min"), ("MSFT", "15Min"), ("SOXL", "15Min")}
@@ -122,7 +130,8 @@ def test_ema9_trend_risk_soxl_includes_soxl():
     assert cfg.universe == ["AAPL", "MSFT", "SOXL"]
     assert cfg.rules[0].action.size and cfg.rules[0].action.size.type == "risk_pct"
     assert cfg.rules[0].action.size.equity_risk == 0.01
-    assert cfg.rules[0].action.breakeven_after_bars == 1
+    assert cfg.rules[0].action.exit == "ma_cross"
+    assert cfg.rules[0].action.breakeven_after_bars == 0
     assert cfg.settings.entry_cutoff == "12:00"
     assert cfg.settings.flatten_by == "15:55"
 
@@ -138,10 +147,11 @@ def test_ema9_trend_overnight_config_disables_session_gates():
 
 def test_ema9_trend_5m_config_loads():
     cfg = load_config("config/ema9_trend_5m.example.yaml")
-    assert [r.id for r in cfg.rules] == ["ema9_trend", "ema9_cross_raw", "engulfing-with-trend"]
-    assert all(r.cooldown_minutes == 60 for r in cfg.rules)
-    assert cfg.rules[0].action.exit == "ema_invalid"
-    assert cfg.rules[2].action.exit == "fixed_bracket"
+    assert [r.id for r in cfg.rules] == ["ema9_trend"]
+    assert cfg.rules[0].cooldown_minutes == 60
+    assert cfg.rules[0].action.exit == "ma_cross"
+    assert cfg.rules[0].action.stop_loss_pct == 1.5
+    assert cfg.rules[0].action.take_profit_pct is None
     assert cfg.settings.timeframe == "5Min"
     assert cfg.settings.entry_cutoff == "12:00"
     assert cfg.settings.flatten_by == "15:55"
@@ -157,8 +167,9 @@ def test_with_timeframe_rewrites_ema9_conditions_and_keeps_cooldown():
     assert five.settings.entry_cutoff == cfg.settings.entry_cutoff
     assert five.settings.flatten_by == cfg.settings.flatten_by
     assert five.all_symbol_timeframes() == {("AAPL", "5Min"), ("MSFT", "5Min")}
-    assert [r.cooldown_minutes for r in five.rules] == [60, 60, 60]
+    assert [r.cooldown_minutes for r in five.rules] == [60]
     assert [r.id for r in five.rules] == [r.id for r in cfg.rules]
+    assert isinstance(five.rules[0].when, MaPairCrossCond)
     loaded_5m = load_config("config/ema9_trend.example.yaml", timeframe="5m")
     assert loaded_5m.all_symbol_timeframes() == five.all_symbol_timeframes()
 
@@ -222,7 +233,9 @@ def test_cli_validate_timeframe_override(capsys):
     out = capsys.readouterr().out
     assert "tf=5Min" in out
     assert "cooldown=60m" in out
-    assert "exit=ema_invalid" in out
+    assert "exit=ma_cross" in out
+    assert "ema_period=9" in out
+    assert "sma_period=20" in out
     assert "entry_cutoff=12:00" in out
     assert "flatten_by=15:55" in out
 
@@ -240,6 +253,25 @@ def test_ema_cross_yaml_parses_and_does_not_steal_level_ema():
     assert isinstance(bear, MaCrossCond)
     assert bear.ma == "sma"
     assert bear.direction == "bearish"
+
+
+def test_ema_sma_cross_yaml_parses():
+    cross = parse_condition(
+        {"ema_sma_cross": {"ema_period": 9, "sma_period": 20, "timeframe": "15m", "direction": "over"}}
+    )
+    assert isinstance(cross, MaPairCrossCond)
+    assert cross.ema_period == 9
+    assert cross.sma_period == 20
+    assert cross.direction == "bullish"
+    under = parse_condition(
+        {"ema_sma_cross": {"ema_period": 9, "sma_period": 20, "timeframe": "15m", "direction": "under"}}
+    )
+    assert under.direction == "bearish"
+    pair = parse_condition(
+        {"ma_pair_cross": {"ema_period": 9, "sma_period": 20, "direction": "bullish"}},
+        default_timeframe="5m",
+    )
+    assert pair.timeframe == "5Min"
 
 
 def test_unknown_pattern_rejected(tmp_path: Path):

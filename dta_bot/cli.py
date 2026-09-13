@@ -208,10 +208,16 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 f" requires_valid={rule.action.breakeven_requires_valid}"
                 f" valid={rule.action.breakeven_valid}"
             )
+        ma_txt = ""
+        if rule.action.exit == "ma_cross":
+            ma_txt = (
+                f" ema_period={rule.action.exit_ema_period}"
+                f" sma_period={rule.action.exit_sma_period}"
+            )
         print(
             f"    - {rule.id}: enabled={rule.enabled} symbols={syms} "
             f"action={rule.action.type} exit={rule.action.exit} "
-            f"cooldown={rule.cooldown_minutes}m tf={tfs}{size_txt}{be_txt}"
+            f"cooldown={rule.cooldown_minutes}m tf={tfs}{size_txt}{be_txt}{ma_txt}"
         )
     return 0
 

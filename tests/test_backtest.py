@@ -706,3 +706,74 @@ def test_stop_on_flatten_bar_beats_session_flatten():
     result = run_backtest(_session_cfg(), {("AAPL", "15Min"): bars}, starting_equity=100_000)
     assert result.report.trades == 1
     assert result.trades[0].exit_reason == "stop"
+
+
+def _pair_cross_warmup() -> list[Bar]:
+    bars = [bar(i, 100.0, 100.1, 99.9, 100.0) for i in range(20)]
+    bars.append(bar(20, 100.0, 100.6, 99.9, 100.5))
+    return bars
+
+
+def _ma_cross_rule(**action_kw) -> RuleSpec:
+    defaults = dict(
+        type="buy",
+        size=SizeSpec(type="shares", value=10),
+        exit="ma_cross",
+        exit_ema_period=9,
+        exit_sma_period=20,
+        stop_loss_pct=1.5,
+    )
+    defaults.update(action_kw)
+    return _buy_rule(
+        id="ema9",
+        when=parse_condition(
+            {"ema_sma_cross": {"ema_period": 9, "sma_period": 20, "timeframe": "15m", "direction": "bullish"}}
+        ),
+        action=ActionSpec(**defaults),
+    )
+
+
+def test_ema_sma_cross_up_enters_at_next_open():
+    warmup = _pair_cross_warmup()
+    fill = Bar(bar(21, 100.5, 100.8, 100.4, 100.5).timestamp, 100.5, 100.8, 100.4, 100.5, 1000)
+    result = run_backtest(_cfg(_ma_cross_rule()), {("AAPL", "15Min"): warmup + [fill]})
+    assert result.report.signals == 1
+    assert "ema_sma_cross matched (bullish)" in result.signals[0].reason
+    assert result.report.trades == 1
+    assert result.trades[0].entry_price == 100.5
+    assert result.trades[0].exit_reason == "eod"
+
+
+def test_ema_sma_cross_down_exits_at_next_open():
+    # Cross-up on bar 20 (close 100.5) → fill bar 21 open 100.5.
+    # Bar 22 close 99.2 crosses EMA9 under SMA20; low stays above the 1.5% stop.
+    # Flatten at bar 23 open 99.15.
+    warmup = _pair_cross_warmup()
+    fill = Bar(bar(21, 100.5, 100.7, 100.4, 100.5).timestamp, 100.5, 100.7, 100.4, 100.5, 1000)
+    cross_under = Bar(bar(22, 100.5, 100.6, 99.2, 99.2).timestamp, 100.5, 100.6, 99.2, 99.2, 1000)
+    exit_bar = Bar(bar(23, 99.15, 99.3, 99.1, 99.2).timestamp, 99.15, 99.3, 99.1, 99.2, 1000)
+    result = run_backtest(
+        _cfg(_ma_cross_rule()),
+        {("AAPL", "15Min"): warmup + [fill, cross_under, exit_bar]},
+    )
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.entry_price == 100.5
+    assert trade.exit_reason == "ma_cross"
+    assert trade.exit_price == 99.15
+    assert result.report.exit_reasons == {"ma_cross": 1}
+    assert any("Exit P&L" in n and "ma_cross" in n for n in result.report.notes)
+
+
+def test_ema_sma_cross_stop_beats_cross_under_on_same_bar():
+    warmup = _pair_cross_warmup()
+    fill = Bar(bar(21, 100.5, 100.7, 100.4, 100.5).timestamp, 100.5, 100.7, 100.4, 100.5, 1000)
+    # Low tags the 1.5% stop (98.9925) and close 99.2 would also be a pair-cross.
+    drop = Bar(bar(22, 100.5, 100.6, 98.5, 99.2).timestamp, 100.5, 100.6, 98.5, 99.2, 1000)
+    after = Bar(bar(23, 99.2, 99.3, 99.1, 99.2).timestamp, 99.2, 99.3, 99.1, 99.2, 1000)
+    result = run_backtest(
+        _cfg(_ma_cross_rule()),
+        {("AAPL", "15Min"): warmup + [fill, drop, after]},
+    )
+    assert result.trades[0].exit_reason == "stop"
+    assert result.trades[0].exit_price == pytest.approx(100.5 * 0.985)

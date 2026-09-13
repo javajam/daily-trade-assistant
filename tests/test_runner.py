@@ -129,6 +129,46 @@ def test_ema_invalid_live_flatten_closes_when_close_below_ema(tmp_path):
     assert broker.closed == ["AAPL"]
 
 
+def test_ma_cross_live_flatten_closes_when_ema_crosses_under_sma(tmp_path):
+    closes = [10.0] * 20 + [12.0, 8.0]
+    bars = [bar(i, c, c + 0.1, c - 0.1, c) for i, c in enumerate(closes)]
+    fixture = tmp_path / "bars.json"
+    save_fixture(fixture, {"AAPL": {"15Min": bars}})
+    rule = RuleSpec(
+        id="ema9_trend",
+        symbols=["AAPL"],
+        cooldown_minutes=0,
+        when=parse_condition(
+            {"ema_sma_cross": {"ema_period": 9, "sma_period": 20, "timeframe": "15m", "direction": "bullish"}}
+        ),
+        action=ActionSpec(
+            type="buy",
+            size=SizeSpec(type="shares", value=10),
+            exit="ma_cross",
+            exit_ema_period=9,
+            exit_sma_period=20,
+            stop_loss_pct=1.5,
+        ),
+    )
+    cfg = BotConfig(
+        settings=Settings(
+            lookback_bars=80,
+            max_open_positions=5,
+            state_file=str(tmp_path / "state.json"),
+            kill_switch_file=str(tmp_path / "KILL"),
+        ),
+        universe=["AAPL"],
+        rules=[rule],
+    )
+    state = BotState()
+    state.mark_fired(fire_key("ema9_trend", "AAPL", bars[-2].timestamp), "ema9_trend:AAPL", 0)
+    broker = _PosBroker(
+        [Position(symbol="AAPL", qty=10, side="long", avg_entry_price=12.0, market_value=80.0)]
+    )
+    run_once(cfg, broker=broker, data=FixtureMarketData(fixture), state=state, dry_run=True)
+    assert broker.closed == ["AAPL"]
+
+
 def _gated_rule() -> RuleSpec:
     return RuleSpec(
         id="ema9_trend",

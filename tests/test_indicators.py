@@ -1,4 +1,4 @@
-from dta_bot.indicators import ema, last_two_ma, ma_cross, rsi, sma
+from dta_bot.indicators import ema, last_two_ma, last_two_ma_pair, ma_cross, ma_pair_cross, rsi, sma
 
 
 def test_sma():
@@ -31,6 +31,25 @@ def test_last_two_ma_and_bullish_cross():
     assert ma_cross(values, 9, kind="ema", direction="bullish") is True
     assert ma_cross(values, 9, kind="ema", direction="bearish") is False
     assert ma_cross([10.0] * 9, 9, kind="ema") is None
+
+
+def test_ema9_sma20_pair_cross_up_and_down():
+    # 20 flats seed both MAs at 10; 12.0 lifts EMA9 over SMA20.
+    up = [10.0] * 20 + [12.0]
+    pair = last_two_ma_pair(up, 9, 20)
+    assert pair is not None
+    prev_ema, prev_sma, curr_ema, curr_sma = pair
+    assert prev_ema == 10.0
+    assert prev_sma == 10.0
+    assert curr_ema == 10.4
+    assert curr_sma == 10.1
+    assert ma_pair_cross(up, 9, 20, direction="bullish") is True
+    assert ma_pair_cross(up, 9, 20, direction="bearish") is False
+    # Next print 8.0 drops EMA9 back under SMA20.
+    down = up + [8.0]
+    assert ma_pair_cross(down, 9, 20, direction="bearish") is True
+    assert ma_pair_cross(down, 9, 20, direction="bullish") is False
+    assert last_two_ma_pair([10.0] * 20, 9, 20) is None
 
 
 def test_rsi_mixed():

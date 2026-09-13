@@ -41,6 +41,8 @@
 # shooting_star, morning_star, evening_star, three_white_soldiers, three_black_crows.
 # MA cross: ema_cross / sma_cross { period, timeframe, direction: bullish|bearish }
 #   bullish = previous close <= previous MA and current close > current MA.
+# EMA vs SMA: ema_sma_cross { ema_period, sma_period, timeframe, direction }
+#   bullish = previous EMA <= previous SMA and current EMA > current SMA.
 
 settings:
   paper: true

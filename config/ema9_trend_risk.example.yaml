@@ -1,17 +1,16 @@
-# 9 EMA trend — August-style live book (paper / dry_run).
+# 9/20 MA-cross — 1% equity-risk book (paper / dry_run).
 #
-# Locked product for the 1%-risk sim:
-#   - 15m bullish EMA(9) cross + close > SMA20 + RSI14 < 70 (long only)
-#   - exit: fixed_bracket — stop 1.5%, take 3.0%
-#   - break-even: after 1 complete 15m bar after the entry bar, if still
-#     valid (close > EMA9), move stop to entry and leave it there
+# Locked product:
+#   - 15m EMA(9) crosses over SMA(20) (long only)
+#   - exit: ma_cross — flatten at next bar open when EMA(9) crosses under SMA(20)
+#   - stop: 1.5% initial only (break-even off; no take-profit)
 #   - universe: AAPL + MSFT (no SOXL)
 #   - size: risk ~1% of current equity at the 1.5% stop
 #       shares = floor( (0.01 * equity) / (0.015 * entry_price) )
 #              = floor( equity / (1.5 * entry_price) )
-#   - one lot per symbol; both names may be open if cash covers the second
-#   - session gates (America/New_York): no new fills at/after 12:00;
-#     force-flat at the 15:45 ET 15m bar close (flatten_by 15:55)
+#   - session gates (America/New_York) — toggle either to null / off:
+#       entry_cutoff: "12:00"
+#       flatten_by: "15:55"
 #
 #   python -m dta_bot validate --config config/ema9_trend_risk.example.yaml
 #   python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml \
@@ -31,8 +30,8 @@ settings:
   lookback_bars: 80
   timeframe: 15m
   session_timezone: America/New_York
-  entry_cutoff: "12:00"
-  flatten_by: "15:55"
+  entry_cutoff: "12:00"   # null / off disables
+  flatten_by: "15:55"     # null / off disables
 
 universe:
   - AAPL
@@ -43,21 +42,13 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "15m bullish EMA(9) cross while price holds above the 20-SMA and RSI is not overbought. 1% equity risk at a 1.5% stop; 3.0% take. BE after 1 bar if close > EMA9."
+    notes: "15m EMA(9) cross over SMA(20). 1% equity risk at a 1.5% stop. Flatten next open on EMA(9) cross under SMA(20). No take-profit; no break-even."
     when:
-      all:
-        - ema_cross:
-            period: 9
-            timeframe: 15m
-            direction: bullish
-        - sma:
-            period: 20
-            timeframe: 15m
-            compare: above
-        - rsi:
-            period: 14
-            timeframe: 15m
-            below: 70
+      ema_sma_cross:
+        ema_period: 9
+        sma_period: 20
+        timeframe: 15m
+        direction: bullish
     action:
       type: buy
       size:
@@ -65,9 +56,7 @@ rules:
         equity_risk: 0.01
         stop_pct: 1.5
       order: market
-      exit: fixed_bracket
+      exit: ma_cross
+      ema_period: 9
+      sma_period: 20
       stop_loss_pct: 1.5
-      take_profit_pct: 3.0
-      breakeven_after_bars: 1
-      breakeven_requires_valid: true
-      breakeven_valid: above_ema

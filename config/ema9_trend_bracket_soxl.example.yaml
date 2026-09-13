@@ -1,5 +1,5 @@
-# 9 EMA trend — 10-share 1.5/3.0 bracket book with SOXL on the 12:00 / 15:55
-# session gates. Same locked entry/exit/BE as ema9_trend_bracket.example.yaml.
+# 9/20 MA-cross — 10-share book with SOXL added (optional universe).
+# Same locked entry/exit as ema9_trend_bracket.example.yaml.
 #
 #   python -m dta_bot backtest --config config/ema9_trend_bracket_soxl.example.yaml \
 #     --source yahoo --breakout SOXL \
@@ -18,8 +18,8 @@ settings:
   lookback_bars: 80
   timeframe: 15m
   session_timezone: America/New_York
-  entry_cutoff: "12:00"
-  flatten_by: "15:55"
+  entry_cutoff: "12:00"   # null / off disables
+  flatten_by: "15:55"     # null / off disables
 
 universe:
   - AAPL
@@ -31,30 +31,20 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT, SOXL]
     cooldown_minutes: 60
-    notes: "Same 15m EMA9 trend + 1.5/3.0 brackets as the gated book, plus SOXL. BE after 1 bar if close > EMA9."
+    notes: "Same 15m EMA(9)/SMA(20) cross as the gated book, plus SOXL. 1.5% stop; no take-profit; no break-even."
     when:
-      all:
-        - ema_cross:
-            period: 9
-            timeframe: 15m
-            direction: bullish
-        - sma:
-            period: 20
-            timeframe: 15m
-            compare: above
-        - rsi:
-            period: 14
-            timeframe: 15m
-            below: 70
+      ema_sma_cross:
+        ema_period: 9
+        sma_period: 20
+        timeframe: 15m
+        direction: bullish
     action:
       type: buy
       size:
         type: shares
         value: 10
       order: market
-      exit: fixed_bracket
+      exit: ma_cross
+      ema_period: 9
+      sma_period: 20
       stop_loss_pct: 1.5
-      take_profit_pct: 3.0
-      breakeven_after_bars: 1
-      breakeven_requires_valid: true
-      breakeven_valid: above_ema

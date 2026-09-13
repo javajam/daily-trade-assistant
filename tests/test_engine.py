@@ -158,6 +158,44 @@ def test_ema_cross_rejects_when_already_above():
     assert "ema_cross not found (bullish)" in ev.reasons[0]
 
 
+def _flat_pair(n: int = 20, last_close: float = 12.0) -> list:
+    bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(n)]
+    bars.append(bar(n, 10.0, max(10.1, last_close), min(9.9, last_close), last_close))
+    return bars
+
+
+def test_ema_sma_cross_bullish_fires():
+    bars = _flat_pair()
+    cond = parse_condition(
+        {"ema_sma_cross": {"ema_period": 9, "sma_period": 20, "timeframe": "15m", "direction": "bullish"}}
+    )
+    ev = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): bars}, BotState())
+    assert ev.matched
+    assert "ema_sma_cross matched (bullish)" in ev.reasons[0]
+
+
+def test_ema_sma_cross_rejects_when_already_above():
+    # Rising closes keep EMA9 above SMA20 — no fresh cross on the last bar.
+    bars = [bar(i, 10 + i * 0.5, 10.2 + i * 0.5, 9.9 + i * 0.5, 10.1 + i * 0.5) for i in range(25)]
+    cond = parse_condition(
+        {"ema_sma_cross": {"ema_period": 9, "sma_period": 20, "timeframe": "15m", "direction": "bullish"}}
+    )
+    ev = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): bars}, BotState())
+    assert not ev.matched
+    assert "ema_sma_cross not found (bullish)" in ev.reasons[0]
+
+
+def test_ema_sma_cross_bearish_fires():
+    bars = _flat_pair()
+    bars.append(bar(21, 12.0, 12.1, 7.9, 8.0))
+    cond = parse_condition(
+        {"ema_sma_cross": {"ema_period": 9, "sma_period": 20, "timeframe": "15m", "direction": "under"}}
+    )
+    ev = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): bars}, BotState())
+    assert ev.matched
+    assert "ema_sma_cross matched (bearish)" in ev.reasons[0]
+
+
 def test_ema_cross_and_trend_filter():
     # Gentle saw keeps RSI mid-range; last two bars dip under EMA9 then cross back.
     closes: list[float] = []

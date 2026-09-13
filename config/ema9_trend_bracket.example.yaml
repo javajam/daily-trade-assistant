@@ -1,23 +1,17 @@
-# 9 EMA trend — same locked entry/exit as ema9_trend_risk.example.yaml
-# but the old fixed 10-share size (comparison book), with session gates
-# and a one-bar break-even stop.
+# 9/20 MA-cross — 10-share book (comparison / default size).
 #
-# Session gates (America/New_York): no new fills at/after 12:00; force-flat at
-# the 15:45 ET 15m bar close (flatten_by 15:55). Overnight control:
-# config/ema9_trend_bracket_overnight.example.yaml (same book, gates off).
-# Prior cutoffs: config/ema9_trend_bracket_1300.example.yaml (13:00) and
-# config/ema9_trend_bracket_1515.example.yaml (15:15). Prior 12:00 book
-# without BE: config/ema9_trend_bracket_nobe.example.yaml.
+# Same locked product as ema9_trend.example.yaml: EMA(9) cross over SMA(20)
+# entry, EMA(9) cross-under flatten at next bar open, 1.5% stop, no take-profit,
+# no break-even. Session gates on (toggle to null / off).
 #
-# Break-even: after entry fills, wait for one complete 15m bar after the
-# entry bar. At that close, if still valid (close > EMA9), move the stop
-# to entry and leave it there. If not valid, keep the 1.5% stop.
+# Prior noon price-cross book (old entry, 1.5/3.0, no BE):
+#   config/ema9_trend_bracket_nobe.example.yaml
 #
-#   python -m dta_bot backtest --config config/ema9_trend_bracket_nobe.example.yaml \
-#     --compare-config config/ema9_trend_bracket.example.yaml --source yahoo \
+#   python -m dta_bot backtest --config config/ema9_trend_bracket.example.yaml \
+#     --compare-config config/ema9_trend_bracket_nobe.example.yaml --source yahoo \
 #     --combined-only --symbols AAPL,MSFT \
-#     --output artifacts/ema9_breakeven.json \
-#     --report artifacts/ema9_breakeven.md
+#     --output artifacts/ema9_ma_cross.json \
+#     --report artifacts/ema9_ma_cross.md
 
 settings:
   paper: true
@@ -31,8 +25,8 @@ settings:
   lookback_bars: 80
   timeframe: 15m
   session_timezone: America/New_York
-  entry_cutoff: "12:00"
-  flatten_by: "15:55"
+  entry_cutoff: "12:00"   # null / off disables
+  flatten_by: "15:55"     # null / off disables
 
 universe:
   - AAPL
@@ -43,30 +37,20 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "Same 15m EMA9 trend + 1.5/3.0 brackets as the risk book, fixed 10 shares. BE after 1 bar if close > EMA9."
+    notes: "15m EMA(9) cross over SMA(20), 10 shares. Flatten next open on EMA(9) cross under SMA(20). 1.5% stop; no take-profit; no break-even."
     when:
-      all:
-        - ema_cross:
-            period: 9
-            timeframe: 15m
-            direction: bullish
-        - sma:
-            period: 20
-            timeframe: 15m
-            compare: above
-        - rsi:
-            period: 14
-            timeframe: 15m
-            below: 70
+      ema_sma_cross:
+        ema_period: 9
+        sma_period: 20
+        timeframe: 15m
+        direction: bullish
     action:
       type: buy
       size:
         type: shares
         value: 10
       order: market
-      exit: fixed_bracket
+      exit: ma_cross
+      ema_period: 9
+      sma_period: 20
       stop_loss_pct: 1.5
-      take_profit_pct: 3.0
-      breakeven_after_bars: 1
-      breakeven_requires_valid: true
-      breakeven_valid: above_ema

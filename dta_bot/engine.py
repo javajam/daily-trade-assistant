@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from dta_bot.config import (
@@ -12,13 +12,14 @@ from dta_bot.config import (
     GroupCond,
     MaCond,
     MaCrossCond,
+    MaPairCrossCond,
     PatternCond,
     RsiCond,
     RuleSpec,
     VolumeCond,
 )
-from dta_bot.indicators import average_volume, ema, last_two_ma, rsi, sma
-from dta_bot.models import Bar, ConditionResult, EvalResult
+from dta_bot.indicators import average_volume, ema, last_two_ma, last_two_ma_pair, ma_pair_cross, rsi, sma
+from dta_bot.models import Bar, ConditionResult, EvalResult, Position
 from dta_bot.patterns import detect
 from dta_bot.state import BotState, fmt_ts
 
@@ -91,6 +92,39 @@ def eval_leaf(cond: AnyCondition, symbol: str, bars_by_key: BarMap) -> Condition
             },
         )
 
+    if isinstance(cond, MaPairCrossCond):
+        bars = bars_by_key.get((symbol, cond.timeframe), [])
+        closes = _closes(bars)
+        pair = last_two_ma_pair(closes, cond.ema_period, cond.sma_period)
+        need = max(cond.ema_period, cond.sma_period) + 1
+        if pair is None:
+            return ConditionResult(
+                False,
+                f"ema_sma_cross {cond.direction} @{cond.timeframe}: "
+                f"need {need} closes, have {len(closes)}",
+            )
+        prev_ema, prev_sma, curr_ema, curr_sma = pair
+        if cond.direction == "bearish":
+            ok = prev_ema >= prev_sma and curr_ema < curr_sma
+        else:
+            ok = prev_ema <= prev_sma and curr_ema > curr_sma
+        verb = "matched" if ok else "not found"
+        return ConditionResult(
+            ok,
+            f"ema_sma_cross {verb} ({cond.direction}): "
+            f"prev EMA{cond.ema_period} {prev_ema:.4f} vs SMA{cond.sma_period} {prev_sma:.4f}, "
+            f"EMA {curr_ema:.4f} vs SMA {curr_sma:.4f} @{cond.timeframe} → {ok}",
+            {
+                "prev_ema": prev_ema,
+                "prev_sma": prev_sma,
+                "ema": curr_ema,
+                "sma": curr_sma,
+                "direction": cond.direction,
+                "ema_period": cond.ema_period,
+                "sma_period": cond.sma_period,
+            },
+        )
+
     if isinstance(cond, RsiCond):
         bars = bars_by_key.get((symbol, cond.timeframe), [])
         value = rsi(_closes(bars), cond.period)
@@ -147,6 +181,40 @@ def eval_condition(cond: AnyCondition, symbol: str, bars_by_key: BarMap) -> Cond
         reason = f"({cond.kind.upper()}: " + joiner.join(r.reason for r in results) + f") → {ok}"
         return ConditionResult(ok, reason, {"children": [r.details for r in results]})
     return eval_leaf(cond, symbol, bars_by_key)
+
+
+def _aware_ts(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def ma_pair_cross_flatten_bar(
+    position: Position,
+    signal_bars: list[Bar],
+    *,
+    after: Optional[datetime],
+    ema_period: int = 9,
+    sma_period: int = 20,
+) -> Optional[Bar]:
+    """Latest closed bar after entry where EMA crossed SMA against the position.
+
+    Long exits on a bearish pair-cross (EMA under SMA); short on a bullish
+    pair-cross. If we cannot prove the bar closed after entry, do not flatten.
+    """
+    if after is None or not signal_bars:
+        return None
+    later = [b for b in signal_bars if _aware_ts(b.timestamp) > _aware_ts(after)]
+    if not later:
+        return None
+    last = max(later, key=lambda b: _aware_ts(b.timestamp))
+    window = [b for b in signal_bars if _aware_ts(b.timestamp) <= _aware_ts(last.timestamp)]
+    closes = [b.close for b in window]
+    side = "buy" if str(position.side).lower() in {"buy", "long"} else "sell"
+    direction = "bearish" if side == "buy" else "bullish"
+    if ma_pair_cross(closes, ema_period, sma_period, direction=direction):
+        return last
+    return None
 
 
 def fire_key(rule_id: str, symbol: str, signal_ts: datetime) -> str:
