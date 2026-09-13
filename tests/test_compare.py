@@ -110,6 +110,8 @@ def test_assumptions_rules_mention_ma_cross():
     cfg = load_config("config/ema9_trend.example.yaml")
     ema_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, cfg)
     assert any("noon day-trade stack" in n and "EMA(9)" in n and "SMA(20)" in n for n in ema_notes)
+    assert any("Short:" in n and "RSI(14) > 30" in n for n in ema_notes)
+    assert any("opposite_signal_in_trade" in n for n in ema_notes)
     assert any("stop_mode: lock_plus" in n and "entry×(1+1/100)" in n for n in ema_notes)
     assert any("entry_cutoff=12:00" in n and "flatten_by=15:55" in n for n in ema_notes)
     assert not any("breakeven_after_bars: 1" in n for n in ema_notes)
@@ -182,9 +184,11 @@ def test_pattern_hits_count_ema_cross():
 def test_ema9_rule_book_plan_isolates_each_entry():
     cfg = load_config("config/ema9_trend.example.yaml")
     labels = [label for label, _ids, _note in rule_book_plan(cfg)]
-    assert labels == ["ema9_trend"]
+    assert labels == ["ema9_trend", "ema9_trend_short", "AAPL+MSFT 10-share long+short"]
     five = load_config("config/ema9_trend_5m.example.yaml")
     assert [label for label, _ids, _note in rule_book_plan(five)] == labels
+    notes = {note for _label, _ids, note in rule_book_plan(cfg) if note}
+    assert any("opposite_signal_in_trade" in (note or "") for note in notes)
 
 
 def test_combined_only_labels_include_universe_and_size():
@@ -196,8 +200,8 @@ def test_combined_only_labels_include_universe_and_size():
     assert universe_tag(tsla) == "TSLA+MU"
     assert sizing_tag(ten) == "10-share"
     assert sizing_tag(risk) == "1% risk"
-    assert combined_book_label(ten) == "AAPL+MSFT 10-share"
-    assert combined_book_label(risk) == "AAPL+MSFT 1% risk"
+    assert combined_book_label(ten) == "AAPL+MSFT 10-share long+short"
+    assert combined_book_label(risk) == "AAPL+MSFT 1% risk long+short"
     assert combined_book_label(tsla) == "TSLA+MU 10-share"
     assert combined_book_label(tsla_risk) == "TSLA+MU 1% risk"
     assert [label for label, _ids, _note in rule_book_plan(tsla, combined_only=True)] == [

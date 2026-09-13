@@ -11,6 +11,7 @@ from dta_bot.config import (
     RsiCond,
     condition_timeframes,
     find_rsi_condition,
+    has_noon_short_stack,
     has_noon_stack,
     load_config,
     parse_condition,
@@ -42,7 +43,7 @@ def test_ema9_trend_config_loads():
     assert cfg.settings.paper is True
     assert cfg.settings.allow_live is False
     assert cfg.settings.dry_run is True
-    assert [r.id for r in cfg.rules] == ["ema9_trend"]
+    assert [r.id for r in cfg.rules] == ["ema9_trend", "ema9_trend_short"]
     rule = cfg.rules[0]
     assert rule.cooldown_minutes == 60
     assert rule.action.size and rule.action.size.value == 10
@@ -58,6 +59,14 @@ def test_ema9_trend_config_loads():
     assert rule.action.resolved_lock_stop_pct() == 1.0
     assert rule.action.take_profit_pct is None
     assert rule.action.breakeven_after_bars == 0
+    short = cfg.rules[1]
+    assert short.enabled is True
+    assert short.action.type == "sell"
+    assert has_noon_short_stack(short.when)
+    short_rsi = find_rsi_condition(short.when)
+    assert short_rsi is not None and short_rsi.above == 30
+    assert short.action.stop_mode == "lock_plus"
+    assert short.action.take_profit_pct is None
     pairs = cfg.all_symbol_timeframes()
     assert pairs == {("AAPL", "15Min"), ("MSFT", "15Min")}
     assert cfg.settings.timeframe == "15Min"
@@ -70,7 +79,7 @@ def test_ema9_trend_config_loads():
 def test_ema9_trend_risk_config_loads():
     cfg = load_config("config/ema9_trend_risk.example.yaml")
     assert cfg.universe == ["AAPL", "MSFT"]
-    assert [r.id for r in cfg.rules] == ["ema9_trend"]
+    assert [r.id for r in cfg.rules] == ["ema9_trend", "ema9_trend_short"]
     rule = cfg.rules[0]
     assert rule.action.exit == "fixed_bracket"
     assert rule.action.stop_mode == "lock_plus"
@@ -82,6 +91,10 @@ def test_ema9_trend_risk_config_loads():
     assert rule.action.size.stop_pct == 1.0
     assert rule.action.breakeven_after_bars == 0
     assert has_noon_stack(rule.when)
+    assert cfg.rules[1].action.type == "sell"
+    assert has_noon_short_stack(cfg.rules[1].when)
+    assert cfg.rules[1].action.size is not None
+    assert cfg.rules[1].action.size.type == "risk_pct"
     assert cfg.settings.entry_cutoff == "12:00"
     assert cfg.settings.flatten_by == "15:55"
     assert cfg.all_symbol_timeframes() == {("AAPL", "15Min"), ("MSFT", "15Min")}
@@ -92,6 +105,9 @@ def test_ema9_trend_risk_config_loads():
     assert five.rules[0].action.size.type == "risk_pct"
     assert five.rules[0].action.size.stop_pct == 1.0
     assert has_noon_stack(five.rules[0].when)
+    assert [r.id for r in five.rules] == ["ema9_trend", "ema9_trend_short"]
+    assert five.rules[1].action.type == "sell"
+    assert has_noon_short_stack(five.rules[1].when)
     assert five.all_symbol_timeframes() == {("AAPL", "5Min"), ("MSFT", "5Min")}
 
 
@@ -216,13 +232,15 @@ def test_ema9_trend_overnight_config_disables_session_gates():
 
 def test_ema9_trend_5m_config_loads():
     cfg = load_config("config/ema9_trend_5m.example.yaml")
-    assert [r.id for r in cfg.rules] == ["ema9_trend"]
+    assert [r.id for r in cfg.rules] == ["ema9_trend", "ema9_trend_short"]
     assert cfg.rules[0].cooldown_minutes == 60
     assert cfg.rules[0].action.exit == "fixed_bracket"
     assert cfg.rules[0].action.stop_mode == "lock_plus"
     assert cfg.rules[0].action.stop_loss_pct == 1.0
     assert cfg.rules[0].action.take_profit_pct is None
     assert has_noon_stack(cfg.rules[0].when)
+    assert cfg.rules[1].action.type == "sell"
+    assert has_noon_short_stack(cfg.rules[1].when)
     assert cfg.settings.timeframe == "5Min"
     assert cfg.settings.entry_cutoff == "12:00"
     assert cfg.settings.flatten_by == "15:55"
@@ -238,10 +256,12 @@ def test_with_timeframe_rewrites_ema9_conditions_and_keeps_cooldown():
     assert five.settings.entry_cutoff == cfg.settings.entry_cutoff
     assert five.settings.flatten_by == cfg.settings.flatten_by
     assert five.all_symbol_timeframes() == {("AAPL", "5Min"), ("MSFT", "5Min")}
-    assert [r.cooldown_minutes for r in five.rules] == [60]
+    assert [r.cooldown_minutes for r in five.rules] == [60, 60]
     assert [r.id for r in five.rules] == [r.id for r in cfg.rules]
     assert has_noon_stack(five.rules[0].when)
+    assert has_noon_short_stack(five.rules[1].when)
     assert condition_timeframes(five.rules[0].when) == {"5Min"}
+    assert condition_timeframes(five.rules[1].when) == {"5Min"}
     loaded_5m = load_config("config/ema9_trend.example.yaml", timeframe="5m")
     assert loaded_5m.all_symbol_timeframes() == five.all_symbol_timeframes()
     assert loaded_5m.rules[0].action.stop_mode == "lock_plus"
@@ -456,6 +476,8 @@ def test_cli_validate_timeframe_override(capsys):
     assert "stop_mode=lock_plus" in out
     assert "lock_trigger_pct=1" in out
     assert "rsi=RSI14 < 70" in out
+    assert "rsi=RSI14 > 30" in out
+    assert "action=sell" in out
     assert "entry_cutoff=12:00" in out
     assert "flatten_by=15:55" in out
     pair_rc = main(["validate", "--config", "config/ema9_trend_pair.example.yaml"])

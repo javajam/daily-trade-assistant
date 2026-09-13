@@ -17,7 +17,9 @@ from dta_bot.backtest import (
 )
 from dta_bot.config import (
     BotConfig,
+    entry_sides,
     find_rsi_condition,
+    has_noon_short_stack,
     has_noon_stack,
     restrict_universe,
     rsi_filter_label,
@@ -53,6 +55,14 @@ ENTRIES_ONLY_NOTE = (
 COMBINED_NOTE = (
     "All sample rules on one book. Close signals flatten longs from the entry rules. "
     "This is not the sum of the isolated books (shared one-lot-per-symbol constraint)."
+)
+
+LONG_SHORT_COMBINED_NOTE = (
+    "Long and short on one book. One position per symbol (long or short, not both). "
+    "An opposite signal while that symbol is already in a trade is skipped "
+    "(opposite_signal_in_trade). Combined P&L is not the sum of the isolated books "
+    "when the other side is skipped because a lot is already open. "
+    "Session flatten covers longs and shorts. Max DD by side is the isolated-book figure."
 )
 
 MULTI_ENGINE_NOTE = (
@@ -344,10 +354,11 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
             trig = action.resolved_lock_trigger_pct()
             lock = action.resolved_lock_stop_pct()
             return (
-                f"Lock-plus stop (stop_mode: lock_plus): initial stop is {stop_txt} below "
-                f"the fill. First trade/touch of entry×(1+{(trig or 0):g}/100) "
-                f"(long: bar high ≥ that print) moves the stop to "
-                f"entry×(1+{(lock or 0):g}/100) and leaves it. The locked stop is live "
+                f"Lock-plus stop (stop_mode: lock_plus): initial stop is {stop_txt} from "
+                f"the fill (long: below; short: above). First trade/touch of "
+                f"entry×(1+{(trig or 0):g}/100) for a long (bar high ≥ that print) or "
+                f"entry×(1−{(trig or 0):g}/100) for a short (bar low ≤ that print) moves "
+                f"the stop to that same print and leaves it. The locked stop is live "
                 f"from the next bar; same-bar pullback after the tag uses the initial stop. "
                 f"A later hit of the locked stop is lock_stop.{take_txt}"
             )
@@ -449,20 +460,34 @@ def _rsi_filter_assumption(config: Optional[BotConfig]) -> Optional[str]:
 def _noon_entry_assumption(config: Optional[BotConfig]) -> Optional[str]:
     if config is None:
         return None
+    long_txt = None
+    short_txt = None
     for rule in config.rules:
         if not rule.enabled or rule.action.type == "close":
             continue
-        if not has_noon_stack(rule.when):
-            continue
         rsi_cond = find_rsi_condition(rule.when)
         period = rsi_cond.period if rsi_cond is not None else 14
-        below = rsi_cond.below if rsi_cond is not None and rsi_cond.below is not None else 70
-        return (
-            f"Entry is the noon day-trade stack: close crosses above EMA(9) AND "
-            f"close > SMA(20) AND RSI({period}) < {below:g} on the signal timeframe "
-            "(the default ema9_trend product). Fill at the next bar open."
-        )
-    return None
+        if has_noon_stack(rule.when):
+            below = rsi_cond.below if rsi_cond is not None and rsi_cond.below is not None else 70
+            long_txt = (
+                f"Long: close crosses above EMA(9) AND close > SMA(20) AND "
+                f"RSI({period}) < {below:g}"
+            )
+        if has_noon_short_stack(rule.when):
+            above = rsi_cond.above if rsi_cond is not None and rsi_cond.above is not None else 30
+            short_txt = (
+                f"Short: close crosses below EMA(9) AND close < SMA(20) AND "
+                f"RSI({period}) > {above:g}"
+            )
+    if not long_txt and not short_txt:
+        return None
+    parts = [p for p in (long_txt, short_txt) if p]
+    return (
+        "Entry is the noon day-trade stack on the signal timeframe "
+        f"({'; '.join(parts)}). Fill at the next bar open. "
+        "One position per symbol (long or short, not both); an opposite signal "
+        "while in a trade is skipped (opposite_signal_in_trade)."
+    )
 
 
 def _session_gate_assumption(config: Optional[BotConfig]) -> Optional[str]:
@@ -548,8 +573,23 @@ def sizing_tag(config: BotConfig) -> str:
     return ""
 
 
+def side_tag(config: BotConfig) -> str:
+    """long / short / long+short so isolated and combined books stay distinct."""
+    sides = entry_sides(config)
+    if sides == {"buy", "sell"}:
+        return "long+short"
+    if sides == {"sell"}:
+        return "short"
+    if sides == {"buy"}:
+        return "long"
+    return ""
+
+
 def combined_book_label(config: BotConfig) -> str:
     bits = [bit for bit in (universe_tag(config), sizing_tag(config)) if bit]
+    tag = side_tag(config)
+    if tag in {"long+short", "short"}:
+        bits.append(tag)
     return " ".join(bits) if bits else "combined"
 
 
@@ -605,7 +645,9 @@ def assumptions_rules(
         "If stop and take (or EMA-invalidation) both trade in the fill bar, the stop is assumed to fill first.",
         "A gap through stop/take fills at that bar's open. EMA-invalidation fills at the invalidating close. "
         "MA-cross exits fill at the next bar open after the EMA/SMA cross-under.",
-        "One open lot per symbol (no pyramiding). A second signal while that symbol is already open is skipped.",
+        "One open lot per symbol (no pyramiding; long or short, not both). "
+        "A second signal while that symbol is already open is skipped "
+        "(already_in_position, or opposite_signal_in_trade when the new side is the other way).",
         "A second symbol may open at the same time when cash covers its sized notional; otherwise the later signal is skipped (insufficient_cash).",
         "Open lots still on the last bar are flattened at the last close (exit reason eod).",
         "Regular-session Yahoo bars when the source is Yahoo (includePrePost=false), unadjusted OHLC.",
@@ -682,10 +724,14 @@ def rule_book_plan(
         note = EXIT_ONLY_NOTE if rule.action.type == "close" else None
         plans.append((rule.id, [rule.id], note))
     entries = entry_rule_ids(config)
-    if include_entries_only and len(entries) >= 2:
+    close_rules = [rule for rule in config.rules if rule.action.type == "close"]
+    if include_entries_only and len(entries) >= 2 and close_rules:
         plans.append(("sample-entries", entries, ENTRIES_ONLY_NOTE))
     if len(config.rules) > 1:
-        plans.append(("combined", None, COMBINED_NOTE))
+        long_short = entry_sides(config) == {"buy", "sell"} and not close_rules
+        extra = LONG_SHORT_COMBINED_NOTE if long_short else COMBINED_NOTE
+        label = combined_book_label(config) if long_short else "combined"
+        plans.append((label, None, extra))
     return plans
 
 
@@ -911,6 +957,24 @@ def _skip_mix(report: dict[str, Any]) -> str:
     return ", ".join(parts) if parts else "—"
 
 
+def _side_mix(report: dict[str, Any]) -> str:
+    sides = report.get("sides") or {}
+    if not sides:
+        return "—"
+    labels = {"buy": "long", "sell": "short"}
+    parts = []
+    for key in ("buy", "sell"):
+        block = sides.get(key)
+        if not block:
+            continue
+        wr = _fmt_pct(block.get("win_rate_pct"), 2)
+        parts.append(
+            f"{labels.get(key, key)} {int(block.get('trades') or 0)}t {wr} "
+            f"{_fmt_money(block.get('total_pnl'))}"
+        )
+    return "; ".join(parts) if parts else "—"
+
+
 def exit_mix(report: dict[str, Any]) -> str:
     reasons = report.get("exit_reasons") or {}
     take = int(reasons.get("take") or 0)
@@ -1032,6 +1096,7 @@ def format_side_by_side_table(columns: list[tuple[str, dict[str, Any]]]) -> list
         ("BE armed", lambda r: str(int(r.get("breakeven_armed") or 0))),
         ("Lock armed", lambda r: str(int(r.get("lock_armed") or 0))),
         ("Trail ratcheted", lambda r: str(int(r.get("trail_ratcheted") or 0))),
+        ("By side", lambda r: _side_mix(r)),
     ]
     for label, fmt in rows:
         lines.append(f"| {label} | {cells(fmt)} |")

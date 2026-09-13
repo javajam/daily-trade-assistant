@@ -1,8 +1,11 @@
-# Refined EMA9 day-trade — 1% equity-risk book (paper / dry_run).
+# Refined EMA9 day-trade — 1% equity-risk book, long + mirrored short.
 #
-# Same noon stack + lock-+1% as config/ema9_trend.example.yaml.
+# Same noon stack + lock-+1% as config/ema9_trend.example.yaml (AAPL / MSFT).
 # Size: risk ~1% of current equity at the 1.0% initial fill stop
 #   shares = floor( (0.01 * equity) / (0.01 * entry_price) )
+# Shorts use the same 1% R (initial stop is fill × 1.01).
+# One position per symbol (long or short). Opposite signal while in a trade
+# is skipped (opposite_signal_in_trade). Disable a side with enabled: false.
 # No fixed take-profit. Session gates on (toggle to null / off).
 # Optional stop siblings: config/ema9_trend_risk_nobe_fixed1.example.yaml
 # and config/ema9_trend_risk_nobe_trail1.example.yaml.
@@ -39,7 +42,7 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "Noon book: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 1% equity risk at a 1.0% fill stop; lock to +1% on first touch of entry×1.01; no take."
+    notes: "Noon long: 15m price crosses above EMA(9) while above SMA20 and RSI < 70. 1% equity risk at a 1.0% fill stop; lock to +1% on first touch of entry×1.01; no take."
     when:
       all:
         - ema_cross:
@@ -56,6 +59,37 @@ rules:
             below: 70
     action:
       type: buy
+      size:
+        type: risk_pct
+        equity_risk: 0.01
+        stop_pct: 1.0
+      order: market
+      exit: fixed_bracket
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      lock_trigger_pct: 1.0
+      lock_stop_pct: 1.0
+  - id: ema9_trend_short
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Noon short: 15m price crosses below EMA(9) while below SMA20 and RSI > 30. 1% equity risk at a 1.0% fill stop; lock to fill×0.99 on first touch of −1%; no take."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bearish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: below
+        - rsi:
+            period: 14
+            timeframe: 15m
+            above: 30
+    action:
+      type: sell
       size:
         type: risk_pct
         equity_risk: 0.01

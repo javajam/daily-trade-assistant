@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -247,3 +248,48 @@ def test_session_flatten_waits_until_due(tmp_path):
         now=datetime(2026, 9, 11, 15, 40, tzinfo=NY),
     )
     assert broker.closed == []
+
+
+def test_runner_skips_opposite_signal_while_in_trade(tmp_path, caplog):
+    bars = [
+        bar(0, 10.10, 10.20, 10.00, 10.18),
+        bar(1, 10.25, 10.30, 9.90, 9.95),
+    ]
+    fixture = tmp_path / "bars.json"
+    save_fixture(fixture, {"AAPL": {"15Min": bars}})
+    rule = RuleSpec(
+        id="ema9_trend_short",
+        symbols=["AAPL"],
+        cooldown_minutes=0,
+        when=parse_condition({"pattern": "bearish_engulfing", "timeframe": "15m"}),
+        action=ActionSpec(
+            type="sell",
+            size=SizeSpec(type="shares", value=10),
+            stop_mode="lock_plus",
+            stop_loss_pct=1.0,
+        ),
+    )
+    cfg = BotConfig(
+        settings=Settings(
+            lookback_bars=80,
+            max_open_positions=5,
+            state_file=str(tmp_path / "state.json"),
+            kill_switch_file=str(tmp_path / "KILL"),
+        ),
+        universe=["AAPL"],
+        rules=[rule],
+    )
+    broker = _PosBroker(
+        [Position(symbol="AAPL", qty=10, side="long", avg_entry_price=10.0, market_value=100.0)]
+    )
+    with caplog.at_level(logging.INFO):
+        results = run_once(
+            cfg,
+            broker=broker,
+            data=FixtureMarketData(fixture),
+            state=BotState(),
+            dry_run=True,
+        )
+    assert any(r.matched and r.action_type == "sell" for r in results)
+    assert broker.closed == []
+    assert "opposite_signal_in_trade" in caplog.text
