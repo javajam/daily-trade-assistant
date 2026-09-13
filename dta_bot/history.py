@@ -274,6 +274,11 @@ def series_span(bars: list[Bar]) -> tuple[Optional[datetime], Optional[datetime]
     return bars[0].timestamp, bars[-1].timestamp
 
 
+def drop_empty_prints(bars: list[Bar]) -> list[Bar]:
+    """Drop official-close prints (zero volume and zero range), which are not candles."""
+    return [b for b in bars if b.volume > 0 and b.range() > 0]
+
+
 def drop_still_forming(
     bars: list[Bar],
     timeframe: str,

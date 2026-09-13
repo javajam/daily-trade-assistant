@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
-from dta_bot.history import parse_yahoo_chart
+from dta_bot.history import drop_empty_prints, parse_yahoo_chart
+from dta_bot.models import Bar
 from dta_bot.timeframes import normalize
 
 
@@ -32,6 +33,12 @@ def test_parse_yahoo_chart_skips_null_bars():
     assert bars[0].close == 10.2
     assert bars[1].open == 11.0
     assert bars[1].volume == 300
+
+
+def test_drop_empty_prints():
+    keep = Bar(datetime(2026, 9, 11, 19, 45, tzinfo=timezone.utc), 1, 2, 0.5, 1.5, 100)
+    drop = Bar(datetime(2026, 9, 11, 20, 0, tzinfo=timezone.utc), 1, 1, 1, 1, 0)
+    assert drop_empty_prints([keep, drop]) == [keep]
 
 
 def test_normalize_matches_yahoo_keys():

@@ -10,7 +10,7 @@ from pathlib import Path
 from dta_bot.backtest import format_report_md, restrict_config, run_backtest, write_results_json
 from dta_bot.broker import build_broker, resolve_api_keys, resolve_trading_url
 from dta_bot.config import load_config
-from dta_bot.history import download_pairs, drop_still_forming, series_span
+from dta_bot.history import download_pairs, drop_empty_prints, drop_still_forming, series_span
 from dta_bot.killswitch import is_active, pause, reason as kill_reason, resume
 from dta_bot.logging_setup import setup_logging
 from dta_bot.market_data import FixtureMarketData, build_market_data
@@ -164,11 +164,15 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             feed=cfg.settings.data_feed,
             cache_dir=args.cache_dir,
         )
-        used = sorted(set(sources.values()))
-        source_label = ", ".join(used) if used else args.source
+        if args.source == "alpaca" or (
+            args.source == "auto" and any(str(v).startswith("alpaca") for v in sources.values())
+        ):
+            source_label = "Alpaca market data (raw, configured feed)"
+        else:
+            source_label = "Yahoo Finance v8 chart (unadjusted regular-session OHLC)"
 
     for key, series in list(bars.items()):
-        bars[key] = drop_still_forming(series, key[1], now=now)
+        bars[key] = drop_empty_prints(drop_still_forming(series, key[1], now=now))
 
     spans = []
     for (symbol, tf), series in sorted(bars.items()):
@@ -225,8 +229,45 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             f"pnl=${r.total_pnl:.2f} ({r.total_pnl_pct:.3f}%) "
             f"dd=${r.max_drawdown} ({r.max_drawdown_pct})"
         )
-        runs.append(result.to_dict())
+        payload_run = result.to_dict()
+        hits: dict[str, int] = {}
+        for sig in result.signals:
+            for name in (
+                "bullish_engulfing",
+                "bearish_engulfing",
+                "evening_star",
+                "hammer",
+            ):
+                if f"{name} matched" in sig.reason:
+                    hits[name] = hits.get(name, 0) + 1
+        payload_run["pattern_hits"] = hits
+        runs.append(payload_run)
 
+    compact_runs = []
+    for run in runs:
+        compact_runs.append(
+            {
+                "label": run["label"],
+                "report": run["report"],
+                "bars_used": run["bars_used"],
+                "pattern_hits": run.get("pattern_hits"),
+                "trades": run["trades"],
+                "signals": [
+                    {
+                        k: sig[k]
+                        for k in (
+                            "rule_id",
+                            "symbol",
+                            "action_type",
+                            "signal_time",
+                            "accepted",
+                            "skip_reason",
+                        )
+                    }
+                    for sig in run["signals"]
+                ],
+            }
+        )
     payload = {
         "generated_at": now.isoformat().replace("+00:00", "Z"),
         "config": args.config,
@@ -236,7 +277,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         "data_spans": spans,
         "sources": sources,
         "assumptions": assumptions,
-        "runs": runs,
+        "runs": compact_runs,
     }
     write_results_json(args.output, payload)
     report_path = Path(args.report)

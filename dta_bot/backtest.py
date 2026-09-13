@@ -372,9 +372,12 @@ def run_backtest(
     """Walk closed bars in time order and evaluate ``config.rules`` at each close."""
     logging.getLogger("dta_bot.engine").setLevel(logging.WARNING)
 
+    needed = {(s.upper(), normalize(tf)) for s, tf in config.all_symbol_timeframes()}
     series_map: BarMap = {}
     for key, series in bars_by_key.items():
         symbol, tf = key[0].upper(), normalize(key[1])
+        if needed and (symbol, tf) not in needed:
+            continue
         cleaned = sorted(series, key=lambda b: _aware(b.timestamp))
         series_map[(symbol, tf)] = cleaned
 
@@ -694,8 +697,10 @@ def format_report_md(payload: dict[str, Any]) -> str:
                 f"## {r['rule_id']}",
                 "",
                 f"- Period: {r.get('period_start')} → {r.get('period_end')}",
+                f"- Bars used: {block.get('bars_used')}",
                 f"- Data source: {r.get('data_source')}",
                 f"- Signals: {r['signals']}  (by symbol: {r.get('signals_by_symbol')})",
+                f"- Pattern hits in those signals: {block.get('pattern_hits')}",
                 f"- Trades: {r['trades']}  (by symbol: {r.get('trades_by_symbol')})",
                 f"- Wins / losses / scratch: {r['wins']} / {r['losses']} / {r['breakeven']}",
                 f"- Win rate: {_fmt_opt_pct(r.get('win_rate_pct'))}",
@@ -707,8 +712,9 @@ def format_report_md(payload: dict[str, Any]) -> str:
                 f"- Exit reasons: {r.get('exit_reasons')}",
             ]
         )
-        for note in r.get("notes") or []:
-            lines.append(f"- Note: {note}")
+        extra_notes = [n for n in (r.get("notes") or []) if n.startswith("Exit-only")]
+        for note in extra_notes:
+            lines.append(f"- {note}")
         lines.append("")
     extra = payload.get("assumptions") or []
     if extra:

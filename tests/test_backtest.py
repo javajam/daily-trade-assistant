@@ -177,6 +177,22 @@ def test_same_bar_stop_and_take_uses_stop():
     assert result.trades[0].exit_reason == "stop"
 
 
+def test_unused_series_do_not_widen_period():
+    bars = [
+        Bar(bar(0, 10, 10.2, 8.0, 8.2).timestamp, 10.0, 10.2, 8.0, 8.2, 1000),
+        Bar(bar(1, 8.1, 11.0, 8.0, 10.4).timestamp, 8.1, 11.0, 8.0, 10.4, 1000),
+        Bar(bar(2, 10.4, 10.72, 10.3, 10.5).timestamp, 10.4, 10.72, 10.3, 10.5, 1000),
+    ]
+    leftover = Bar(datetime(2020, 1, 1, tzinfo=timezone.utc), 1, 1, 1, 1, 1)
+    result = run_backtest(
+        _cfg(_buy_rule()),
+        {("AAPL", "15Min"): bars, ("SPY", "1Hour"): [leftover]},
+        starting_equity=100_000,
+    )
+    assert result.report.period_start.startswith("2026-09-11")
+    assert "SPY:1Hour" not in result.bars_used
+
+
 def test_summarize_handles_empty_book():
     report = summarize(
         label="empty",
