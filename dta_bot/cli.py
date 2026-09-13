@@ -9,7 +9,7 @@ from pathlib import Path
 
 from dta_bot.backtest import format_report_md, write_results_json
 from dta_bot.broker import build_broker, resolve_api_keys, resolve_trading_url
-from dta_bot.config import BotConfig, load_config
+from dta_bot.config import BotConfig, condition_timeframes, load_config
 from dta_bot.compare import (
     MULTI_ENGINE_NOTE,
     assumptions_orb,
@@ -37,6 +37,12 @@ def _add_shared(p: argparse.ArgumentParser) -> None:
         help="Path to YAML/JSON rules file (default: config/rules.example.yaml)",
     )
     p.add_argument("--verbose", "-v", action="store_true")
+    p.add_argument(
+        "--timeframe",
+        default=None,
+        help="Rewrite every rule condition to this bar size (e.g. 5m or 15m). "
+        "Cooldown stays wall-clock minutes. Ignored for ORB configs.",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -115,15 +121,15 @@ def _dry_run_flag(args: argparse.Namespace, config_dry: bool) -> bool:
     return config_dry
 
 
-def _load_any(path: str) -> tuple[str, BotConfig | OrbBotConfig]:
+def _load_any(path: str, timeframe: str | None = None) -> tuple[str, BotConfig | OrbBotConfig]:
     kind = peek_config_kind(path)
     if kind == "orb":
         return kind, load_orb_config(path)
-    return kind, load_config(path)
+    return kind, load_config(path, timeframe=timeframe)
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
-    kind, cfg = _load_any(args.config)
+    kind, cfg = _load_any(args.config, timeframe=getattr(args, "timeframe", None))
     print(f"Loaded {args.config} ({kind})")
     print(f"  settings.paper={cfg.settings.paper} allow_live={cfg.settings.allow_live} dry_run={cfg.settings.dry_run}")
     print(f"  universe={cfg.universe or '(per-rule)'}")
@@ -148,15 +154,16 @@ def cmd_validate(args: argparse.Namespace) -> int:
     print(f"  rules={len(cfg.rules)}")
     for rule in cfg.rules:
         syms = cfg.symbols_for(rule)
+        tfs = ",".join(sorted(condition_timeframes(rule.when)))
         print(
             f"    - {rule.id}: enabled={rule.enabled} symbols={syms} "
-            f"action={rule.action.type} cooldown={rule.cooldown_minutes}m"
+            f"action={rule.action.type} cooldown={rule.cooldown_minutes}m tf={tfs}"
         )
     return 0
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    kind, cfg = _load_any(args.config)
+    kind, cfg = _load_any(args.config, timeframe=getattr(args, "timeframe", None))
     url, mode = resolve_trading_url(allow_live=cfg.settings.allow_live)
     key, secret = resolve_api_keys()
     print(f"config:          {args.config} ({kind})")
@@ -244,8 +251,9 @@ def _load_backtest_bars(
 def cmd_backtest(args: argparse.Namespace) -> int:
     paths = [args.config, *list(args.compare_config or [])]
     loaded: list[tuple[str, str, BotConfig | OrbBotConfig]] = []
+    override_tf = getattr(args, "timeframe", None)
     for path in paths:
-        kind, cfg = _load_any(path)
+        kind, cfg = _load_any(path, timeframe=override_tf)
         loaded.append((path, kind, cfg))
     now = datetime.now(timezone.utc)
     bars, sources, spans, source_label = _load_backtest_bars(
@@ -359,7 +367,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    _kind, cfg = _load_any(args.config)
+    _kind, cfg = _load_any(args.config, timeframe=getattr(args, "timeframe", None))
     dry = _dry_run_flag(args, cfg.settings.dry_run)
     fixture = getattr(args, "fixture", None)
     data = FixtureMarketData(fixture) if fixture else build_market_data(

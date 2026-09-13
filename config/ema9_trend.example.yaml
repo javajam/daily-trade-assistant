@@ -1,12 +1,18 @@
 # 9 EMA trend — long-only v1 (paper / dry_run).
 #
-# Same universe, 15m tape, SMA20 + RSI14 trend filter, 10-share size, 1.5/3.0
-# brackets, and 60m cooldown as engulfing-with-trend. The entry trigger is a
-# bullish close-across-EMA(9) instead of a bullish engulfing candle.
+# Same universe, SMA20 + RSI14 trend filter, 10-share size, 1.5/3.0 brackets,
+# and 60-minute wall-clock cooldown as engulfing-with-trend. The entry trigger
+# is a bullish close-across-EMA(9) instead of a bullish engulfing candle.
+#
+# Bar size is parameterized: settings.timeframe (or --timeframe on the CLI)
+# rewrites every condition. Default here is 15m. Same book on 5m:
+#
+#   python -m dta_bot backtest --config config/ema9_trend.example.yaml --timeframe 5m
+#   # or: config/ema9_trend_5m.example.yaml
 #
 # Cross definition (engine MaCrossCond): previous close <= previous EMA9 and
 # current close > current EMA9, evaluated only when the trend filter is true
-# on that same 15m bar.
+# on that same bar (all indicators use the chosen timeframe).
 #
 # This file also ships:
 #   - ema9_cross_raw — same cross and risk, no SMA/RSI filter (ablation)
@@ -17,6 +23,8 @@
 #   python -m dta_bot validate --config config/ema9_trend.example.yaml
 #   python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yahoo \
 #     --output artifacts/ema9_vs_engulfing.json --report artifacts/ema9_vs_engulfing.md
+#   python -m dta_bot backtest --config config/ema9_trend.example.yaml --timeframe 5m \
+#     --source yahoo --output artifacts/ema9_5m.json --report artifacts/ema9_5m.md
 
 settings:
   paper: true
@@ -28,6 +36,7 @@ settings:
   max_open_positions: 5
   data_feed: iex
   lookback_bars: 80
+  timeframe: 15m
 
 universe:
   - AAPL

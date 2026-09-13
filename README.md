@@ -202,9 +202,18 @@ rules:
 
 ### 9 EMA trend (sample strategy)
 
-`config/ema9_trend.example.yaml` is a long-only 15m book on AAPL/MSFT that **reuses the engulfing-with-trend filter and risk**: close above SMA(20), RSI(14) below 70, buy 10 shares, stop 1.5%, take 3.0%, 60-minute cooldown. The trigger is a bullish **EMA(9) cross** instead of a bullish engulfing candle. Paper / `dry_run` defaults; no live.
+`config/ema9_trend.example.yaml` is a long-only book on AAPL/MSFT that **reuses the engulfing-with-trend filter and risk**: close above SMA(20), RSI(14) below 70, buy 10 shares, stop 1.5%, take 3.0%, 60-minute **wall-clock** cooldown. The trigger is a bullish **EMA(9) cross** instead of a bullish engulfing candle. Paper / `dry_run` defaults; no live.
 
-The same file also ships `ema9_cross_raw` (cross, no trend filter) and `engulfing-with-trend` (the control) so one backtest is a head-to-head on the same Yahoo 15m tape:
+Bar size is `settings.timeframe` (default **15m**). The same rules on 5-minute bars (every indicator on 5m; cooldown still 60 minutes):
+
+```bash
+python -m dta_bot backtest --config config/ema9_trend.example.yaml --timeframe 5m --source yahoo
+# or
+python -m dta_bot backtest --config config/ema9_trend_5m.example.yaml --source yahoo \
+  --output artifacts/ema9_5m.json --report artifacts/ema9_5m.md
+```
+
+The same file also ships `ema9_cross_raw` (cross, no trend filter) and `engulfing-with-trend` (the control) so one backtest is a head-to-head on the same tape:
 
 ```bash
 python -m dta_bot validate --config config/ema9_trend.example.yaml
@@ -212,9 +221,9 @@ python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yaho
   --output artifacts/ema9_vs_engulfing.json --report artifacts/ema9_vs_engulfing.md
 ```
 
-Copy to `config/ema9_trend.yaml` (gitignored) and disable the ablation/control rules if you only want to paper the 9 EMA book.
+Copy to `config/ema9_trend.yaml` or `config/ema9_trend_5m.yaml` (gitignored) and disable the ablation/control rules if you only want to paper the 9 EMA book.
 
-On the Yahoo 15m window 2026-06-17 → 2026-09-11 (AAPL/MSFT, 1560 bars each), isolated books were: **ema9_trend 44 trades, 50.00%, $1,404.89**; ablation `ema9_cross_raw` 53 trades, 49.06%, $1,236.03; **engulfing-with-trend 39 trades, 43.59%, $697.90** (reproduced the prior control). Writeup: `artifacts/ema9_vs_engulfing.md`.
+On the Yahoo 15m window 2026-06-17 → 2026-09-11 (AAPL/MSFT, 1560 bars each), isolated books were: **ema9_trend 44 trades, 50.00%, $1,404.89**; ablation `ema9_cross_raw` 53 trades, 49.06%, $1,236.03; **engulfing-with-trend 39 trades, 43.59%, $697.90** (reproduced the prior control). Writeup: `artifacts/ema9_vs_engulfing.md`. Yahoo 5m vs 15m comparison: `artifacts/ema9_5m_vs_15m.md` (5m history is capped at ~60 days).
 
 ### CLI
 

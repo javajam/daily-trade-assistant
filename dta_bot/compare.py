@@ -498,6 +498,49 @@ def combined_book_effect(runs: list[dict[str, Any]]) -> Optional[str]:
     )
 
 
+def exit_mix(report: dict[str, Any]) -> str:
+    reasons = report.get("exit_reasons") or {}
+    take = int(reasons.get("take") or 0)
+    stop = int(reasons.get("stop") or 0)
+    eod = int(reasons.get("eod") or 0)
+    parts = [f"take {take}", f"stop {stop}"]
+    if eod:
+        parts.append(f"eod {eod}")
+    extra = [
+        f"{key} {count}"
+        for key, count in reasons.items()
+        if key not in {"take", "stop", "eod"} and count
+    ]
+    parts.extend(extra)
+    return ", ".join(parts)
+
+
+def format_side_by_side_table(columns: list[tuple[str, dict[str, Any]]]) -> list[str]:
+    """Side-by-side trades, win rate, P&L, max DD, avg win/loss, takes vs stops."""
+    reports = [(name, (block.get("report") or block)) for name, block in columns]
+    names = [name for name, _ in reports]
+    lines = [
+        "| | " + " | ".join(names) + " |",
+        "| --- | " + " | ".join(["---:" for _ in names]) + " |",
+    ]
+
+    def cells(fmt) -> str:
+        return " | ".join(fmt(report) for _name, report in reports)
+
+    rows = [
+        ("Trades", lambda r: str(int(r.get("trades") or 0))),
+        ("Win rate", lambda r: _fmt_pct(r.get("win_rate_pct"), 2)),
+        ("P&L", lambda r: _fmt_money(r.get("total_pnl"))),
+        ("Max DD", lambda r: _fmt_money(r.get("max_drawdown"))),
+        ("Avg win", lambda r: _fmt_money(r.get("avg_win"))),
+        ("Avg loss", lambda r: _fmt_money(r.get("avg_loss"))),
+        ("Takes vs stops", lambda r: exit_mix(r)),
+    ]
+    for label, fmt in rows:
+        lines.append(f"| {label} | {cells(fmt)} |")
+    return lines
+
+
 def format_comparison_table(rows: list[dict[str, Any]]) -> list[str]:
     lines = [
         "| Rank | Book | Trades | Win rate | P&L $ | P&L % | Max DD | Avg win | Avg loss | Period | Caveat |",
