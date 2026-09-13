@@ -1,6 +1,6 @@
-# Book B (1% equity-risk) — price×EMA9 noon stack, lock stop to +1%.
+# Same as the default 1% risk product (config/ema9_trend_risk.example.yaml).
 #
-# Same entry / session / lock as config/ema9_trend_bracket_nobe_lock1.example.yaml.
+# Named sibling of the 10-share lock-+1% default. Same entry / session / lock.
 # Size: risk 1% of current equity at the 1.0% initial stop (stop_pct matches).
 # No take-profit.
 #

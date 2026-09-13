@@ -1,5 +1,6 @@
-# Book A (1% equity-risk) — price×EMA9 noon stack, fixed 1% stop from the fill.
+# Optional 1% equity-risk — noon stack, fixed 1% stop from the fill.
 #
+# Default 1% book uses lock-+1% (config/ema9_trend_risk.example.yaml).
 # Same entry / session / stop as config/ema9_trend_bracket_nobe_fixed1.example.yaml.
 # Size: risk 1% of current equity at the 1.0% stop (stop_pct matches the stop).
 # shares = floor((0.01 * equity) / (0.01 * price)).

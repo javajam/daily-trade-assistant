@@ -105,9 +105,15 @@ def test_assumptions_rules_mention_ma_cross():
     assert any("ema_invalid" in n and "close < EMA" in n for n in notes)
     cfg = load_config("config/ema9_trend.example.yaml")
     ema_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, cfg)
-    assert any("ma_cross" in n and "EMA(9)" in n and "SMA(20)" in n for n in ema_notes)
+    assert any("noon day-trade stack" in n and "EMA(9)" in n and "SMA(20)" in n for n in ema_notes)
+    assert any("stop_mode: lock_plus" in n and "entry×(1+1/100)" in n for n in ema_notes)
     assert any("entry_cutoff=12:00" in n and "flatten_by=15:55" in n for n in ema_notes)
     assert not any("breakeven_after_bars: 1" in n for n in ema_notes)
+    assert session_gate_suffix(cfg) == " (cutoff 12:00, flat 15:55, lock +1.0%)"
+    pair = load_config("config/ema9_trend_pair.example.yaml")
+    pair_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, pair)
+    assert any("ma_cross" in n and "EMA(9)" in n and "SMA(20)" in n for n in pair_notes)
+    assert any("No RSI entry filter" in n for n in pair_notes)
     old = load_config("config/ema9_trend_bracket_nobe.example.yaml")
     old_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, old)
     assert any("fixed_bracket" in n for n in old_notes)
@@ -118,15 +124,14 @@ def test_assumptions_rules_mention_ma_cross():
     assert session_gate_suffix(risk) == " (cutoff 12:00, flat 15:55, 1.5/3.0)"
     risk12 = load_config("config/ema9_trend_risk_nobe_12.example.yaml")
     assert session_gate_suffix(risk12) == " (cutoff 12:00, flat 15:55, 1.0/2.0)"
-    assert any("No RSI entry filter" in n for n in ema_notes)
     rsi_cfg = load_config("config/ema9_trend_bracket_rsi.example.yaml")
     rsi_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, rsi_cfg)
     assert any("RSI filter on (RSI14 < 70)" in n for n in rsi_notes)
     assert any("rsi: { period: 14, below: 70 }" in n for n in rsi_notes)
-    assert any("same threshold as the prior noon price-cross book" in n for n in rsi_notes)
+    assert any("same threshold as the default noon price-cross book" in n for n in rsi_notes)
     sixty = load_config("config/ema9_trend_bracket_rsi60.example.yaml")
     sixty_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, sixty)
-    assert any("RSI filter on (RSI14 < 60)" in n and "tighter than the prior noon" in n for n in sixty_notes)
+    assert any("RSI filter on (RSI14 < 60)" in n and "tighter than the default noon" in n for n in sixty_notes)
 
 
 def test_pattern_hits_count_ema_cross():

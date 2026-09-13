@@ -1,0 +1,52 @@
+# Prior EMA(9)/SMA(20) pair-cross on 5-minute bars — preserved.
+#
+# Identical to config/ema9_trend_pair.example.yaml except settings.timeframe /
+# every condition is 5m. Cooldown stays 60 wall-clock minutes.
+# Current 5m product: config/ema9_trend_5m.example.yaml (noon + lock-+1%).
+#
+#   python -m dta_bot backtest --config config/ema9_trend_5m_pair.example.yaml --source yahoo \
+#     --output artifacts/ema9_ma_cross_5m.json \
+#     --report artifacts/ema9_ma_cross_5m.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 5m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"   # null / off disables
+  flatten_by: "15:55"     # null / off disables
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Prior 5m pair-cross: EMA(9) cross over SMA(20). Flatten next bar open on EMA(9) cross under SMA(20). 1.5% stop; no take-profit; no break-even."
+    when:
+      ema_sma_cross:
+        ema_period: 9
+        sma_period: 20
+        timeframe: 5m
+        direction: bullish
+      # rsi: { period: 14, below: 70 }   # optional; omit = no RSI filter
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      exit: ma_cross
+      ema_period: 9
+      sma_period: 20
+      stop_loss_pct: 1.5

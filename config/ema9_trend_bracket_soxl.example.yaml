@@ -1,5 +1,5 @@
 # 9/20 MA-cross — 10-share book with SOXL added (optional universe).
-# Same locked entry/exit as ema9_trend_bracket.example.yaml.
+# Same pair-cross entry/exit as config/ema9_trend_pair.example.yaml.
 #
 #   python -m dta_bot backtest --config config/ema9_trend_bracket_soxl.example.yaml \
 #     --source yahoo --breakout SOXL \

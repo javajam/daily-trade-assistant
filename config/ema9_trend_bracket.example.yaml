@@ -1,19 +1,16 @@
-# 9/20 MA-cross — 10-share book (comparison / default size).
+# Refined EMA9 day-trade — 10-share book (same as ema9_trend.example.yaml).
 #
-# Same locked product as ema9_trend.example.yaml: EMA(9) cross over SMA(20)
-# entry, EMA(9) cross-under flatten at next bar open, 1.5% stop, no take-profit,
-# no break-even. Session gates on (toggle to null / off). No RSI filter
-# (Book A). Filtered sibling: config/ema9_trend_bracket_rsi.example.yaml
-# (`rsi: { period: 14, below: 70 }` beside ema_sma_cross).
-#
-# Prior noon price-cross book (old entry, 1.5/3.0, no BE):
-#   config/ema9_trend_bracket_nobe.example.yaml
+# Default product: price crosses EMA(9) while close > SMA(20) and RSI14 < 70,
+# lock-+1% stop from the fill, no take-profit, session gates on.
+# Optional stop siblings: fixed 1% / trail 1% (nobe_fixed1 / nobe_trail1).
+# Prior pair-cross 10-share: config/ema9_trend_pair.example.yaml
 #
 #   python -m dta_bot backtest --config config/ema9_trend_bracket.example.yaml \
-#     --compare-config config/ema9_trend_bracket_nobe.example.yaml --source yahoo \
-#     --combined-only --symbols AAPL,MSFT \
-#     --output artifacts/ema9_ma_cross.json \
-#     --report artifacts/ema9_ma_cross.md
+#     --compare-config config/ema9_trend_bracket_nobe_fixed1.example.yaml \
+#     --compare-config config/ema9_trend_bracket_nobe_trail1.example.yaml \
+#     --source yahoo --combined-only --symbols AAPL,MSFT \
+#     --output artifacts/ema9_stop_manage.json \
+#     --report artifacts/ema9_stop_manage.md
 
 settings:
   paper: true
@@ -39,21 +36,29 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "15m EMA(9) cross over SMA(20), 10 shares. Flatten next open on EMA(9) cross under SMA(20). 1.5% stop; no take-profit; no break-even."
+    notes: "Noon book: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 10 shares, lock stop to +1% on first touch of entry×1.01, no take."
     when:
-      ema_sma_cross:
-        ema_period: 9
-        sma_period: 20
-        timeframe: 15m
-        direction: bullish
-      # rsi: { period: 14, below: 70 }   # optional; omit = no RSI filter
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
     action:
       type: buy
       size:
         type: shares
         value: 10
       order: market
-      exit: ma_cross
-      ema_period: 9
-      sma_period: 20
-      stop_loss_pct: 1.5
+      exit: fixed_bracket
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      lock_trigger_pct: 1.0
+      lock_stop_pct: 1.0

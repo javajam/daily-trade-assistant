@@ -1,25 +1,24 @@
-# 9/20 MA-cross — long-only (paper / dry_run).
+# Refined EMA9 day-trade — long-only (paper / dry_run). Default product.
 #
-# Universe AAPL / MSFT (SOXL is optional: config/ema9_trend_bracket_soxl.example.yaml
-# and config/ema9_trend_risk_soxl.example.yaml). Clean pair-cross:
+# Universe AAPL / MSFT. Entry (noon stack):
 #
-#   Entry: EMA(9) crosses over SMA(20) on the signal timeframe
-#          (prev EMA9 <= prev SMA20 and curr EMA9 > curr SMA20).
-#          Optional RSI toggle (off by default): only take that cross
-#          when RSI(14) on the signal bar is below 70 —
-#            rsi: { period: 14, below: 70 }
-#          as a sibling of ema_sma_cross (or nested under it).
-#          Filtered book: config/ema9_trend_bracket_rsi.example.yaml
-#   Exit:  EMA(9) crosses under SMA(20); flatten at the *next bar open*
-#          (same fill as entries). Same-bar 1.5% stop still wins.
-#   Stop:  fixed 1.5% initial stop only. Break-even is off (omit /
-#          breakeven_after_bars: 0). No take-profit.
+#   close crosses above EMA(9) AND close > SMA(20) AND RSI(14) < 70
+#   Fill at the next bar open.
 #
 # Session gates (America/New_York) — toggle either to null / off:
 #   entry_cutoff: "12:00"   # skip fills at/after this clock; null = off
 #   flatten_by: "15:55"     # force-flat at flatten-bar close; null = off
-# Overnight control: config/ema9_trend_bracket_overnight.example.yaml
-# Prior noon price-cross book (old entry): config/ema9_trend_bracket_nobe.example.yaml
+#
+# Stop (default stop_mode: lock_plus):
+#   initial stop = fill × 0.99
+#   first trade/touch of fill × 1.01 (bar high ≥ trigger) moves the stop to
+#   fill × 1.01 and leaves it. Locked stop is live from the next bar.
+# No fixed take-profit. Exits = stop / lock_stop / session_flatten.
+#
+# Optional stop siblings (same entry / session):
+#   fixed 1% from fill:  config/ema9_trend_bracket_nobe_fixed1.example.yaml
+#   trail 1% from peak:  config/ema9_trend_bracket_nobe_trail1.example.yaml
+# Prior pair-cross product: config/ema9_trend_pair.example.yaml
 #
 # Bar size is settings.timeframe (or --timeframe). Default 15m. Same book on 5m:
 #
@@ -28,8 +27,10 @@
 #
 #   python -m dta_bot validate --config config/ema9_trend.example.yaml
 #   python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yahoo \
-#     --output artifacts/ema9_ma_cross.json \
-#     --report artifacts/ema9_ma_cross.md
+#     --compare-config config/ema9_trend_5m.example.yaml \
+#     --combined-only --symbols AAPL,MSFT \
+#     --output artifacts/ema9_lock_5m_vs_15m.json \
+#     --report artifacts/ema9_lock_5m_vs_15m.md
 
 settings:
   paper: true
@@ -55,21 +56,29 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "15m EMA(9) cross over SMA(20). Flatten next bar open on EMA(9) cross under SMA(20). 1.5% stop; no take-profit; no break-even."
+    notes: "Noon book: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 10 shares, lock stop to +1% on first touch of entry×1.01, no take."
     when:
-      ema_sma_cross:
-        ema_period: 9
-        sma_period: 20
-        timeframe: 15m
-        direction: bullish
-      # rsi: { period: 14, below: 70 }   # optional; omit = no RSI filter
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
     action:
       type: buy
       size:
         type: shares
         value: 10
       order: market
-      exit: ma_cross
-      ema_period: 9
-      sma_period: 20
-      stop_loss_pct: 1.5
+      exit: fixed_bracket
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      lock_trigger_pct: 1.0
+      lock_stop_pct: 1.0

@@ -1,6 +1,7 @@
-# Book C — price×EMA9 noon stack, trailing 1% from peak since entry.
+# Optional — same noon stack as the default, trailing 1% from peak since entry.
 #
-# Same entry / session as Book A (config/ema9_trend_bracket_nobe_fixed1.example.yaml).
+# Default product uses lock-+1% (config/ema9_trend.example.yaml).
+# Same entry / session as the fixed-1% sibling.
 # Stop (stop_mode: trail):
 #   stop = peak_price_since_entry × 0.99 (ratchets up only)
 #   peak starts at the fill; updates from each bar high after the stop check

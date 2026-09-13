@@ -18,6 +18,7 @@ from dta_bot.backtest import (
 from dta_bot.config import (
     BotConfig,
     find_rsi_condition,
+    has_noon_stack,
     restrict_universe,
     rsi_filter_label,
     timeframe_label,
@@ -426,9 +427,9 @@ def _rsi_filter_assumption(config: Optional[BotConfig]) -> Optional[str]:
         period = rsi_cond.period if rsi_cond is not None else 14
         below = rsi_cond.below if rsi_cond is not None and rsi_cond.below is not None else 70
         noon = (
-            " (same threshold as the prior noon price-cross book)"
+            " (same threshold as the default noon price-cross book)"
             if below == 70
-            else " (tighter than the prior noon book's RSI14 < 70)"
+            else " (tighter than the default noon book's RSI14 < 70)"
         )
         return (
             f"RSI filter on ({label}): only take the EMA/SMA pair-cross entry when "
@@ -439,8 +440,27 @@ def _rsi_filter_assumption(config: Optional[BotConfig]) -> Optional[str]:
     if exits == {"ma_cross"}:
         return (
             "No RSI entry filter. Add a sibling of ema_sma_cross to require RSI on the "
-            "signal bar: `rsi: { period: 14, below: 70 }` (same threshold as the prior "
+            "signal bar: `rsi: { period: 14, below: 70 }` (same threshold as the default "
             "noon price-cross book). Nested `ema_sma_cross.rsi` is also accepted."
+        )
+    return None
+
+
+def _noon_entry_assumption(config: Optional[BotConfig]) -> Optional[str]:
+    if config is None:
+        return None
+    for rule in config.rules:
+        if not rule.enabled or rule.action.type == "close":
+            continue
+        if not has_noon_stack(rule.when):
+            continue
+        rsi_cond = find_rsi_condition(rule.when)
+        period = rsi_cond.period if rsi_cond is not None else 14
+        below = rsi_cond.below if rsi_cond is not None and rsi_cond.below is not None else 70
+        return (
+            f"Entry is the noon day-trade stack: close crosses above EMA(9) AND "
+            f"close > SMA(20) AND RSI({period}) < {below:g} on the signal timeframe "
+            "(the default ema9_trend product). Fill at the next bar open."
         )
     return None
 
@@ -551,6 +571,7 @@ def assumptions_rules(
         "Signals come from the live evaluate_rule path (same pattern/SMA/EMA/RSI/volume/MA-cross detectors).",
         "A rule is evaluated when any of its referenced timeframes prints a newly closed bar.",
         "Entries and close-signals fill at the next bar open of the finest rule timeframe.",
+        _noon_entry_assumption(config),
         _rules_exit_assumption(config),
         _breakeven_assumption(config),
         "If stop and take (or EMA-invalidation) both trade in the fill bar, the stop is assumed to fill first.",

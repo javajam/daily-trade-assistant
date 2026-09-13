@@ -1,7 +1,7 @@
-# Book A — price×EMA9 noon stack, fixed 1% stop from the fill.
+# Optional — same noon stack as the default, fixed 1% stop from the fill.
 #
-# Same entry as config/ema9_trend_bracket_nobe.example.yaml:
-#   close crosses above EMA(9) AND close > SMA(20) AND RSI14 < 70
+# Default product uses lock-+1% (config/ema9_trend.example.yaml).
+# Same entry: close crosses above EMA(9) AND close > SMA(20) AND RSI14 < 70
 # Session: entry_cutoff 12:00 ET, flatten_by 15:55 ET.
 # Stop (stop_mode: entry_pct): 1% below the *fill* (next-bar open); never moves.
 # No take-profit. Exits = stop or session_flatten.

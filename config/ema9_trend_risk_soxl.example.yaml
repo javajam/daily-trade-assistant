@@ -1,6 +1,6 @@
 # 9/20 MA-cross — 1% risk book with SOXL included (optional universe).
 #
-# Same locked product as ema9_trend_risk.example.yaml plus SOXL.
+# Same pair-cross as config/ema9_trend_risk_pair.example.yaml plus SOXL.
 #
 #   python -m dta_bot backtest --config config/ema9_trend_risk_soxl.example.yaml \
 #     --source yahoo --start 2026-08-01 --end 2026-08-31 --breakout SOXL \

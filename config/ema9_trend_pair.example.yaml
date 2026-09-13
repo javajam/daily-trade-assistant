@@ -1,19 +1,18 @@
-# 9/20 MA-cross — 10-share book with RSI14 < 70 entry filter (Book B).
+# Prior EMA(9)/SMA(20) pair-cross product — preserved for comparison.
 #
-# Same pair-cross as config/ema9_trend_pair.example.yaml except the entry
-# also requires RSI(14) on the signal 15m bar to be below 70 (same threshold
-# as the default noon price-cross book). YAML toggle:
+# This is *not* the current product. It keeps the previous 12:00 / 15:55
+# 10-share book: EMA(9) crosses over SMA(20), flatten next open on EMA(9)
+# cross under SMA(20), 1.5% stop, no take-profit, no break-even. Optional
+# RSI toggle is off (see config/ema9_trend_bracket_rsi.example.yaml).
 #
-#   rsi: { period: 14, below: 70 }
-#
-# beside ema_sma_cross. Omit that key (Book A) to restore the unfiltered
-# pair-cross. Tightened sibling: config/ema9_trend_bracket_rsi60.example.yaml.
+# Current product (noon price-cross + lock-+1%): config/ema9_trend.example.yaml
+# 1% risk pair-cross sibling: config/ema9_trend_risk_pair.example.yaml
+# 5m pair-cross sibling: config/ema9_trend_5m_pair.example.yaml
 #
 #   python -m dta_bot backtest --config config/ema9_trend_pair.example.yaml \
-#     --compare-config config/ema9_trend_bracket_rsi.example.yaml \
 #     --source yahoo --combined-only --symbols AAPL,MSFT \
-#     --output artifacts/ema9_ma_cross_rsi.json \
-#     --report artifacts/ema9_ma_cross_rsi.md
+#     --output artifacts/ema9_ma_cross.json \
+#     --report artifacts/ema9_ma_cross.md
 
 settings:
   paper: true
@@ -39,14 +38,14 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "15m EMA(9) cross over SMA(20) only when RSI14 < 70. 10 shares. Flatten next open on EMA(9) cross under SMA(20). 1.5% stop; no take-profit; no break-even."
+    notes: "Prior pair-cross: 15m EMA(9) cross over SMA(20). Flatten next bar open on EMA(9) cross under SMA(20). 1.5% stop; no take-profit; no break-even."
     when:
       ema_sma_cross:
         ema_period: 9
         sma_period: 20
         timeframe: 15m
         direction: bullish
-      rsi: { period: 14, below: 70 }
+      # rsi: { period: 14, below: 70 }   # optional; omit = no RSI filter
     action:
       type: buy
       size:

@@ -1,7 +1,8 @@
 # Prior noon day-trade book — old entry, 1% equity-risk, 1.5/3.0 brackets.
 #
-# Restored price×EMA(9) risk YAML (the pair-cross product replaced
-# config/ema9_trend_risk.example.yaml). Same entry as
+# Same noon entry as the current lock-+1% product, but 1.5/3.0 percent
+# brackets from the signal close. Current 1% book:
+# config/ema9_trend_risk.example.yaml (lock_plus, no take). Same entry as
 # config/ema9_trend_bracket_nobe.example.yaml, no break-even:
 #   close crosses above EMA(9) AND close > SMA(20) AND RSI14 < 70
 # Size: risk 1% of current equity at the 1.5% stop (stop_pct must match).
