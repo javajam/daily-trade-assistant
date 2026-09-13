@@ -137,6 +137,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
             f"  on_open_position={cfg.orb.on_open_position} "
             f"reversal_in_range={cfg.orb.reversal_in_range} "
             f"take_profit_mode={cfg.orb.take_profit_mode} "
+            f"ema_filter={cfg.orb.ema_filter} ema_period={cfg.orb.ema_period} "
             f"stop_mode={cfg.orb.stop_mode} min_or_height_pct={cfg.orb.min_or_height_pct} "
             f"entry_cutoff={cfg.orb.entry_cutoff} "
             f"max_trades_before_cutoff={cfg.orb.max_trades_before_cutoff} "

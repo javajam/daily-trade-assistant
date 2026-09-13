@@ -28,7 +28,7 @@ def _b(minutes: int, o: float, h: float, l: float, c: float) -> Bar:
     return Bar(SESSION + timedelta(minutes=minutes), o, h, l, c, 1000)
 
 
-def test_fixture_backtest_exits_one_r():
+def test_fixture_backtest_exits_or_midpoint():
     cfg = _cfg()
     aapl = aapl_top_fade_short()
     msft = msft_bottom_fade_long()
@@ -44,22 +44,22 @@ def test_fixture_backtest_exits_one_r():
     by_sym = {t.symbol: t for t in result.trades}
     assert set(by_sym) == {"AAPL", "MSFT"}
 
-    # AAPL short: R = |102.55 − 104| = 1.45 → TP 101.10 (next bar low 99.80).
+    # AAPL short: default TP is OR midpoint 100 (next bar low 99.80).
     short = by_sym["AAPL"]
     assert short.side == "sell"
     assert short.entry_price == 102.55
-    assert short.exit_price == 101.10
+    assert short.exit_price == 100.0
     assert short.exit_reason == "take"
     assert short.qty == 10
-    assert short.pnl == 10 * (102.55 - 101.10)
+    assert short.pnl == 10 * (102.55 - 100.0)
 
-    # MSFT long: R = |201.50 − 200| = 1.50 → TP 203.00 (next bar high 205.20).
+    # MSFT long: default TP is OR midpoint 205 (next bar high 205.20).
     long = by_sym["MSFT"]
     assert long.side == "buy"
     assert long.entry_price == 201.50
-    assert long.exit_price == 203.00
+    assert long.exit_price == 205.0
     assert long.exit_reason == "take"
-    assert long.pnl == 10 * (203.00 - 201.50)
+    assert long.pnl == 10 * (205.0 - 201.50)
 
 
 def test_first_profitable_close_still_available():
@@ -112,8 +112,12 @@ def test_entry_is_open_of_bar_after_reversal():
         {("AAPL", "15Min"): aapl["15Min"], ("AAPL", "5Min"): aapl["5Min"]},
     )
     trade = result.trades[0]
-    reversal = aapl["5Min"][2]
-    entry = aapl["5Min"][3]
+    reversal = next(
+        b for b in aapl["5Min"] if b.timestamp.hour == 13 and b.timestamp.minute == 55
+    )
+    entry = next(
+        b for b in aapl["5Min"] if b.timestamp.hour == 14 and b.timestamp.minute == 0
+    )
     assert reversal.timestamp + timedelta(minutes=5) == entry.timestamp
     assert trade.entry_time == entry.timestamp
     assert trade.entry_price == entry.open
@@ -125,7 +129,7 @@ def test_skip_second_entry_while_still_in_position():
     # second fade is the next session on a tighter OR that never trades 104/100.
     # Keep the older midpoint take so a later session's first print cannot
     # flatten Friday and free the symbol before Monday's fill is tested.
-    cfg = _cfg(max_trades_before_cutoff=5, take_profit_mode="or_midpoint")
+    cfg = _cfg(max_trades_before_cutoff=5, take_profit_mode="or_midpoint", ema_filter=False)
     cfg = cfg.model_copy(update={"universe": ["AAPL"]})
     day2 = 3 * 24 * 60  # Monday 2026-09-14
     orb = [_b(0, 100, 104, 96, 101), _b(day2, 102, 103, 101, 102)]
@@ -141,7 +145,7 @@ def test_skip_second_entry_while_still_in_position():
         _b(day2 + 30, 102.25, 102.35, 102.15, 102.20),  # would-be entry
     ]
     rng = build_opening_range(orb, date(2026, 9, 11), orb_timeframe="15m")
-    assert len(find_setups("AAPL", signal, rng)) == 1
+    assert len(find_setups("AAPL", signal, rng, ema_filter=False)) == 1
     result = run_orb_backtest(cfg, {("AAPL", "15Min"): orb, ("AAPL", "5Min"): signal})
     assert result.report.signals == 2
     accepted = [s for s in result.signals if s.accepted]
@@ -171,9 +175,11 @@ def test_evaluate_scan_fires_fixture_setups():
     assert "SOXL" in missed
     aapl = next(r for r in results if r.symbol == "AAPL" and r.matched)
     assert aapl.extra["stop"] == 104.0
-    assert aapl.extra["take"] == 101.10
-    assert aapl.extra["take_profit_mode"] == "one_r"
+    assert aapl.extra["take"] == 100.0
+    assert aapl.extra["take_profit_mode"] == "or_midpoint"
     assert aapl.extra["reversal_in_range"] == "close"
+    assert aapl.extra["ema_filter"] is True
+    assert aapl.extra["ema"] is not None
     assert aapl.extra["stop_mode"] == "orb_extreme"
     assert aapl.extra["probe_mode"] == "touch_and_band"
     assert aapl.extra["entry_open"] == 102.55
@@ -204,7 +210,7 @@ def test_cli_evaluate_fixture_prints_fires(capsys):
 
 
 def test_backtest_skips_session_when_or_height_below_floor():
-    cfg = _cfg(probe_mode="touch")
+    cfg = _cfg(probe_mode="touch", ema_filter=False)
     cfg = cfg.model_copy(update={"universe": ["AAPL"]})
     # 0.40% OR — probe/reversal still print, but the vol gate blocks the entry.
     orb = [_b(0, 100, 100.40, 100.00, 100.20)]
@@ -218,14 +224,14 @@ def test_backtest_skips_session_when_or_height_below_floor():
     assert result.report.signals == 1
     assert result.signals[0].skip_reason == "min_or_height"
     assert result.report.trades == 0
-    off = _cfg(probe_mode="touch", min_or_height_pct=0)
+    off = _cfg(probe_mode="touch", min_or_height_pct=0, ema_filter=False)
     off = off.model_copy(update={"universe": ["AAPL"]})
     taken = run_orb_backtest(off, {("AAPL", "15Min"): orb, ("AAPL", "5Min"): signal})
     assert taken.report.trades == 1
 
 
 def test_backtest_takes_only_first_pre_1030_entry():
-    cfg = _cfg()
+    cfg = _cfg(ema_filter=False)
     cfg = cfg.model_copy(update={"universe": ["AAPL"]})
     orb = [_b(0, 100, 104, 96, 101)]
     signal = [
@@ -246,7 +252,7 @@ def test_backtest_takes_only_first_pre_1030_entry():
 
 
 def test_backtest_rejects_entry_at_cutoff():
-    cfg = _cfg()
+    cfg = _cfg(ema_filter=False)
     cfg = cfg.model_copy(update={"universe": ["AAPL"]})
     orb = [_b(0, 100, 104, 96, 101)]
     signal = [
@@ -274,7 +280,7 @@ def test_reversal_candle_mode_keeps_old_stop_in_backtest():
 
 
 def test_first_profitable_close_waits_for_later_bar():
-    cfg = _cfg(take_profit_mode="first_profitable_close")
+    cfg = _cfg(take_profit_mode="first_profitable_close", ema_filter=False)
     cfg = cfg.model_copy(update={"universe": ["AAPL"]})
     orb = [_b(0, 100, 104, 96, 101)]
     signal = [
@@ -295,7 +301,7 @@ def test_first_profitable_close_waits_for_later_bar():
 
 
 def test_stop_still_works_before_first_profit():
-    cfg = _cfg(take_profit_mode="first_profitable_close")
+    cfg = _cfg(take_profit_mode="first_profitable_close", ema_filter=False)
     cfg = cfg.model_copy(update={"universe": ["AAPL"]})
     orb = [_b(0, 100, 104, 96, 101)]
     signal = [
@@ -313,7 +319,7 @@ def test_stop_still_works_before_first_profit():
 
 
 def test_stop_wins_same_bar_as_first_profit():
-    cfg = _cfg(take_profit_mode="first_profitable_close")
+    cfg = _cfg(take_profit_mode="first_profitable_close", ema_filter=False)
     cfg = cfg.model_copy(update={"universe": ["AAPL"]})
     orb = [_b(0, 100, 104, 96, 101)]
     signal = [
@@ -330,7 +336,7 @@ def test_stop_wins_same_bar_as_first_profit():
 
 
 def test_stop_wins_same_bar_as_one_r():
-    cfg = _cfg()
+    cfg = _cfg(take_profit_mode="one_r", ema_filter=False)
     cfg = cfg.model_copy(update={"universe": ["AAPL"]})
     orb = [_b(0, 100, 104, 96, 101)]
     signal = [
@@ -347,7 +353,7 @@ def test_stop_wins_same_bar_as_one_r():
 
 
 def test_one_r_take_fills_when_price_reaches_target():
-    cfg = _cfg()
+    cfg = _cfg(take_profit_mode="one_r", ema_filter=False)
     cfg = cfg.model_copy(update={"universe": ["AAPL"]})
     orb = [_b(0, 100, 104, 96, 101)]
     signal = [
@@ -365,7 +371,7 @@ def test_one_r_take_fills_when_price_reaches_target():
 
 
 def test_backtest_rejects_reversal_that_closes_outside_or():
-    cfg = _cfg()
+    cfg = _cfg(ema_filter=False)
     cfg = cfg.model_copy(update={"universe": ["AAPL"]})
     orb = [_b(0, 100, 104, 96, 101)]
     signal = [
@@ -379,7 +385,7 @@ def test_backtest_rejects_reversal_that_closes_outside_or():
     assert result.report.signals == 0
 
 
-def test_live_order_attaches_one_r_take():
+def test_live_order_attaches_or_midpoint_take():
     cfg = _cfg()
     aapl = aapl_top_fade_short()
     rng = build_opening_range(aapl["15Min"], date(2026, 9, 11), orb_timeframe="15m")
@@ -388,12 +394,12 @@ def test_live_order_attaches_one_r_take():
     order = build_orb_order(setup, account=account, config=cfg)
     assert order is not None
     assert order.stop_loss_price == 104.0
-    assert order.take_profit_price == 101.10
-    mid_cfg = _cfg(take_profit_mode="or_midpoint")
-    mid_setup = find_setups("AAPL", aapl["5Min"], rng, take_profit_mode="or_midpoint")[0]
-    mid_order = build_orb_order(mid_setup, account=account, config=mid_cfg)
-    assert mid_order is not None
-    assert mid_order.take_profit_price == 100.0
+    assert order.take_profit_price == 100.0
+    one_cfg = _cfg(take_profit_mode="one_r")
+    one_setup = find_setups("AAPL", aapl["5Min"], rng, take_profit_mode="one_r")[0]
+    one_order = build_orb_order(one_setup, account=account, config=one_cfg)
+    assert one_order is not None
+    assert one_order.take_profit_price == 101.10
     first_cfg = _cfg(take_profit_mode="first_profitable_close")
     first_setup = find_setups("AAPL", aapl["5Min"], rng, take_profit_mode="first_profitable_close")[0]
     first_order = build_orb_order(first_setup, account=account, config=first_cfg)
@@ -402,12 +408,13 @@ def test_live_order_attaches_one_r_take():
 
 
 def test_live_order_estimates_one_r_when_entry_unknown():
-    cfg = _cfg()
+    cfg = _cfg(take_profit_mode="one_r")
     aapl = aapl_top_fade_short()
     rng = build_opening_range(aapl["15Min"], date(2026, 9, 11), orb_timeframe="15m")
     # Tape ends on the reversal so the next-open fill is not known yet.
-    series = aapl["5Min"][:3]
-    setup = find_setups("AAPL", series, rng)[0]
+    # Keep the EMA warmup bars (prefix) plus mid/probe/reversal.
+    series = aapl["5Min"][:12]
+    setup = find_setups("AAPL", series, rng, take_profit_mode="one_r")[0]
     assert setup.entry_bar is None
     assert setup.take is None
     account = Account(equity=100_000, cash=100_000, buying_power=100_000, status="ACTIVE")

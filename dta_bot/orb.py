@@ -21,14 +21,20 @@ Locked v1 rules
   mode (high and low within the OR). ``off`` skips the in-range filter.
   A reversal that fails the filter is not an entry; that bar may itself
   be a later probe.
+- EMA filter (default ``ema_filter: true``, ``ema_period: 9``): compute
+  EMA(period) on **signal-timeframe** closes through the reversal bar
+  (inclusive). Long: reversal ``close > ema``; short: ``close < ema``.
+  ``ema_require_open`` (default false) also requires the reversal open
+  on the same side of the EMA. If the filter is on and EMA cannot be
+  computed (fewer than ``ema_period`` closes through the reversal),
+  skip the entry. Set ``ema_filter: false`` to disable.
 - Entry fills at the **open of the bar after the reversal**.
 - Stop (default ``orb_extreme``): long → opening-range low; short → opening-range
   high. ``reversal_candle`` keeps the older stop at the reversal extreme.
-- Take profit (default ``one_r``): R is the absolute distance from entry
-  to stop (long stop = OR low, short stop = OR high under ``orb_extreme``).
-  Long TP = entry + R; short TP = entry − R. ``or_midpoint`` restores the
-  previous OR-midpoint target. ``first_profitable_close`` exits at the
-  close of the first signal-timeframe bar that is profitable vs entry
+- Take profit (default ``or_midpoint``): ``(or_high + or_low) / 2``.
+  ``one_r`` is 1R from entry (R = |entry − stop|; long TP = entry + R;
+  short TP = entry − R). ``first_profitable_close`` exits at the close
+  of the first signal-timeframe bar that is profitable vs entry
   (long: ``close > entry``; short: ``close < entry``). If stop and take
   (1R, midpoint, or first-profit) both trade on the same bar, the stop
   fills first.
@@ -48,6 +54,7 @@ from datetime import date, datetime, time, timezone
 from typing import Literal, Optional
 from zoneinfo import ZoneInfo
 
+from dta_bot.indicators import ema
 from dta_bot.models import Bar
 from dta_bot.timeframes import duration
 
@@ -275,6 +282,47 @@ def one_r_take(
     return entry_price - risk
 
 
+def ema_through(
+    bars: list[Bar],
+    through: Bar,
+    period: int,
+) -> Optional[float]:
+    """EMA of closes on ``bars`` through ``through`` (inclusive, oldest-first)."""
+    if period <= 0:
+        return None
+    ts = _aware(through.timestamp)
+    closes = [b.close for b in bars if _aware(b.timestamp) <= ts]
+    return ema(closes, period)
+
+
+def reversal_clears_ema(
+    bar: Bar,
+    ema_value: Optional[float],
+    *,
+    side: Side,
+    require_open: bool = False,
+) -> bool:
+    """Whether the reversal candle is on the fade side of the EMA.
+
+    Long: ``close > ema`` (and ``open > ema`` when ``require_open``).
+    Short: ``close < ema`` (and ``open < ema`` when ``require_open``).
+    A missing EMA value fails the filter.
+    """
+    if ema_value is None:
+        return False
+    if side == "buy":
+        if bar.close <= ema_value:
+            return False
+        if require_open and bar.open <= ema_value:
+            return False
+        return True
+    if bar.close >= ema_value:
+        return False
+    if require_open and bar.open >= ema_value:
+        return False
+    return True
+
+
 @dataclass(frozen=True)
 class OrbSetup:
     symbol: str
@@ -289,7 +337,11 @@ class OrbSetup:
     stop_mode: StopMode = "orb_extreme"
     probe_mode: ProbeMode = "touch_and_band"
     reversal_in_range: ReversalInRange = "close"
-    take_profit_mode: TakeProfitMode = "one_r"
+    take_profit_mode: TakeProfitMode = "or_midpoint"
+    ema_filter: bool = True
+    ema_period: int = 9
+    ema_require_open: bool = False
+    ema_value: Optional[float] = None
 
     @property
     def session_date(self) -> date:
@@ -317,6 +369,16 @@ class OrbSetup:
             take_txt = f"take={self.take:.4f} (OR midpoint)"
         else:
             take_txt = "take=(none)"
+        if self.ema_filter and self.ema_value is not None:
+            side_word = "above" if self.side == "buy" else "below"
+            ema_txt = (
+                f" ema{self.ema_period}={self.ema_value:.4f} "
+                f"(reversal close {side_word} EMA)"
+            )
+        elif self.ema_filter:
+            ema_txt = f" ema{self.ema_period}=(unavailable)"
+        else:
+            ema_txt = ""
         return (
             f"ORB {self.zone}-zone probe + "
             f"{'bearish' if self.side == 'sell' else 'bullish'} reversal → {direction}; "
@@ -325,7 +387,7 @@ class OrbSetup:
             f"probe H={self.probe.high:.4f} L={self.probe.low:.4f} "
             f"C={self.probe.close:.4f}; reversal {self.reversal.summary()}; "
             f"{entry}; stop={self.stop:.4f} ({stop_why}) "
-            f"{take_txt}"
+            f"{take_txt}{ema_txt}"
         )
 
 
@@ -458,7 +520,11 @@ def _setup_from_pair(
     probe_mode: ProbeMode = "touch_and_band",
     edge_pct: float = 0.05,
     reversal_in_range: ReversalInRange = "close",
-    take_profit_mode: TakeProfitMode = "one_r",
+    take_profit_mode: TakeProfitMode = "or_midpoint",
+    ema_filter: bool = True,
+    ema_period: int = 9,
+    ema_require_open: bool = False,
+    signal_bars: Optional[list[Bar]] = None,
 ) -> Optional[OrbSetup]:
     zone = opening_range.classify_probe(probe, probe_mode=probe_mode, edge_pct=edge_pct)
     if zone is None:
@@ -473,6 +539,13 @@ def _setup_from_pair(
         side = "buy"
     if not reversal_in_opening_range(reversal, opening_range, reversal_in_range):
         return None
+    ema_value: Optional[float] = None
+    if ema_filter:
+        ema_value = ema_through(signal_bars or [], reversal, ema_period)
+        if not reversal_clears_ema(
+            reversal, ema_value, side=side, require_open=ema_require_open
+        ):
+            return None
     stop = stop_price(
         zone=zone,
         opening_range=opening_range,
@@ -500,6 +573,10 @@ def _setup_from_pair(
         probe_mode=probe_mode,
         reversal_in_range=reversal_in_range,
         take_profit_mode=take_profit_mode,
+        ema_filter=ema_filter,
+        ema_period=ema_period,
+        ema_require_open=ema_require_open,
+        ema_value=ema_value,
     )
 
 
@@ -514,12 +591,16 @@ def find_setups(
     session_close: Optional[str] = "16:00",
     stop_mode: StopMode = "orb_extreme",
     reversal_in_range: ReversalInRange = "close",
-    take_profit_mode: TakeProfitMode = "one_r",
+    take_profit_mode: TakeProfitMode = "or_midpoint",
+    ema_filter: bool = True,
+    ema_period: int = 9,
+    ema_require_open: bool = False,
 ) -> list[OrbSetup]:
     """Walk probe → next-bar reversal on post-OR signal bars. Multiple setups allowed.
 
     Time/frequency gating is applied separately by ``gate_setups`` so this
-    function stays a pure probe/reversal detector.
+    function stays a pure probe/reversal detector. EMA uses the full
+    ``signal_bars`` series (including pre-OR prints) through the reversal.
     """
     series = signal_bars_after_or(
         signal_bars,
@@ -548,9 +629,14 @@ def find_setups(
             edge_pct=edge_pct,
             reversal_in_range=reversal_in_range,
             take_profit_mode=take_profit_mode,
+            ema_filter=ema_filter,
+            ema_period=ema_period,
+            ema_require_open=ema_require_open,
+            signal_bars=signal_bars,
         )
         if setup is None:
-            # Same-color / doji / reversal outside OR — no trade. That bar may itself be a probe.
+            # Same-color / doji / reversal outside OR / EMA miss — no trade.
+            # That bar may itself be a later probe.
             i += 1
             continue
         setups.append(setup)
@@ -573,7 +659,10 @@ def find_session_setups(
     probe_mode: ProbeMode = "touch_and_band",
     stop_mode: StopMode = "orb_extreme",
     reversal_in_range: ReversalInRange = "close",
-    take_profit_mode: TakeProfitMode = "one_r",
+    take_profit_mode: TakeProfitMode = "or_midpoint",
+    ema_filter: bool = True,
+    ema_period: int = 9,
+    ema_require_open: bool = False,
 ) -> tuple[Optional[OpeningRange], list[OrbSetup]]:
     rng = resolve_opening_range(
         orb_bars=orb_bars,
@@ -597,6 +686,9 @@ def find_session_setups(
         stop_mode=stop_mode,
         reversal_in_range=reversal_in_range,
         take_profit_mode=take_profit_mode,
+        ema_filter=ema_filter,
+        ema_period=ema_period,
+        ema_require_open=ema_require_open,
     )
 
 
@@ -614,7 +706,10 @@ def find_all_setups(
     probe_mode: ProbeMode = "touch_and_band",
     stop_mode: StopMode = "orb_extreme",
     reversal_in_range: ReversalInRange = "close",
-    take_profit_mode: TakeProfitMode = "one_r",
+    take_profit_mode: TakeProfitMode = "or_midpoint",
+    ema_filter: bool = True,
+    ema_period: int = 9,
+    ema_require_open: bool = False,
 ) -> list[OrbSetup]:
     dates = session_dates(orb_bars or signal_bars, session_timezone)
     found: list[OrbSetup] = []
@@ -634,6 +729,9 @@ def find_all_setups(
             stop_mode=stop_mode,
             reversal_in_range=reversal_in_range,
             take_profit_mode=take_profit_mode,
+            ema_filter=ema_filter,
+            ema_period=ema_period,
+            ema_require_open=ema_require_open,
         )
         found.extend(setups)
     return found
@@ -664,6 +762,9 @@ def no_setup_reason(
     probe_mode: ProbeMode = "touch_and_band",
     reversal_in_range: ReversalInRange = "close",
     min_or_height_pct: Optional[float] = 0.01,
+    ema_filter: bool = True,
+    ema_period: int = 9,
+    ema_require_open: bool = False,
 ) -> str:
     if opening_range is None:
         return "opening range not formed (need first orb_timeframe bar at/after session open)"
@@ -747,6 +848,25 @@ def no_setup_reason(
                 f"C={last.close:.4f} H={last.high:.4f} L={last.low:.4f} "
                 f"(reversal_in_range={reversal_in_range})"
             )
+        if opposite and ema_filter:
+            side: Side = "sell" if prev_zone == "top" else "buy"
+            ema_value = ema_through(signal_bars, last, ema_period)
+            if not reversal_clears_ema(
+                last, ema_value, side=side, require_open=ema_require_open
+            ):
+                if ema_value is None:
+                    return (
+                        f"opposite-color reversal failed the EMA{ema_period} filter "
+                        f"(need {ema_period} signal-timeframe closes through the reversal; "
+                        f"have {sum(1 for b in signal_bars if _aware(b.timestamp) <= _aware(last.timestamp))})"
+                    )
+                need = "above" if side == "buy" else "below"
+                extra = " and open" if ema_require_open else ""
+                return (
+                    f"opposite-color reversal close{extra} is not {need} "
+                    f"EMA{ema_period} {ema_value:.4f} "
+                    f"(C={last.close:.4f} O={last.open:.4f})"
+                )
         if zone is None:
             return (
                 f"probe in {prev_zone} zone but next bar is {color} "

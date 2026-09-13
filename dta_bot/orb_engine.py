@@ -75,6 +75,10 @@ def _eval_from_setup(
             "probe_mode": setup.probe_mode,
             "reversal_in_range": setup.reversal_in_range,
             "take_profit_mode": setup.take_profit_mode,
+            "ema_filter": setup.ema_filter,
+            "ema_period": setup.ema_period,
+            "ema_require_open": setup.ema_require_open,
+            "ema": setup.ema_value,
             "probe": setup.probe.summary(),
             "reversal": setup.reversal.summary(),
             "entry_open": setup.entry_bar.open if setup.entry_bar is not None else None,
@@ -99,6 +103,9 @@ def _eval_miss(
         probe_mode=config.orb.probe_mode,
         reversal_in_range=config.orb.reversal_in_range,
         min_or_height_pct=config.orb.min_or_height_pct,
+        ema_filter=config.orb.ema_filter,
+        ema_period=config.orb.ema_period,
+        ema_require_open=config.orb.ema_require_open,
     )
     extra: dict = {"strategy": RULE_ID}
     if opening_range is not None:

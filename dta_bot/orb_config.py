@@ -32,11 +32,17 @@ class OrbSpec(BaseModel):
     # body = high and low both inside the OR (stricter fully-inside mode).
     # off = no in-range filter on the reversal candle.
     reversal_in_range: Literal["close", "body", "off"] = "close"
-    # one_r (default) = 1R from entry (R = |entry − stop|; long entry+R, short entry−R).
-    # or_midpoint = previous OR-midpoint take-profit.
+    # or_midpoint (default) = (or_high + or_low) / 2 take-profit.
+    # one_r = 1R from entry (R = |entry − stop|; long entry+R, short entry−R).
     # first_profitable_close = exit at the close of the first signal-timeframe
     # bar that is strictly profitable vs entry.
-    take_profit_mode: Literal["one_r", "or_midpoint", "first_profitable_close"] = "one_r"
+    take_profit_mode: Literal["one_r", "or_midpoint", "first_profitable_close"] = "or_midpoint"
+    # EMA filter on the reversal candle (signal timeframe). Default on:
+    # long close > EMA(period), short close < EMA(period).
+    ema_filter: bool = True
+    ema_period: int = Field(default=9, ge=1)
+    # When true, also require the reversal open on the same side of the EMA.
+    ema_require_open: bool = False
     # orb_extreme = long stop at OR low, short stop at OR high (default).
     # reversal_candle = previous stop at the reversal candle extreme.
     stop_mode: Literal["orb_extreme", "reversal_candle"] = "orb_extreme"
@@ -168,10 +174,34 @@ class OrbSpec(BaseModel):
             raise ValueError("reversal_in_range must be 'close', 'body', or 'off'")
         return aliases[key]
 
+    @field_validator("ema_filter", mode="before")
+    @classmethod
+    def _ema_filter(cls, v: Any) -> bool:
+        if isinstance(v, bool):
+            return v
+        key = str(v if v is not None else "true").strip().lower()
+        if key in {"1", "true", "on", "yes", "enabled"}:
+            return True
+        if key in {"0", "false", "off", "no", "disabled", "none", ""}:
+            return False
+        raise ValueError("ema_filter must be true or false")
+
+    @field_validator("ema_require_open", mode="before")
+    @classmethod
+    def _ema_require_open(cls, v: Any) -> bool:
+        if isinstance(v, bool):
+            return v
+        key = str(v if v is not None else "false").strip().lower()
+        if key in {"1", "true", "on", "yes", "enabled"}:
+            return True
+        if key in {"0", "false", "off", "no", "disabled", "none", ""}:
+            return False
+        raise ValueError("ema_require_open must be true or false")
+
     @field_validator("take_profit_mode", mode="before")
     @classmethod
     def _take_profit_mode(cls, v: Any) -> str:
-        key = str(v or "one_r").strip().lower().replace("-", "_")
+        key = str(v or "or_midpoint").strip().lower().replace("-", "_")
         aliases = {
             "one_r": "one_r",
             "1r": "one_r",
@@ -259,6 +289,9 @@ class OrbSpec(BaseModel):
             "stop_mode": self.stop_mode,
             "reversal_in_range": self.reversal_in_range,
             "take_profit_mode": self.take_profit_mode,
+            "ema_filter": self.ema_filter,
+            "ema_period": self.ema_period,
+            "ema_require_open": self.ema_require_open,
         }
 
 
