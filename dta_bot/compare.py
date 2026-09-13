@@ -299,11 +299,32 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
             "(exit at that close; equals EMA stays valid). fixed_bracket uses stop_loss_pct / "
             "take_profit_pct from the signal-bar close. Same-bar stop + EMA-invalid → stop."
         )
+    sma_rules = [
+        rule
+        for rule in (config.rules if config is not None else [])
+        if rule.action.type != "close" and rule.action.stop_mode == "sma20"
+    ]
+    if sma_rules:
+        action = sma_rules[0].action
+        take_txt = (
+            f" Optional take_profit_pct {action.take_profit_pct:g}% is still from the signal-bar close."
+            if action.take_profit_pct
+            else " take_profit_pct is omitted (SMA20 stop + session flatten only; no % take)."
+        )
+        return (
+            f"Stop is the SMA({action.stop_sma_period}) value of the signal bar "
+            f"(stop_mode: sma20) — a fixed protective level, not trailed. "
+            "Longs skip when that SMA is at/above the signal close (sma20_above_entry) "
+            "or when the next-bar fill is at/below it (no percent fallback). "
+            f"action.exit: {action.exit}.{take_txt} "
+            "Set stop_mode: percent to restore stop_loss_pct from the signal-bar close."
+        )
     return (
         "Stop/take are computed from the signal-bar close (same as live bracket_prices; "
-        "action.exit: fixed_bracket, default). Set action.exit: ma_cross to flatten at the "
-        "next bar open after EMA crosses under SMA. Set action.exit: ema_invalid to hold "
-        "until a signal-timeframe close is on the wrong side of EMA (long: close < EMA; "
+        "action.exit: fixed_bracket, default; stop_mode: percent). Set action.stop_mode: sma20 "
+        "to rest the protective stop at SMA(20) of the signal bar. Set action.exit: ma_cross "
+        "to flatten at the next bar open after EMA crosses under SMA. Set action.exit: ema_invalid "
+        "to hold until a signal-timeframe close is on the wrong side of EMA (long: close < EMA; "
         "exit at that close)."
     )
 
@@ -405,7 +426,7 @@ def _session_gate_assumption(config: Optional[BotConfig]) -> Optional[str]:
 
 
 def _fixed_bracket_tag(config: BotConfig) -> Optional[str]:
-    """Stop/take tag so 1.5/3.0 and 1.0/2.0 books stay distinct."""
+    """Stop/take tag so 1.5/3.0, 1.0/2.0, and SMA20 books stay distinct."""
     rules = [
         r
         for r in config.rules
@@ -414,8 +435,13 @@ def _fixed_bracket_tag(config: BotConfig) -> Optional[str]:
     if not rules:
         return None
     action = rules[0].action
-    stop = action.stop_loss_pct
     take = action.take_profit_pct
+    if action.stop_mode == "sma20":
+        period = action.stop_sma_period
+        if take is None:
+            return f"SMA{period} stop"
+        return f"SMA{period}/{take:.1f}"
+    stop = action.stop_loss_pct
     if stop is None:
         return None
     if take is None:
@@ -480,7 +506,8 @@ def assumptions_rules(
         "Regular-session Yahoo bars when the source is Yahoo (includePrePost=false), unadjusted OHLC.",
         friction,
         f"Starting equity ${starting_equity:,.2f}. Size types: shares, percent_equity, or risk_pct "
-        "(shares = floor((equity_risk * equity) / ((stop_pct/100) * price))).",
+        "(percent stop: shares = floor((equity_risk * equity) / ((stop_pct/100) * price)); "
+        "stop_mode sma20: R = signal-bar close − SMA20, shares = floor((equity_risk * equity) / R)).",
     ]
     rsi_note = _rsi_filter_assumption(config)
     if rsi_note:

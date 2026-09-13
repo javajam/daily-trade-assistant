@@ -196,12 +196,21 @@ def cmd_validate(args: argparse.Namespace) -> int:
         size_txt = ""
         if size is not None:
             if size.type == "risk_pct":
-                size_txt = (
-                    f" size=risk_pct equity_risk={size.equity_risk} "
-                    f"stop_pct={size.stop_pct or rule.action.stop_loss_pct}"
-                )
+                if rule.action.stop_mode == "sma20":
+                    size_txt = (
+                        f" size=risk_pct equity_risk={size.equity_risk} "
+                        f"stop_mode=sma20 R=entry-SMA{rule.action.stop_sma_period}"
+                    )
+                else:
+                    size_txt = (
+                        f" size=risk_pct equity_risk={size.equity_risk} "
+                        f"stop_pct={size.stop_pct or rule.action.stop_loss_pct}"
+                    )
             else:
                 size_txt = f" size={size.type} {size.value}"
+        stop_txt = f" stop_mode={rule.action.stop_mode}"
+        if rule.action.stop_mode == "sma20":
+            stop_txt += f" stop_sma_period={rule.action.stop_sma_period}"
         be_txt = ""
         if rule.action.breakeven_after_bars:
             be_txt = (
@@ -227,7 +236,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         print(
             f"    - {rule.id}: enabled={rule.enabled} symbols={syms} "
             f"action={rule.action.type} exit={rule.action.exit} "
-            f"cooldown={rule.cooldown_minutes}m tf={tfs}{size_txt}{be_txt}{ma_txt}{rsi_txt}"
+            f"cooldown={rule.cooldown_minutes}m tf={tfs}{size_txt}{stop_txt}{be_txt}{ma_txt}{rsi_txt}"
         )
     return 0
 

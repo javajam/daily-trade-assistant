@@ -18,7 +18,33 @@ def stop_pct_for(action: ActionSpec) -> Optional[float]:
     return None
 
 
-def shares_for(action: ActionSpec, account: Account, last_price: float) -> float:
+def sma_stop_valid(side: Side, entry_price: float, sma_value: Optional[float]) -> bool:
+    """True when SMA20 can rest below a long (or above a short) entry."""
+    if sma_value is None or entry_price <= 0:
+        return False
+    if side == "buy":
+        return sma_value < entry_price
+    return sma_value > entry_price
+
+
+def risk_distance(side: Side, entry_price: float, stop_price: float) -> Optional[float]:
+    """Dollars of adverse move from entry to stop (R). None when stop is not beyond entry."""
+    if side == "buy":
+        dist = entry_price - stop_price
+    else:
+        dist = stop_price - entry_price
+    if dist <= 0:
+        return None
+    return dist
+
+
+def shares_for(
+    action: ActionSpec,
+    account: Account,
+    last_price: float,
+    *,
+    stop_price: Optional[float] = None,
+) -> float:
     if action.type == "close":
         return 0.0
     assert action.size is not None
@@ -33,13 +59,22 @@ def shares_for(action: ActionSpec, account: Account, last_price: float) -> float
         risk_frac = action.size.equity_risk
         if risk_frac is None:
             raise ValueError("risk_pct sizing requires equity_risk")
-        stop_pct = stop_pct_for(action)
-        if stop_pct is None or stop_pct <= 0:
-            raise ValueError("risk_pct sizing requires stop_pct or action.stop_loss_pct")
-        # shares = floor( (equity_risk * equity) / ((stop_pct/100) * price) )
-        #        = floor( equity / ((stop_pct / (100 * equity_risk)) * price) )
-        # With equity_risk=0.01 and stop_pct=1.5: floor(equity / (1.5 * price))
-        qty = (risk_frac * account.equity) / ((stop_pct / 100.0) * last_price)
+        side: Side = "buy" if action.type == "buy" else "sell"
+        if action.stop_mode == "sma20":
+            if stop_price is None:
+                raise ValueError("risk_pct + stop_mode sma20 requires stop_price (SMA at signal)")
+            dist = risk_distance(side, last_price, stop_price)
+            if dist is None:
+                raise ValueError("risk_pct + stop_mode sma20 needs SMA stop beyond entry (R > 0)")
+            qty = (risk_frac * account.equity) / dist
+        else:
+            stop_pct = stop_pct_for(action)
+            if stop_pct is None or stop_pct <= 0:
+                raise ValueError("risk_pct sizing requires stop_pct or action.stop_loss_pct")
+            # shares = floor( (equity_risk * equity) / ((stop_pct/100) * price) )
+            #        = floor( equity / ((stop_pct / (100 * equity_risk)) * price) )
+            # With equity_risk=0.01 and stop_pct=1.5: floor(equity / (1.5 * price))
+            qty = (risk_frac * account.equity) / ((stop_pct / 100.0) * last_price)
     else:
         raise ValueError(f"unknown size type {action.size.type!r}")
     qty = math.floor(qty)
@@ -63,10 +98,19 @@ def limit_price(action: ActionSpec, last_price: float, side: Side) -> Optional[f
     return last_price * (1.0 - offset / 100.0)
 
 
-def bracket_prices(action: ActionSpec, last_price: float, side: Side) -> tuple[Optional[float], Optional[float]]:
+def bracket_prices(
+    action: ActionSpec,
+    last_price: float,
+    side: Side,
+    *,
+    sma_value: Optional[float] = None,
+) -> tuple[Optional[float], Optional[float]]:
     stop = None
     take = None
-    if action.stop_loss_pct:
+    if action.stop_mode == "sma20":
+        if sma_stop_valid(side, last_price, sma_value):
+            stop = sma_value
+    elif action.stop_loss_pct:
         if side == "buy":
             stop = last_price * (1.0 - action.stop_loss_pct / 100.0)
         else:
@@ -88,12 +132,13 @@ def build_order(
     last_price: float,
     position: Optional[Position],
     client_order_id: Optional[str] = None,
+    sma_value: Optional[float] = None,
 ) -> Optional[OrderRequest]:
     if action.type == "close":
         return None  # runner uses close_position()
     side: Side = "buy" if action.type == "buy" else "sell"
-    qty = shares_for(action, account, last_price)
-    stop, take = bracket_prices(action, last_price, side)
+    stop, take = bracket_prices(action, last_price, side, sma_value=sma_value)
+    qty = shares_for(action, account, last_price, stop_price=stop)
     return OrderRequest(
         symbol=symbol,
         side=side,

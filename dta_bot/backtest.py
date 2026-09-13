@@ -16,11 +16,11 @@ from typing import Any, Optional
 from dta_bot.config import ActionSpec, AnyCondition, BotConfig, GroupCond, RuleSpec
 from dta_bot.engine import BarMap, cooldown_key, evaluate_rule, fire_key
 from dta_bot.models import Account, Bar
-from dta_bot.indicators import ma_pair_cross
+from dta_bot.indicators import ma_pair_cross, sma
 from dta_bot.orb import ema_cross_exit, ema_through
 from dta_bot.period_stats import build_period_stats, format_period_stats_md, session_date
 from dta_bot.session import fill_at_or_after_cutoff, is_flatten_bar
-from dta_bot.sizing import bracket_prices, buy_notional, shares_for
+from dta_bot.sizing import bracket_prices, buy_notional, shares_for, sma_stop_valid
 from dta_bot.state import BotState
 from dta_bot.timeframes import duration, normalize
 
@@ -152,6 +152,7 @@ class PendingOrder:
     exit_ema_period: int = 9
     exit_sma_period: int = 20
     close_reason: str = "close_signal"
+    stop_mode: str = "percent"
     breakeven_after_bars: int = 0
     breakeven_requires_valid: bool = True
     breakeven_valid: str = "above_ema"
@@ -332,6 +333,28 @@ def _ma_pair_cross_exit(lot: OpenLot, bar: Bar, series: list[Bar]) -> bool:
         direction=direction,
     )
     return bool(hit)
+
+
+def _sma_through(series: list[Bar], bar: Bar, period: int) -> Optional[float]:
+    """SMA(period) of closes through ``bar`` (inclusive)."""
+    closes = _closes_through(series, bar)
+    if not closes:
+        return None
+    return sma(closes, period)
+
+
+def _signal_sma_stop(
+    action: ActionSpec,
+    series: list[Bar],
+    signal_bar_ts: Optional[datetime],
+) -> Optional[float]:
+    if action.stop_mode != "sma20" or signal_bar_ts is None:
+        return None
+    target = _aware(signal_bar_ts)
+    signal_bar = next((item for item in series if _aware(item.timestamp) == target), None)
+    if signal_bar is None:
+        return None
+    return _sma_through(series, signal_bar, action.stop_sma_period)
 
 
 def _exit_pnl_note(trades: list[Trade]) -> Optional[str]:
@@ -535,6 +558,7 @@ def run_backtest(
     equity_curve: list[tuple[datetime, float]] = []
     last_price: dict[str, float] = {}
     cash_skips = 0
+    sma20_fill_skips = 0
     max_concurrent = 0
     both_open_ticks = 0
     window_start = _aware(trade_start) if trade_start is not None else None
@@ -636,6 +660,9 @@ def run_backtest(
             if order.symbol not in symbols_in_position() and len(symbols_in_position()) >= config.settings.max_open_positions:
                 continue
             fill_px = _apply_slippage(fill_bar.open, order.side, slippage_pct, is_entry=True)
+            if order.stop_mode == "sma20" and not sma_stop_valid(order.side, fill_px, order.stop):
+                sma20_fill_skips += 1
+                continue
             if order.side == "buy":
                 cost = buy_notional(order.qty, fill_px, commission)
                 if cost > cash + 1e-9:
@@ -831,8 +858,21 @@ def run_backtest(
                         accepted = False
                         skip_reason = "no_price"
                     else:
+                        sma_stop = _signal_sma_stop(rule.action, series, ev.signal_bar_ts)
+                        if accepted and rule.action.stop_mode == "sma20":
+                            side_probe = "buy" if action == "buy" else "sell"
+                            if sma_stop is None:
+                                accepted = False
+                                skip_reason = "sma20_unavailable"
+                            elif not sma_stop_valid(side_probe, px, sma_stop):
+                                accepted = False
+                                skip_reason = "sma20_above_entry"
                         try:
-                            qty = shares_for(rule.action, account(), px)
+                            qty = (
+                                shares_for(rule.action, account(), px, stop_price=sma_stop)
+                                if accepted
+                                else 0.0
+                            )
                         except ValueError:
                             accepted = False
                             skip_reason = "size_zero"
@@ -860,7 +900,7 @@ def run_backtest(
                                 skip_reason = "insufficient_cash"
                         if accepted and nxt is not None:
                             side = "buy" if action == "buy" else "sell"
-                            stop, take = bracket_prices(rule.action, px, side)
+                            stop, take = bracket_prices(rule.action, px, side, sma_value=sma_stop)
                             pending.append(
                                 PendingOrder(
                                     kind="enter",
@@ -877,6 +917,7 @@ def run_backtest(
                                     exit_mode=rule.action.exit,
                                     exit_ema_period=rule.action.exit_ema_period,
                                     exit_sma_period=rule.action.exit_sma_period,
+                                    stop_mode=rule.action.stop_mode,
                                     **_breakeven_fields(rule.action),
                                 )
                             )
@@ -1022,6 +1063,37 @@ def run_backtest(
         f"Max concurrent symbols this run: {max_concurrent}. "
         f"Ticks with 2+ names open: {both_open_ticks}."
     )
+    sma_rules = [
+        r
+        for r in config.rules
+        if r.enabled and r.action.type != "close" and r.action.stop_mode == "sma20"
+    ]
+    if sma_rules:
+        sample = sma_rules[0].action
+        take_txt = (
+            f" Optional take_profit_pct {sample.take_profit_pct:g}% is still from the signal-bar close."
+            if sample.take_profit_pct
+            else " No percent take-profit (SMA20 stop + session flatten / EMA exit only)."
+        )
+        extra_notes.append(
+            f"SMA20 stop (stop_mode: sma20): protective stop is the SMA({sample.stop_sma_period}) "
+            "value of the signal bar — a fixed level, not trailed to later SMA prints. "
+            "Longs require that SMA below the signal close; if SMA20 is at/above the signal "
+            "close the signal is skipped (sma20_above_entry). If the next-bar fill is at/below "
+            "that SMA20, the fill is skipped rather than falling back to a percent stop. "
+            "v1 does not trail the stop to the latest SMA20 each bar."
+            + take_txt
+        )
+        extra_notes.append(
+            f"{sum(1 for s in signals if s.skip_reason == 'sma20_above_entry')} signal(s) "
+            "skipped as sma20_above_entry; "
+            f"{sum(1 for s in signals if s.skip_reason == 'sma20_unavailable')} as sma20_unavailable."
+        )
+    if sma20_fill_skips:
+        extra_notes.append(
+            f"{sma20_fill_skips} accepted signal(s) skipped at fill because SMA20 was at/above "
+            "the next-bar open (long stop not below entry)."
+        )
     if cash_skips:
         extra_notes.append(
             f"{cash_skips} accepted signal(s) skipped at fill for insufficient cash."
@@ -1113,10 +1185,13 @@ def format_report_md(payload: dict[str, Any]) -> str:
             or n.startswith("Session gates")
             or n.startswith("Break-even")
             or n.startswith("MA-cross exit")
+            or n.startswith("SMA20 stop")
             or n.startswith("Exit P&L")
             or n.startswith("RSI filter")
             or n.startswith("No RSI")
             or "entry_cutoff" in n
+            or "sma20" in n
+            or "SMA20" in n
             or "session_flatten" in n
             or "armed break-even" in n
             or "exited as ma_cross" in n

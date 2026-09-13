@@ -2,7 +2,7 @@ import pytest
 
 from dta_bot.config import ActionSpec, SizeSpec
 from dta_bot.models import Account
-from dta_bot.sizing import bracket_prices, build_order, shares_for
+from dta_bot.sizing import bracket_prices, build_order, risk_distance, shares_for, sma_stop_valid
 
 
 def _acct(equity: float = 100_000) -> Account:
@@ -123,6 +123,52 @@ def test_risk_pct_rejects_missing_stop_and_zero_shares():
 def test_risk_pct_equity_risk_must_be_a_fraction():
     with pytest.raises(ValueError, match="fraction"):
         SizeSpec(type="risk_pct", equity_risk=1.5, stop_pct=1.5)
+
+
+def test_sma20_bracket_uses_signal_sma_not_percent():
+    action = ActionSpec(
+        type="buy",
+        size=SizeSpec(type="shares", value=10),
+        stop_mode="sma20",
+        take_profit_pct=2.0,
+    )
+    stop, take = bracket_prices(action, 100.0, "buy", sma_value=98.5)
+    assert stop == pytest.approx(98.5)
+    assert take == pytest.approx(102.0)
+    invalid = bracket_prices(action, 100.0, "buy", sma_value=100.4)
+    assert invalid == (None, pytest.approx(102.0))
+    missing = bracket_prices(action, 100.0, "buy")
+    assert missing[0] is None
+    notake = ActionSpec(type="buy", size=SizeSpec(type="shares", value=10), stop_mode="sma20")
+    stop_only, take_only = bracket_prices(notake, 100.0, "buy", sma_value=97.0)
+    assert stop_only == pytest.approx(97.0)
+    assert take_only is None
+
+
+def test_sma_stop_valid_and_risk_distance():
+    assert sma_stop_valid("buy", 100.0, 98.0) is True
+    assert sma_stop_valid("buy", 100.0, 100.0) is False
+    assert sma_stop_valid("buy", 100.0, 101.0) is False
+    assert sma_stop_valid("sell", 100.0, 102.0) is True
+    assert risk_distance("buy", 200.0, 197.0) == pytest.approx(3.0)
+    assert risk_distance("buy", 200.0, 201.0) is None
+
+
+def test_risk_pct_sma20_uses_entry_to_sma_distance():
+    action = ActionSpec(
+        type="buy",
+        size=SizeSpec(type="risk_pct", equity_risk=0.01),
+        stop_mode="sma20",
+        take_profit_pct=2.0,
+    )
+    # R = 200 - 197 = 3; floor(1000 / 3) = 333
+    assert shares_for(action, _acct(100_000), 200.0, stop_price=197.0) == 333
+    tighter = shares_for(action, _acct(100_000), 200.0, stop_price=199.0)
+    assert tighter == 1000
+    with pytest.raises(ValueError, match="SMA stop"):
+        shares_for(action, _acct(100_000), 200.0, stop_price=201.0)
+    with pytest.raises(ValueError, match="stop_price"):
+        shares_for(action, _acct(100_000), 200.0)
 
 
 def test_build_market_buy_order():

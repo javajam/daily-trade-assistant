@@ -1,0 +1,53 @@
+# Prior noon day-trade book — old entry, 1% equity-risk, SMA(20) stop, no take.
+#
+# Same as config/ema9_trend_risk_sma20.example.yaml except take_profit_pct
+# is omitted. R is still signal-bar close minus SMA20.
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"
+  flatten_by: "15:55"
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Prior noon book: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 1% equity risk at SMA20 signal-bar stop; no percent take. No break-even."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: risk_pct
+        equity_risk: 0.01
+      order: market
+      exit: fixed_bracket
+      stop_mode: sma20
+      stop_sma_period: 20

@@ -1,7 +1,8 @@
 # Prior noon day-trade book — old entry, 1.0/2.0 brackets.
 #
 # Same locked stack as config/ema9_trend_bracket_nobe.example.yaml except
-# stop 1.0% / take 2.0% (still no break-even). Entry is the older
+# stop 1.0% / take 2.0% (still no break-even). stop_mode: percent (vs sma20).
+# Entry is the older
 # price×EMA(9) cross (NOT the EMA9/SMA20 pair-cross product):
 #   close crosses above EMA(9) AND close > SMA(20) AND RSI14 < 70
 #
@@ -59,5 +60,6 @@ rules:
         value: 10
       order: market
       exit: fixed_bracket
+      stop_mode: percent
       stop_loss_pct: 1.0
       take_profit_pct: 2.0
