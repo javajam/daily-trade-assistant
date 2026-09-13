@@ -115,6 +115,10 @@ def test_assumptions_rules_mention_ma_cross():
     rsi_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, rsi_cfg)
     assert any("RSI filter on (RSI14 < 70)" in n for n in rsi_notes)
     assert any("rsi: { period: 14, below: 70 }" in n for n in rsi_notes)
+    assert any("same threshold as the prior noon price-cross book" in n for n in rsi_notes)
+    sixty = load_config("config/ema9_trend_bracket_rsi60.example.yaml")
+    sixty_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, sixty)
+    assert any("RSI filter on (RSI14 < 60)" in n and "tighter than the prior noon" in n for n in sixty_notes)
 
 
 def test_pattern_hits_count_ema_cross():

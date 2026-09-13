@@ -362,10 +362,14 @@ def _rsi_filter_assumption(config: Optional[BotConfig]) -> Optional[str]:
         )
         period = rsi_cond.period if rsi_cond is not None else 14
         below = rsi_cond.below if rsi_cond is not None and rsi_cond.below is not None else 70
+        noon = (
+            " (same threshold as the prior noon price-cross book)"
+            if below == 70
+            else " (tighter than the prior noon book's RSI14 < 70)"
+        )
         return (
             f"RSI filter on ({label}): only take the EMA/SMA pair-cross entry when "
-            f"RSI({period}) on the signal timeframe is below {below:g} "
-            "(same threshold as the prior noon price-cross book when below is 70). "
+            f"RSI({period}) on the signal timeframe is below {below:g}{noon}. "
             "YAML toggle is a sibling of ema_sma_cross: `rsi: { period: 14, below: 70 }`. "
             "Omit the rsi key to disable."
         )
