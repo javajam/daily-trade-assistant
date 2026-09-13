@@ -199,6 +199,9 @@ rules:
       exit_ema_period: 9                  # used when exit is ema_invalid
       stop_loss_pct: 1.5     # optional; catastrophic-only when exit is ema_invalid
       take_profit_pct: 3.0   # ignored when exit is ema_invalid
+      breakeven_after_bars: 1            # 0/omit = off; 1 = next full candle after fill
+      breakeven_requires_valid: true     # only arm if evaluation bar is still valid
+      breakeven_valid: above_ema         # long: close > EMA(9); or always
 ```
 
 **Patterns:** `doji`, `bullish_engulfing`, `bearish_engulfing`, `hammer`, `inverted_hammer`, `shooting_star`, `morning_star`, `evening_star`, `three_white_soldiers`, `three_black_crows`.
@@ -209,7 +212,7 @@ rules:
 
 ### 9 EMA trend (sample strategy)
 
-`config/ema9_trend.example.yaml` is a long-only book on **AAPL / MSFT / SOXL**. Entry reuses the engulfing-with-trend filter: close above SMA(20), RSI(14) below 70, buy 10 shares, 60-minute **wall-clock** cooldown. The trigger is a bullish **EMA(9) cross** instead of a bullish engulfing candle.
+`config/ema9_trend.example.yaml` is a long-only book on **AAPL / MSFT**. SOXL is optional (`config/ema9_trend_bracket_soxl.example.yaml`, `config/ema9_trend_risk_soxl.example.yaml`). Entry reuses the engulfing-with-trend filter: close above SMA(20), RSI(14) below 70, buy 10 shares, 60-minute **wall-clock** cooldown. The trigger is a bullish **EMA(9) cross** instead of a bullish engulfing candle.
 
 Default exit is **`action.exit: ema_invalid`**: stay in the long until a signal-timeframe bar **closes < EMA(9)** and flatten at that close. Close == EMA9 stays valid. There is no 1.5%/3.0% bracket on the 9 EMA rules. Optional `stop_loss_pct` is a catastrophic stop only and is **off** in the example configs. Set `exit: fixed_bracket` plus `stop_loss_pct` / `take_profit_pct` to restore the old brackets. Paper / `dry_run` defaults; no live.
 
@@ -219,7 +222,9 @@ Default exit is **`action.exit: ema_invalid`**: stay in the long until a signal-
 - `flatten_by: "15:55"` — force-flat at the close of the bar that contains 3:55 PM ET. On **15m** RTH bars opening `:00,:15,:30,:45` that is the **15:45 ET bar close** (last regular 15m bar before 16:00, labeled as the end-of-day flatten aligned with “by 15:55”). On **5m** that is the **15:50 ET bar close** (last 5m bar that completes at/before 15:55). Stop/take/EMA-invalid on that bar still win if they hit first. Exit reason: `session_flatten`.
 - Set either knob to `null` / `off` to disable it (overnight control: `config/ema9_trend_bracket_overnight.example.yaml`).
 
-`config/ema9_trend_risk.example.yaml` is the same 15m entry on **AAPL / MSFT only**, but restores **`exit: fixed_bracket`** (stop 1.5% / take 3.0%) and sizes each long to risk ~1% of current equity at that stop (`size.type: risk_pct`). Both names may be open at once when cash covers the second notional; otherwise the later signal is skipped. `--start` / `--end` bound the trade window (prior bars stay for SMA/RSI/EMA warmup):
+The 10-share and 1% risk books (`config/ema9_trend_bracket.example.yaml`, `config/ema9_trend_risk.example.yaml`) keep **`exit: fixed_bracket`** (initial stop 1.5% / take 3.0%) plus a **one-bar break-even**: after the fill, wait for one complete signal-timeframe bar after the entry bar; at that close, if the long is still valid (`close > EMA(9)`), move the stop to entry and leave it there. If not valid, keep the 1.5% stop. Prior 12:00 book without BE: `config/ema9_trend_bracket_nobe.example.yaml`.
+
+`config/ema9_trend_risk.example.yaml` is the same 15m entry on **AAPL / MSFT only** and sizes each long to risk ~1% of current equity at the 1.5% stop (`size.type: risk_pct`). Both names may be open at once when cash covers the second notional; otherwise the later signal is skipped. `--start` / `--end` bound the trade window (prior bars stay for SMA/RSI/EMA warmup):
 
 ```bash
 python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml --source yahoo \
@@ -232,9 +237,9 @@ The 10-share control on the same window is `config/ema9_trend_bracket.example.ya
 Bar size is `settings.timeframe` (default **15m**). The same rules on 5-minute bars (every indicator on 5m; cooldown still 60 minutes):
 
 ```bash
-python -m dta_bot backtest --config config/ema9_trend.example.yaml --timeframe 5m --source yahoo --breakout SOXL
+python -m dta_bot backtest --config config/ema9_trend.example.yaml --timeframe 5m --source yahoo
 # or
-python -m dta_bot backtest --config config/ema9_trend_5m.example.yaml --source yahoo --breakout SOXL \
+python -m dta_bot backtest --config config/ema9_trend_5m.example.yaml --source yahoo \
   --output artifacts/ema9_ema_invalid_5m.json --report artifacts/ema9_ema_invalid_5m.md
 ```
 
@@ -242,7 +247,7 @@ The same file also ships `ema9_cross_raw` (cross, no trend filter, same EMA-inva
 
 ```bash
 python -m dta_bot validate --config config/ema9_trend.example.yaml
-python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yahoo --breakout SOXL \
+python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yahoo \
   --output artifacts/ema9_ema_invalid.json --report artifacts/ema9_ema_invalid.md
 ```
 

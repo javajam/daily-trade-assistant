@@ -14,7 +14,7 @@
 #
 #   python -m dta_bot validate --config config/ema9_trend_5m.example.yaml
 #   python -m dta_bot backtest --config config/ema9_trend_5m.example.yaml --source yahoo \
-#     --breakout SOXL --output artifacts/ema9_ema_invalid_5m.json \
+#     --output artifacts/ema9_ema_invalid_5m.json \
 #     --report artifacts/ema9_ema_invalid_5m.md
 #
 # Equivalent: --config config/ema9_trend.example.yaml --timeframe 5m
@@ -38,12 +38,11 @@ settings:
 universe:
   - AAPL
   - MSFT
-  - SOXL
 
 rules:
   - id: ema9_trend
     enabled: true
-    symbols: [AAPL, MSFT, SOXL]
+    symbols: [AAPL, MSFT]
     cooldown_minutes: 60
     notes: "5m bullish EMA(9) cross while price holds above the 20-SMA and RSI is not overbought. Exit when a 5m bar closes < EMA9."
     when:
@@ -71,7 +70,7 @@ rules:
 
   - id: ema9_cross_raw
     enabled: true
-    symbols: [AAPL, MSFT, SOXL]
+    symbols: [AAPL, MSFT]
     cooldown_minutes: 60
     notes: "Ablation: 5m bullish EMA(9) cross with no SMA/RSI trend filter. Same 10-share EMA-invalidation exit."
     when:
@@ -90,7 +89,7 @@ rules:
 
   - id: engulfing-with-trend
     enabled: true
-    symbols: [AAPL, MSFT, SOXL]
+    symbols: [AAPL, MSFT]
     cooldown_minutes: 60
     notes: "Control: 5m bullish engulfing while price holds above the 20-SMA and RSI is not overbought. Still uses 1.5/3.0 fixed brackets."
     when:

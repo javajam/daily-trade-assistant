@@ -1,9 +1,10 @@
 # 9 EMA trend — long-only v1 (paper / dry_run).
 #
-# Universe AAPL / MSFT / SOXL. Entry is unchanged: bullish close-across-EMA(9)
-# plus close > SMA20 and RSI14 < 70. Default exit for this experiment is
-# EMA-invalidation — hold until a signal-timeframe bar closes < EMA(9)
-# (equals EMA stays valid) and flatten at that close. No 1.5/3.0 bracket.
+# Universe AAPL / MSFT (SOXL is optional: config/ema9_trend_bracket_soxl.example.yaml
+# and config/ema9_trend_risk_soxl.example.yaml). Entry is unchanged: bullish
+# close-across-EMA(9) plus close > SMA20 and RSI14 < 70. Default exit for this
+# experiment is EMA-invalidation — hold until a signal-timeframe bar closes <
+# EMA(9) (equals EMA stays valid) and flatten at that close. No 1.5/3.0 bracket.
 # Optional stop_loss_pct is a catastrophic stop only (omit / leave unset = off).
 #
 #   action.exit: ema_invalid     # this file's default
@@ -33,10 +34,10 @@
 #
 #   python -m dta_bot validate --config config/ema9_trend.example.yaml
 #   python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yahoo \
-#     --breakout SOXL --output artifacts/ema9_ema_invalid.json \
+#     --output artifacts/ema9_ema_invalid.json \
 #     --report artifacts/ema9_ema_invalid.md
 #   python -m dta_bot backtest --config config/ema9_trend.example.yaml --timeframe 5m \
-#     --source yahoo --breakout SOXL --output artifacts/ema9_ema_invalid_5m.json \
+#     --source yahoo --output artifacts/ema9_ema_invalid_5m.json \
 #     --report artifacts/ema9_ema_invalid_5m.md
 
 settings:
@@ -57,12 +58,11 @@ settings:
 universe:
   - AAPL
   - MSFT
-  - SOXL
 
 rules:
   - id: ema9_trend
     enabled: true
-    symbols: [AAPL, MSFT, SOXL]
+    symbols: [AAPL, MSFT]
     cooldown_minutes: 60
     notes: "15m bullish EMA(9) cross while price holds above the 20-SMA and RSI is not overbought. Exit when a 15m bar closes < EMA9."
     when:
@@ -90,7 +90,7 @@ rules:
 
   - id: ema9_cross_raw
     enabled: true
-    symbols: [AAPL, MSFT, SOXL]
+    symbols: [AAPL, MSFT]
     cooldown_minutes: 60
     notes: "Ablation: 15m bullish EMA(9) cross with no SMA/RSI trend filter. Same 10-share EMA-invalidation exit."
     when:
@@ -109,7 +109,7 @@ rules:
 
   - id: engulfing-with-trend
     enabled: true
-    symbols: [AAPL, MSFT, SOXL]
+    symbols: [AAPL, MSFT]
     cooldown_minutes: 60
     notes: "Control: 15m bullish engulfing while price holds above the 20-SMA and RSI is not overbought. Still uses 1.5/3.0 fixed brackets."
     when:

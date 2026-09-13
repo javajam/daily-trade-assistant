@@ -6,6 +6,7 @@ import pytest
 from dta_bot.backtest import OpenLot, _mark_to_market, run_backtest, summarize
 from dta_bot.config import ActionSpec, BotConfig, RuleSpec, Settings, SizeSpec, parse_condition
 from dta_bot.models import Bar
+from dta_bot.orb import ema_through
 from tests.conftest import bar
 
 NY = ZoneInfo("America/New_York")
@@ -561,6 +562,138 @@ def test_overnight_book_holds_past_flatten_bar():
     assert result.report.trades == 1
     assert result.trades[0].exit_reason == "eod"
     assert result.trades[0].exit_price == 10.20
+
+
+def _ema_cross_warmup() -> list[Bar]:
+    bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(12)]
+    bars[-2] = Bar(bars[-2].timestamp, 10.0, 10.1, 9.9, 10.0, 1000)
+    bars[-1] = Bar(bars[-1].timestamp, 10.0, 12.5, 9.9, 12.0, 1000)
+    return bars
+
+
+def _be_rule(**action_kw) -> RuleSpec:
+    defaults = dict(
+        type="buy",
+        size=SizeSpec(type="shares", value=10),
+        stop_loss_pct=1.5,
+        take_profit_pct=3.0,
+        breakeven_after_bars=1,
+        breakeven_requires_valid=True,
+        breakeven_valid="above_ema",
+    )
+    defaults.update(action_kw)
+    return _buy_rule(
+        id="ema9",
+        when=parse_condition({"ema_cross": {"period": 9, "timeframe": "15m", "direction": "bullish"}}),
+        action=ActionSpec(**defaults),
+    )
+
+
+def test_breakeven_moves_stop_to_entry_after_one_complete_bar():
+    # Fill at bar 12 open 12.0. Confirm bar 13 closes above EMA9 → arm BE.
+    # Bar 14 tags the entry stop. Same-bar low at entry on the confirm bar
+    # must not fire because BE is armed only at that close.
+    warmup = _ema_cross_warmup()
+    fill = Bar(bar(12, 12.0, 12.2, 11.95, 12.1).timestamp, 12.0, 12.2, 11.95, 12.1, 1000)
+    confirm = Bar(bar(13, 12.1, 12.25, 12.0, 12.15).timestamp, 12.1, 12.25, 12.0, 12.15, 1000)
+    hit = Bar(bar(14, 12.15, 12.2, 11.90, 12.00).timestamp, 12.15, 12.2, 11.90, 12.00, 1000)
+    result = run_backtest(_cfg(_be_rule()), {("AAPL", "15Min"): warmup + [fill, confirm, hit]})
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.entry_price == 12.0
+    assert trade.exit_reason == "breakeven_stop"
+    assert trade.exit_price == 12.0
+    assert trade.pnl == 0.0
+    assert trade.breakeven_armed is True
+    assert result.report.breakeven_armed == 1
+    assert result.report.exit_reasons == {"breakeven_stop": 1}
+    assert ema_through(warmup + [fill, confirm], confirm, 9) < confirm.close
+
+
+def test_breakeven_does_not_arm_on_the_entry_bar():
+    warmup = _ema_cross_warmup()
+    fill = Bar(bar(12, 12.0, 12.2, 11.95, 12.1).timestamp, 12.0, 12.2, 11.95, 12.1, 1000)
+    # If BE armed at fill close, this confirm low at 12.0 would stop out.
+    confirm = Bar(bar(13, 12.1, 12.2, 12.0, 12.15).timestamp, 12.1, 12.2, 12.0, 12.15, 1000)
+    result = run_backtest(_cfg(_be_rule()), {("AAPL", "15Min"): warmup + [fill, confirm]})
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.exit_reason == "eod"
+    assert trade.breakeven_armed is True
+    assert trade.exit_price == 12.15
+
+
+def test_breakeven_leaves_original_stop_when_confirm_close_not_above_ema():
+    warmup = [bar(i, 100.0, 100.2, 99.8, 100.0) for i in range(20)]
+    warmup[-2] = Bar(warmup[-2].timestamp, 100.0, 100.2, 99.4, 99.5, 1000)
+    warmup[-1] = Bar(warmup[-1].timestamp, 99.5, 102.0, 99.4, 101.0, 1000)
+    fill = Bar(bar(20, 101.0, 101.5, 100.8, 101.2).timestamp, 101.0, 101.5, 100.8, 101.2, 1000)
+    ema_at_fill = ema_through(warmup + [fill], fill, 9)
+    assert ema_at_fill is not None
+    stop = 101.0 * 0.985
+    confirm_close = min(ema_at_fill - 0.05, (stop + ema_at_fill) / 2)
+    assert stop < confirm_close < ema_at_fill
+    confirm = Bar(
+        bar(21, 101.2, 101.3, confirm_close - 0.02, confirm_close).timestamp,
+        101.2,
+        101.3,
+        confirm_close - 0.02,
+        confirm_close,
+        1000,
+    )
+    hit = Bar(bar(22, confirm_close, 101.0, 99.40, 99.50).timestamp, confirm_close, 101.0, 99.40, 99.50, 1000)
+    result = run_backtest(
+        _cfg(_be_rule()),
+        {("AAPL", "15Min"): warmup + [fill, confirm, hit]},
+    )
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.breakeven_armed is False
+    assert trade.exit_reason == "stop"
+    assert trade.exit_price == pytest.approx(stop)
+    assert result.report.breakeven_armed == 0
+
+
+def test_breakeven_always_arms_when_requires_valid_is_false():
+    warmup = [bar(i, 100.0, 100.2, 99.8, 100.0) for i in range(20)]
+    warmup[-2] = Bar(warmup[-2].timestamp, 100.0, 100.2, 99.4, 99.5, 1000)
+    warmup[-1] = Bar(warmup[-1].timestamp, 99.5, 102.0, 99.4, 101.0, 1000)
+    fill = Bar(bar(20, 101.0, 101.5, 100.8, 101.2).timestamp, 101.0, 101.5, 100.8, 101.2, 1000)
+    ema_at_fill = ema_through(warmup + [fill], fill, 9)
+    assert ema_at_fill is not None
+    confirm_close = ema_at_fill - 0.10
+    confirm = Bar(
+        bar(21, 101.2, 101.3, confirm_close, confirm_close).timestamp,
+        101.2,
+        101.3,
+        confirm_close,
+        confirm_close,
+        1000,
+    )
+    hit = Bar(bar(22, 101.1, 101.2, 100.90, 101.0).timestamp, 101.1, 101.2, 100.90, 101.0, 1000)
+    result = run_backtest(
+        _cfg(_be_rule(breakeven_requires_valid=False)),
+        {("AAPL", "15Min"): warmup + [fill, confirm, hit]},
+    )
+    trade = result.trades[0]
+    assert trade.breakeven_armed is True
+    assert trade.exit_reason == "breakeven_stop"
+    assert trade.exit_price == 101.0
+
+
+def test_breakeven_off_keeps_original_percent_stop():
+    warmup = _ema_cross_warmup()
+    fill = Bar(bar(12, 12.0, 12.2, 11.95, 12.1).timestamp, 12.0, 12.2, 11.95, 12.1, 1000)
+    confirm = Bar(bar(13, 12.1, 12.25, 12.0, 12.15).timestamp, 12.1, 12.25, 12.0, 12.15, 1000)
+    hit = Bar(bar(14, 12.15, 12.2, 11.80, 11.85).timestamp, 12.15, 12.2, 11.80, 11.85, 1000)
+    result = run_backtest(
+        _cfg(_be_rule(breakeven_after_bars=0)),
+        {("AAPL", "15Min"): warmup + [fill, confirm, hit]},
+    )
+    trade = result.trades[0]
+    assert trade.breakeven_armed is False
+    assert trade.exit_reason == "stop"
+    assert trade.exit_price == pytest.approx(12.0 * 0.985)
 
 
 def test_stop_on_flatten_bar_beats_session_flatten():

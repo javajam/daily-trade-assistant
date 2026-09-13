@@ -274,6 +274,38 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
     )
 
 
+def _breakeven_assumption(config: Optional[BotConfig]) -> Optional[str]:
+    if config is None:
+        return None
+    rules = [
+        r
+        for r in config.rules
+        if r.enabled and r.action.type != "close" and r.action.breakeven_after_bars > 0
+    ]
+    if not rules:
+        return None
+    action = rules[0].action
+    valid = (
+        f"long close > EMA({action.breakeven_ema_period}) on the signal timeframe "
+        f"(breakeven_valid: {action.breakeven_valid})"
+        if action.breakeven_valid == "above_ema"
+        else "always (breakeven_valid: always)"
+    )
+    need = (
+        f"only if the trade is still valid ({valid})"
+        if action.breakeven_requires_valid
+        else "regardless of EMA validity"
+    )
+    return (
+        f"Break-even stop (breakeven_after_bars: {action.breakeven_after_bars}): after "
+        f"that many complete signal-timeframe bars finish after the entry bar "
+        f"(1 = the next full candle after fill), at that close, {need}, move the stop "
+        "to entry price and leave it there. If not valid, keep the original percent "
+        "stop (do not retry). Same-bar stop/take on the evaluation bar still use the "
+        "original stop. A later hit of the armed entry stop is exit reason breakeven_stop."
+    )
+
+
 def _session_gate_assumption(config: Optional[BotConfig]) -> Optional[str]:
     if config is None:
         return None
@@ -305,6 +337,16 @@ def session_gate_suffix(config: BotConfig) -> str:
         bits.append(f"cutoff {s.entry_cutoff}")
     if s.flatten_by:
         bits.append(f"flat {s.flatten_by}")
+    be = next(
+        (
+            r.action.breakeven_after_bars
+            for r in config.rules
+            if r.enabled and r.action.type != "close" and r.action.breakeven_after_bars > 0
+        ),
+        None,
+    )
+    if be:
+        bits.append(f"BE {be}")
     return " (" + ", ".join(bits) + ")"
 
 
@@ -318,6 +360,7 @@ def assumptions_rules(
         "A rule is evaluated when any of its referenced timeframes prints a newly closed bar.",
         "Entries and close-signals fill at the next bar open of the finest rule timeframe.",
         _rules_exit_assumption(config),
+        _breakeven_assumption(config),
         "If stop and take (or EMA-invalidation) both trade in the fill bar, the stop is assumed to fill first.",
         "A gap through stop/take fills at that bar's open. EMA-invalidation fills at the invalidating close.",
         "One open lot per symbol (no pyramiding). A second signal while that symbol is already open is skipped.",
@@ -331,7 +374,7 @@ def assumptions_rules(
     gate = _session_gate_assumption(config)
     if gate:
         notes.insert(-3, gate)
-    return notes
+    return [n for n in notes if n]
 
 
 def pattern_hits_from_result(result: BacktestResult) -> dict[str, int]:
@@ -613,10 +656,13 @@ def exit_mix(report: dict[str, Any]) -> str:
     eod = int(reasons.get("eod") or 0)
     ema_inv = int(reasons.get("ema_invalid") or 0)
     sess = int(reasons.get("session_flatten") or 0)
+    be_stop = int(reasons.get("breakeven_stop") or 0)
     parts: list[str] = []
     if ema_inv:
         parts.append(f"ema_invalid {ema_inv}")
     parts.extend([f"take {take}", f"stop {stop}"])
+    if be_stop:
+        parts.append(f"breakeven_stop {be_stop}")
     if sess:
         parts.append(f"session_flatten {sess}")
     if eod:
@@ -624,7 +670,8 @@ def exit_mix(report: dict[str, Any]) -> str:
     extra = [
         f"{key} {count}"
         for key, count in reasons.items()
-        if key not in {"take", "stop", "eod", "ema_invalid", "session_flatten"} and count
+        if key not in {"take", "stop", "eod", "ema_invalid", "session_flatten", "breakeven_stop"}
+        and count
     ]
     parts.extend(extra)
     return ", ".join(parts)
@@ -650,6 +697,7 @@ def format_side_by_side_table(columns: list[tuple[str, dict[str, Any]]]) -> list
         ("Avg win", lambda r: _fmt_money(r.get("avg_win"))),
         ("Avg loss", lambda r: _fmt_money(r.get("avg_loss"))),
         ("Takes vs stops", lambda r: exit_mix(r)),
+        ("BE armed", lambda r: str(int(r.get("breakeven_armed") or 0))),
     ]
     for label, fmt in rows:
         lines.append(f"| {label} | {cells(fmt)} |")

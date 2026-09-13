@@ -58,6 +58,9 @@ EXIT_ALIASES = {
 }
 
 
+BREAKEVEN_VALID_MODES = ("above_ema", "always")
+
+
 class ActionSpec(BaseModel):
     type: Literal["buy", "sell", "close"]
     size: Optional[SizeSpec] = None
@@ -70,6 +73,15 @@ class ActionSpec(BaseModel):
     # Optional stop_loss_pct is then a catastrophic stop only; take is ignored.
     exit: Literal["fixed_bracket", "ema_invalid"] = "fixed_bracket"
     exit_ema_period: int = Field(default=9, ge=2)
+    # After this many complete signal-timeframe bars *after the entry bar*,
+    # move the stop to entry (break-even). 0 / omitted = off. 1 = next full
+    # candle after fill (e.g. the next 15m bar after a 15m fill).
+    breakeven_after_bars: int = Field(default=0, ge=0)
+    # When true, only arm BE if the evaluation bar is still "valid".
+    breakeven_requires_valid: bool = True
+    # above_ema = long close > EMA(period); always = arm regardless of EMA.
+    breakeven_valid: Literal["above_ema", "always"] = "above_ema"
+    breakeven_ema_period: int = Field(default=9, ge=2)
     time_in_force: str = "day"
 
     @field_validator("exit", mode="before")
@@ -81,6 +93,23 @@ class ActionSpec(BaseModel):
         if key not in EXIT_ALIASES:
             raise ValueError("exit must be 'ema_invalid' or 'fixed_bracket'")
         return EXIT_ALIASES[key]
+
+    @field_validator("breakeven_after_bars", mode="before")
+    @classmethod
+    def _be_bars(cls, v: Any) -> int:
+        if v is None or str(v).strip() == "":
+            return 0
+        return v
+
+    @field_validator("breakeven_valid", mode="before")
+    @classmethod
+    def _be_valid(cls, v: Any) -> str:
+        if v is None or str(v).strip() == "":
+            return "above_ema"
+        key = str(v).strip().lower().replace("-", "_").replace(" ", "_")
+        if key not in BREAKEVEN_VALID_MODES:
+            raise ValueError("breakeven_valid must be 'above_ema' or 'always'")
+        return key
 
     @model_validator(mode="after")
     def _size_required(self) -> "ActionSpec":
@@ -472,6 +501,10 @@ def _parse_action(raw: dict[str, Any]) -> ActionSpec:
         take_profit_pct=raw.get("take_profit_pct"),
         exit=raw.get("exit", "fixed_bracket"),
         exit_ema_period=raw.get("exit_ema_period", 9),
+        breakeven_after_bars=raw.get("breakeven_after_bars", 0),
+        breakeven_requires_valid=raw.get("breakeven_requires_valid", True),
+        breakeven_valid=raw.get("breakeven_valid", "above_ema"),
+        breakeven_ema_period=raw.get("breakeven_ema_period", 9),
         time_in_force=raw.get("time_in_force", "day"),
     )
 

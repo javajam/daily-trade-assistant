@@ -201,10 +201,17 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 )
             else:
                 size_txt = f" size={size.type} {size.value}"
+        be_txt = ""
+        if rule.action.breakeven_after_bars:
+            be_txt = (
+                f" breakeven_after_bars={rule.action.breakeven_after_bars}"
+                f" requires_valid={rule.action.breakeven_requires_valid}"
+                f" valid={rule.action.breakeven_valid}"
+            )
         print(
             f"    - {rule.id}: enabled={rule.enabled} symbols={syms} "
             f"action={rule.action.type} exit={rule.action.exit} "
-            f"cooldown={rule.cooldown_minutes}m tf={tfs}{size_txt}"
+            f"cooldown={rule.cooldown_minutes}m tf={tfs}{size_txt}{be_txt}"
         )
     return 0
 
