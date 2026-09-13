@@ -937,3 +937,132 @@ def test_sma20_risk_pct_sizes_from_entry_to_sma():
     result = run_backtest(_cfg(rule), {("AAPL", "15Min"): warmup + [fill]}, starting_equity=100_000)
     assert result.report.trades == 1
     assert result.trades[0].qty == expected
+
+
+def _manage_rule(**action_kw) -> RuleSpec:
+    defaults = dict(
+        type="buy",
+        size=SizeSpec(type="shares", value=10),
+        exit="fixed_bracket",
+        stop_mode="entry_pct",
+        stop_loss_pct=1.0,
+    )
+    defaults.update(action_kw)
+    return _buy_rule(action=ActionSpec(**defaults))
+
+
+def test_entry_pct_stop_uses_fill_not_signal_close():
+    # Signal close 10.0; next open gaps to 10.20. Entry stop = 10.20*0.99 = 10.098.
+    # A 10.09 low hits the fill stop but would miss a signal-close 9.90 stop.
+    bars = [
+        Bar(bar(0, 10, 10.2, 8.0, 8.2).timestamp, 10.0, 10.2, 8.0, 8.2, 1000),
+        Bar(bar(1, 8.1, 11.0, 8.0, 10.0).timestamp, 8.1, 11.0, 8.0, 10.0, 1000),
+        Bar(bar(2, 10.20, 10.25, 10.15, 10.22).timestamp, 10.20, 10.25, 10.15, 10.22, 1000),
+        Bar(bar(3, 10.22, 10.24, 10.09, 10.10).timestamp, 10.22, 10.24, 10.09, 10.10, 1000),
+    ]
+    result = run_backtest(_cfg(_manage_rule()), {("AAPL", "15Min"): bars})
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.entry_price == 10.20
+    assert trade.exit_reason == "stop"
+    assert trade.exit_price == pytest.approx(10.20 * 0.99)
+    assert any("stop_mode: entry_pct" in n for n in result.report.notes)
+
+
+def test_lock_plus_arms_on_first_touch_and_fills_next_bar():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        # Fill at 100. High 100.5 — no +1% touch yet.
+        Bar(bar(2, 100.0, 100.5, 99.8, 100.4).timestamp, 100.0, 100.5, 99.8, 100.4, 1000),
+        # First touch of 101. Same-bar low 100.2 must NOT fill the locked stop.
+        Bar(bar(3, 100.4, 101.05, 100.2, 100.8).timestamp, 100.4, 101.05, 100.2, 100.8, 1000),
+        # Next bar opens above the lock, then tags 101.
+        Bar(bar(4, 101.05, 101.20, 100.85, 100.90).timestamp, 101.05, 101.20, 100.85, 100.90, 1000),
+    ]
+    result = run_backtest(
+        _cfg(_manage_rule(stop_mode="lock_plus", lock_trigger_pct=1.0, lock_stop_pct=1.0)),
+        {("AAPL", "15Min"): bars},
+    )
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.entry_price == 100.0
+    assert trade.lock_armed is True
+    assert trade.exit_reason == "lock_stop"
+    assert trade.exit_price == pytest.approx(101.0)
+    assert result.report.lock_armed == 1
+    assert any("lock_plus" in n for n in result.report.notes)
+
+
+def test_lock_plus_same_bar_touch_does_not_fill_lock():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        Bar(bar(2, 100.0, 101.20, 100.10, 100.80).timestamp, 100.0, 101.20, 100.10, 100.80, 1000),
+    ]
+    result = run_backtest(
+        _cfg(_manage_rule(stop_mode="lock_plus")),
+        {("AAPL", "15Min"): bars},
+    )
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.lock_armed is True
+    assert trade.exit_reason == "eod"
+    assert trade.exit_price == 100.80
+
+
+def test_lock_plus_initial_stop_before_touch():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        Bar(bar(2, 100.0, 100.4, 98.90, 99.20).timestamp, 100.0, 100.4, 98.90, 99.20, 1000),
+    ]
+    result = run_backtest(
+        _cfg(_manage_rule(stop_mode="lock_plus")),
+        {("AAPL", "15Min"): bars},
+    )
+    trade = result.trades[0]
+    assert trade.lock_armed is False
+    assert trade.exit_reason == "stop"
+    assert trade.exit_price == pytest.approx(99.0)
+
+
+def test_trail_ratchets_from_high_and_fills_next_bar():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        # Fill. High 102 would make trail 100.98, but same-bar low 100.5 uses initial 99.
+        Bar(bar(2, 100.0, 102.0, 100.5, 101.5).timestamp, 100.0, 102.0, 100.5, 101.5, 1000),
+        # Next bar hits 102*0.99 = 100.98.
+        Bar(bar(3, 101.4, 101.6, 100.90, 101.0).timestamp, 101.4, 101.6, 100.90, 101.0, 1000),
+    ]
+    result = run_backtest(
+        _cfg(_manage_rule(stop_mode="trail", trail_pct=1.0)),
+        {("AAPL", "15Min"): bars},
+    )
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.entry_price == 100.0
+    assert trade.trail_ratcheted is True
+    assert trade.exit_reason == "trail_stop"
+    assert trade.exit_price == pytest.approx(102.0 * 0.99)
+    assert result.report.trail_ratcheted == 1
+    assert any("stop_mode: trail" in n for n in result.report.notes)
+
+
+def test_trail_never_ratchets_down():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        Bar(bar(2, 100.0, 103.0, 100.5, 102.0).timestamp, 100.0, 103.0, 100.5, 102.0, 1000),
+        # Lower high; trail must stay at 103*0.99 = 101.97 (this low is 102.0).
+        Bar(bar(3, 102.0, 102.4, 102.0, 102.1).timestamp, 102.0, 102.4, 102.0, 102.1, 1000),
+    ]
+    result = run_backtest(
+        _cfg(_manage_rule(stop_mode="trail")),
+        {("AAPL", "15Min"): bars},
+    )
+    trade = result.trades[0]
+    assert trade.exit_reason == "eod"
+    assert trade.trail_ratcheted is True
+    assert trade.exit_price == 102.1

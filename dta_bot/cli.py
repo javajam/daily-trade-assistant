@@ -211,6 +211,19 @@ def cmd_validate(args: argparse.Namespace) -> int:
         stop_txt = f" stop_mode={rule.action.stop_mode}"
         if rule.action.stop_mode == "sma20":
             stop_txt += f" stop_sma_period={rule.action.stop_sma_period}"
+        elif rule.action.stop_mode == "lock_plus":
+            trig = rule.action.resolved_lock_trigger_pct()
+            lock = rule.action.resolved_lock_stop_pct()
+            if trig is not None:
+                stop_txt += f" lock_trigger_pct={trig:g}"
+            if lock is not None:
+                stop_txt += f" lock_stop_pct={lock:g}"
+        elif rule.action.stop_mode == "trail":
+            trail = rule.action.resolved_trail_pct()
+            if trail is not None:
+                stop_txt += f" trail_pct={trail:g}"
+        elif rule.action.stop_mode == "entry_pct" and rule.action.stop_loss_pct:
+            stop_txt += f" stop_loss_pct={rule.action.stop_loss_pct:g}"
         be_txt = ""
         if rule.action.breakeven_after_bars:
             be_txt = (

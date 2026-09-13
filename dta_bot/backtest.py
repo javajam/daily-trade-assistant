@@ -13,7 +13,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from dta_bot.config import ActionSpec, AnyCondition, BotConfig, GroupCond, RuleSpec
+from dta_bot.config import (
+    ENTRY_STOP_MODES,
+    ActionSpec,
+    AnyCondition,
+    BotConfig,
+    GroupCond,
+    RuleSpec,
+)
 from dta_bot.engine import BarMap, cooldown_key, evaluate_rule, fire_key
 from dta_bot.models import Account, Bar
 from dta_bot.indicators import ma_pair_cross, sma
@@ -77,6 +84,8 @@ class Trade:
     signal_time: Optional[datetime] = None
     entry_rule_id: str = ""
     breakeven_armed: bool = False
+    lock_armed: bool = False
+    trail_ratcheted: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -132,6 +141,14 @@ class OpenLot:
     breakeven_ema_period: int = 9
     breakeven_armed: bool = False
     breakeven_checked: bool = False
+    stop_mode: str = "percent"
+    stop_loss_pct: Optional[float] = None
+    lock_trigger_pct: Optional[float] = None
+    lock_stop_pct: Optional[float] = None
+    trail_pct: Optional[float] = None
+    peak_price: Optional[float] = None
+    lock_armed: bool = False
+    trail_ratcheted: bool = False
 
 
 @dataclass
@@ -153,6 +170,10 @@ class PendingOrder:
     exit_sma_period: int = 20
     close_reason: str = "close_signal"
     stop_mode: str = "percent"
+    stop_loss_pct: Optional[float] = None
+    lock_trigger_pct: Optional[float] = None
+    lock_stop_pct: Optional[float] = None
+    trail_pct: Optional[float] = None
     breakeven_after_bars: int = 0
     breakeven_requires_valid: bool = True
     breakeven_valid: str = "above_ema"
@@ -185,6 +206,8 @@ class RuleReport:
     signals_by_symbol: dict[str, int] = field(default_factory=dict)
     trades_by_symbol: dict[str, int] = field(default_factory=dict)
     breakeven_armed: int = 0
+    lock_armed: int = 0
+    trail_ratcheted: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -287,6 +310,98 @@ def _breakeven_fields(action: ActionSpec) -> dict[str, Any]:
         "breakeven_valid": action.breakeven_valid,
         "breakeven_ema_period": action.breakeven_ema_period,
     }
+
+
+def _stop_manage_fields(action: ActionSpec) -> dict[str, Any]:
+    return {
+        "stop_mode": action.stop_mode,
+        "stop_loss_pct": action.stop_loss_pct,
+        "lock_trigger_pct": action.resolved_lock_trigger_pct(),
+        "lock_stop_pct": action.resolved_lock_stop_pct(),
+        "trail_pct": action.resolved_trail_pct(),
+    }
+
+
+def _pct_level(price: float, pct: float, *, above: bool) -> float:
+    return price * (1.0 + pct / 100.0) if above else price * (1.0 - pct / 100.0)
+
+
+def _entry_anchored_stop(side: str, entry_price: float, pct: Optional[float]) -> Optional[float]:
+    if pct is None or entry_price <= 0:
+        return None
+    if side == "buy":
+        return _pct_level(entry_price, pct, above=False)
+    return _pct_level(entry_price, pct, above=True)
+
+
+def _maybe_arm_lock(lot: OpenLot, bar: Bar) -> None:
+    """Arm lock_plus on first trade/touch of entry × (1 + lock_trigger_pct/100).
+
+    The locked stop is live from the *next* bar. Same-bar pullback after the
+    tag still uses the initial entry×(1 − stop_loss_pct/100) stop.
+    """
+    if lot.lock_armed or lot.stop_mode != "lock_plus":
+        return
+    trigger_pct = lot.lock_trigger_pct
+    lock_pct = lot.lock_stop_pct
+    if trigger_pct is None or lock_pct is None:
+        return
+    if lot.side == "buy":
+        trigger = _pct_level(lot.entry_price, trigger_pct, above=True)
+        touched = bar.high >= trigger
+        new_stop = _pct_level(lot.entry_price, lock_pct, above=True)
+    else:
+        trigger = _pct_level(lot.entry_price, trigger_pct, above=False)
+        touched = bar.low <= trigger
+        new_stop = _pct_level(lot.entry_price, lock_pct, above=False)
+    if not touched:
+        return
+    lot.stop = new_stop
+    lot.lock_armed = True
+
+
+def _maybe_ratchet_trail(lot: OpenLot, bar: Bar) -> None:
+    """Ratchet trail stop to peak_price_since_entry × (1 − trail_pct/100).
+
+    Peak updates from this bar's extreme *after* the current-stop check, so
+    the new trail is live from the next bar. Ratchets favorable only.
+    """
+    if lot.stop_mode != "trail":
+        return
+    pct = lot.trail_pct
+    if pct is None:
+        return
+    peak = lot.peak_price if lot.peak_price is not None else lot.entry_price
+    if lot.side == "buy":
+        peak = max(peak, bar.high)
+        new_stop = _pct_level(peak, pct, above=False)
+        if lot.stop is None or new_stop > lot.stop:
+            lot.stop = new_stop
+            if peak > lot.entry_price + 1e-12:
+                lot.trail_ratcheted = True
+    else:
+        peak = min(peak, bar.low)
+        new_stop = _pct_level(peak, pct, above=True)
+        if lot.stop is None or new_stop < lot.stop:
+            lot.stop = new_stop
+            if peak < lot.entry_price - 1e-12:
+                lot.trail_ratcheted = True
+    lot.peak_price = peak
+
+
+def _maybe_manage_stop(lot: OpenLot, bar: Bar) -> None:
+    _maybe_arm_lock(lot, bar)
+    _maybe_ratchet_trail(lot, bar)
+
+
+def _stop_exit_reason(lot: OpenLot) -> str:
+    if lot.lock_armed:
+        return "lock_stop"
+    if lot.stop_mode == "trail":
+        return "trail_stop"
+    if lot.breakeven_armed:
+        return "breakeven_stop"
+    return "stop"
 
 
 def _breakeven_trade_valid(lot: OpenLot, bar: Bar, series: list[Bar]) -> bool:
@@ -429,6 +544,8 @@ def _close_lot(
         signal_time=lot.signal_time,
         entry_rule_id=lot.rule_id,
         breakeven_armed=lot.breakeven_armed,
+        lock_armed=lot.lock_armed,
+        trail_ratcheted=lot.trail_ratcheted,
     )
     return trade, cash
 
@@ -507,6 +624,8 @@ def summarize(
         signals_by_symbol=by_sig,
         trades_by_symbol=by_tr,
         breakeven_armed=sum(1 for t in trades if t.breakeven_armed),
+        lock_armed=sum(1 for t in trades if t.lock_armed),
+        trail_ratcheted=sum(1 for t in trades if t.trail_ratcheted),
     )
 
 
@@ -663,6 +782,9 @@ def run_backtest(
             if order.stop_mode == "sma20" and not sma_stop_valid(order.side, fill_px, order.stop):
                 sma20_fill_skips += 1
                 continue
+            fill_stop = order.stop
+            if order.stop_mode in ENTRY_STOP_MODES:
+                fill_stop = _entry_anchored_stop(order.side, fill_px, order.stop_loss_pct)
             if order.side == "buy":
                 cost = buy_notional(order.qty, fill_px, commission)
                 if cost > cash + 1e-9:
@@ -679,7 +801,7 @@ def run_backtest(
                     side=order.side,
                     entry_time=_aware(fill_bar.timestamp),
                     entry_price=fill_px,
-                    stop=order.stop,
+                    stop=fill_stop,
                     take=order.take,
                     signal_time=order.signal_time,
                     tf=order.tf,
@@ -690,6 +812,12 @@ def run_backtest(
                     breakeven_requires_valid=order.breakeven_requires_valid,
                     breakeven_valid=order.breakeven_valid,
                     breakeven_ema_period=order.breakeven_ema_period,
+                    stop_mode=order.stop_mode,
+                    stop_loss_pct=order.stop_loss_pct,
+                    lock_trigger_pct=order.lock_trigger_pct,
+                    lock_stop_pct=order.lock_stop_pct,
+                    trail_pct=order.trail_pct,
+                    peak_price=fill_px,
                 )
             )
             note_open_book()
@@ -741,15 +869,17 @@ def run_backtest(
                             )
                         )
                     _maybe_arm_breakeven(lot, bar, series)
+                    _maybe_manage_stop(lot, bar)
                     survivors.append(lot)
                     continue
                 if hit is None:
                     _maybe_arm_breakeven(lot, bar, series)
+                    _maybe_manage_stop(lot, bar)
                     survivors.append(lot)
                     continue
                 reason, px = hit
-                if reason == "stop" and lot.breakeven_armed:
-                    reason = "breakeven_stop"
+                if reason == "stop":
+                    reason = _stop_exit_reason(lot)
                 trade, cash = _close_lot(
                     lot,
                     when=now,
@@ -917,7 +1047,7 @@ def run_backtest(
                                     exit_mode=rule.action.exit,
                                     exit_ema_period=rule.action.exit_ema_period,
                                     exit_sma_period=rule.action.exit_sma_period,
-                                    stop_mode=rule.action.stop_mode,
+                                    **_stop_manage_fields(rule.action),
                                     **_breakeven_fields(rule.action),
                                 )
                             )
@@ -1094,6 +1224,55 @@ def run_backtest(
             f"{sma20_fill_skips} accepted signal(s) skipped at fill because SMA20 was at/above "
             "the next-bar open (long stop not below entry)."
         )
+    entry_stop_rules = [
+        r
+        for r in config.rules
+        if r.enabled and r.action.type != "close" and r.action.stop_mode in ENTRY_STOP_MODES
+    ]
+    if entry_stop_rules:
+        sample = entry_stop_rules[0].action
+        stop_pct = sample.stop_loss_pct
+        stop_txt = f"{stop_pct:g}%" if stop_pct is not None else "n/a"
+        extra_notes.append(
+            f"Entry-anchored stop (stop_mode: {sample.stop_mode}): initial protective stop is "
+            f"{stop_txt} from the *fill* (next-bar open), not the signal-bar close. "
+            "percent still uses the signal close. No percent take when take_profit_pct is omitted."
+        )
+        if sample.stop_mode == "entry_pct":
+            extra_notes.append(
+                "Fixed entry stop (stop_mode: entry_pct): the initial fill stop never moves. "
+                "Exits are that stop or session_flatten (or eod)."
+            )
+        if sample.stop_mode == "lock_plus":
+            trig = sample.resolved_lock_trigger_pct()
+            lock = sample.resolved_lock_stop_pct()
+            extra_notes.append(
+                f"Lock-plus (stop_mode: lock_plus): first trade/touch of "
+                f"entry×(1+{(trig or 0):g}/100) — bar high ≥ that print for a long — "
+                f"moves the stop to entry×(1+{(lock or 0):g}/100) and leaves it. "
+                "The locked stop is live from the next bar; same-bar pullback after the "
+                "tag still uses the initial 1% protective stop. Later hit of the locked "
+                "stop is exit reason lock_stop."
+            )
+            extra_notes.append(
+                f"{sum(1 for t in trades if t.lock_armed)} trade(s) armed the +lock; "
+                f"{sum(1 for t in trades if t.exit_reason == 'lock_stop')} exited as lock_stop."
+            )
+        if sample.stop_mode == "trail":
+            trail = sample.resolved_trail_pct()
+            extra_notes.append(
+                f"Trailing stop (stop_mode: trail): stop is always "
+                f"peak_price_since_entry × (1−{(trail or 0):g}/100), ratcheting up only. "
+                "Peak starts at the fill and updates from each bar's high after the "
+                "current-stop check, so a new trail is live from the next bar. "
+                "Initial stop is entry×0.99 when trail_pct/stop_loss_pct is 1. "
+                "A stop hit is exit reason trail_stop."
+            )
+            extra_notes.append(
+                f"{sum(1 for t in trades if t.trail_ratcheted)} trade(s) ratcheted the trail "
+                f"above the initial fill stop; "
+                f"{sum(1 for t in trades if t.exit_reason == 'trail_stop')} exited as trail_stop."
+            )
     if cash_skips:
         extra_notes.append(
             f"{cash_skips} accepted signal(s) skipped at fill for insufficient cash."
@@ -1175,6 +1354,12 @@ def format_report_md(payload: dict[str, Any]) -> str:
                 f"- Break-even armed: {r.get('breakeven_armed', 0)}"
                 if r.get("breakeven_armed") or (r.get("exit_reasons") or {}).get("breakeven_stop")
                 else "",
+                f"- Lock armed: {r.get('lock_armed', 0)}"
+                if r.get("lock_armed") or (r.get("exit_reasons") or {}).get("lock_stop")
+                else "",
+                f"- Trail ratcheted: {r.get('trail_ratcheted', 0)}"
+                if r.get("trail_ratcheted") or (r.get("exit_reasons") or {}).get("trail_stop")
+                else "",
                 f"- Skip reasons: {r.get('skip_reasons')}" if r.get("skip_reasons") else "",
             ]
         )
@@ -1186,6 +1371,10 @@ def format_report_md(payload: dict[str, Any]) -> str:
             or n.startswith("Break-even")
             or n.startswith("MA-cross exit")
             or n.startswith("SMA20 stop")
+            or n.startswith("Entry-anchored stop")
+            or n.startswith("Fixed entry stop")
+            or n.startswith("Lock-plus")
+            or n.startswith("Trailing stop")
             or n.startswith("Exit P&L")
             or n.startswith("RSI filter")
             or n.startswith("No RSI")
@@ -1195,6 +1384,10 @@ def format_report_md(payload: dict[str, Any]) -> str:
             or "session_flatten" in n
             or "armed break-even" in n
             or "exited as ma_cross" in n
+            or "lock_stop" in n
+            or "trail_stop" in n
+            or "armed the +lock" in n
+            or "ratcheted the trail" in n
         ]
         for note in extra_notes:
             lines.append(f"- {note}")

@@ -1,0 +1,66 @@
+# Book A — price×EMA9 noon stack, fixed 1% stop from the fill.
+#
+# Same entry as config/ema9_trend_bracket_nobe.example.yaml:
+#   close crosses above EMA(9) AND close > SMA(20) AND RSI14 < 70
+# Session: entry_cutoff 12:00 ET, flatten_by 15:55 ET.
+# Stop (stop_mode: entry_pct): 1% below the *fill* (next-bar open); never moves.
+# No take-profit. Exits = stop or session_flatten.
+#
+# Siblings: lock_plus (B) / trail (C). August 1% risk:
+#   config/ema9_trend_risk_nobe_fixed1.example.yaml
+#
+#   python -m dta_bot backtest --config config/ema9_trend_bracket_nobe_fixed1.example.yaml \
+#     --compare-config config/ema9_trend_bracket_nobe_lock1.example.yaml \
+#     --compare-config config/ema9_trend_bracket_nobe_trail1.example.yaml \
+#     --source yahoo --combined-only --symbols AAPL,MSFT \
+#     --output artifacts/ema9_stop_manage.json \
+#     --report artifacts/ema9_stop_manage.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"
+  flatten_by: "15:55"
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Noon book A: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 10 shares, fixed 1% stop from fill, no take."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      exit: fixed_bracket
+      stop_mode: entry_pct
+      stop_loss_pct: 1.0
