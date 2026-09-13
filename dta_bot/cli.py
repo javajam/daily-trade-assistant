@@ -7,14 +7,23 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from dta_bot.backtest import format_report_md, restrict_config, run_backtest, write_results_json
+from dta_bot.backtest import format_report_md, write_results_json
 from dta_bot.broker import build_broker, resolve_api_keys, resolve_trading_url
 from dta_bot.config import BotConfig, load_config
+from dta_bot.compare import (
+    MULTI_ENGINE_NOTE,
+    assumptions_orb,
+    assumptions_rules,
+    data_window_notes,
+    format_comparison_md,
+    rank_books,
+    run_orb_book,
+    run_rule_books,
+)
 from dta_bot.history import download_pairs, drop_empty_prints, drop_still_forming, series_span
 from dta_bot.killswitch import is_active, pause, reason as kill_reason, resume
 from dta_bot.logging_setup import setup_logging
 from dta_bot.market_data import FixtureMarketData, build_market_data
-from dta_bot.orb_backtest import run_orb_backtest
 from dta_bot.orb_config import OrbBotConfig, load_orb_config, peek_config_kind
 from dta_bot.patterns import PATTERN_NAMES
 from dta_bot.runner import run_loop, run_orb_loop
@@ -81,6 +90,13 @@ def build_parser() -> argparse.ArgumentParser:
     bt.add_argument("--cache-dir", default="data/ohlcv")
     bt.add_argument("--output", default="artifacts/backtest_results.json")
     bt.add_argument("--report", default="artifacts/backtest_results.md")
+    bt.add_argument(
+        "--compare-config",
+        action="append",
+        default=[],
+        help="Additional YAML/JSON config to run in the same comparison (repeatable). "
+        "Use to put ORB and the sample rules on one report. Books stay separate.",
+    )
     bt.add_argument(
         "--combined-only",
         action="store_true",
@@ -170,22 +186,32 @@ def cmd_resume(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_backtest(args: argparse.Namespace) -> int:
-    _kind, cfg = _load_any(args.config)
-    now = datetime.now(timezone.utc)
+def _load_backtest_bars(
+    args: argparse.Namespace,
+    configs: list[BotConfig | OrbBotConfig],
+    now: datetime,
+) -> tuple[dict, dict[str, str], list[str], str]:
+    pairs: set[tuple[str, str]] = set()
+    for cfg in configs:
+        pairs |= cfg.all_symbol_timeframes()
     if args.fixture:
         fixture = FixtureMarketData(args.fixture)
         bars = {}
         sources = {}
-        for symbol, tf in sorted(cfg.all_symbol_timeframes()):
-            bars[(symbol, tf)] = fixture.get_bars(symbol, tf, limit=10_000_000)
-            sources[f"{symbol}:{tf}"] = f"fixture:{args.fixture}"
+        for symbol, tf in sorted(pairs):
+            try:
+                bars[(symbol, tf)] = fixture.get_bars(symbol, tf, limit=10_000_000)
+                sources[f"{symbol}:{tf}"] = f"fixture:{args.fixture}"
+            except KeyError:
+                bars[(symbol, tf)] = []
+                sources[f"{symbol}:{tf}"] = f"fixture:{args.fixture} (missing)"
         source_label = f"fixture {args.fixture}"
     else:
+        feed = next((cfg.settings.data_feed for cfg in configs), "iex")
         bars, sources = download_pairs(
-            cfg.all_symbol_timeframes(),
+            pairs,
             source=args.source,
-            feed=cfg.settings.data_feed,
+            feed=feed,
             cache_dir=args.cache_dir,
         )
         if args.source == "alpaca" or (
@@ -203,195 +229,121 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         start, end = series_span(series)
         spans.append(f"{symbol} {tf}: {len(series)} bars {start} → {end}")
         print(f"  data {symbol} {tf}: {len(series)} closed bars ({start} → {end})")
+    return bars, sources, spans, source_label
+
+
+def cmd_backtest(args: argparse.Namespace) -> int:
+    paths = [args.config, *list(args.compare_config or [])]
+    loaded: list[tuple[str, str, BotConfig | OrbBotConfig]] = []
+    for path in paths:
+        kind, cfg = _load_any(path)
+        loaded.append((path, kind, cfg))
+    now = datetime.now(timezone.utc)
+    bars, sources, spans, source_label = _load_backtest_bars(
+        args, [cfg for _path, _kind, cfg in loaded], now
+    )
 
     friction = f"commission=${args.commission:.2f}/fill, slippage={args.slippage_pct}%"
-    if isinstance(cfg, OrbBotConfig):
-        assumptions = [
-            "Opening range is the first orb_timeframe bar at/after 9:30 America/New_York (configurable).",
-            "After the OR candle is complete, probe/reversal evaluation uses the signal timeframe.",
-            "Probe = signal-bar close inside the 5% (configurable) edge band under the OR high or above the OR low.",
-            "Reversal = the next signal bar, opposite color (top+bearish → short, bottom+bullish → long).",
-            "Entry fills at the open of the bar after the reversal candle.",
-            "Stop is the reversal candle extreme; take-profit is the OR midpoint (v1; A/B tested later).",
-            "Multiple trades are allowed (no daily cap). One open position per symbol; new signals skip while in a position unless on_open_position=replace.",
-            "If stop and take both trade in the fill bar, the stop is assumed to fill first.",
-            "A gap through stop/take fills at that bar's open.",
-            "Open lots still on the last bar are flattened at the last close (exit reason eod).",
-            "Regular-session Yahoo bars when the source is Yahoo (includePrePost=false), unadjusted OHLC.",
-            friction,
-            f"Starting equity ${args.starting_equity:,.2f}.",
-        ]
-        print("\n=== backtest orb_reversal ===")
-        result = run_orb_backtest(
+    comparing = len(loaded) > 1
+    runs: list[dict] = []
+    assumption_blocks: list[str] = []
+
+    for path, kind, cfg in loaded:
+        if isinstance(cfg, OrbBotConfig):
+            notes = assumptions_orb(friction, args.starting_equity)
+            assumption_blocks.extend(notes)
+            print(f"\n=== backtest orb_reversal ({path}) ===")
+            compact = run_orb_book(
+                cfg,
+                bars,
+                starting_equity=args.starting_equity,
+                commission=args.commission,
+                slippage_pct=args.slippage_pct,
+                data_source=source_label,
+                notes=notes,
+            )
+            r = compact["report"]
+            print(
+                f"  signals={r['signals']} trades={r['trades']} win_rate={r['win_rate_pct']} "
+                f"pnl=${r['total_pnl']:.2f} ({r['total_pnl_pct']:.3f}%) "
+                f"dd=${r['max_drawdown']} ({r['max_drawdown_pct']})"
+            )
+            for trade in compact["trades"]:
+                print(
+                    f"    {trade['side']} {trade['symbol']} qty={trade['qty']:g} "
+                    f"in={trade['entry_price']:.4f} out={trade['exit_price']:.4f} "
+                    f"pnl=${trade['pnl']:.2f} ({trade['exit_reason']})"
+                )
+            runs.append(compact)
+            continue
+
+        assert isinstance(cfg, BotConfig)
+        notes = assumptions_rules(friction, args.starting_equity)
+        assumption_blocks.extend(notes)
+        books = run_rule_books(
             cfg,
             bars,
             starting_equity=args.starting_equity,
             commission=args.commission,
             slippage_pct=args.slippage_pct,
-            label="orb_reversal",
             data_source=source_label,
-            notes=assumptions,
+            assumptions=notes,
+            combined_only=args.combined_only,
+            include_entries_only=not args.combined_only,
         )
-        r = result.report
-        print(
-            f"  signals={r.signals} trades={r.trades} win_rate={r.win_rate_pct} "
-            f"pnl=${r.total_pnl:.2f} ({r.total_pnl_pct:.3f}%) "
-            f"dd=${r.max_drawdown} ({r.max_drawdown_pct})"
-        )
-        for trade in result.trades:
+        for compact in books:
+            r = compact["report"]
+            print(f"\n=== backtest {compact['label']} ({path}) ===")
             print(
-                f"    {trade.side} {trade.symbol} qty={trade.qty:g} "
-                f"in={trade.entry_price:.4f} out={trade.exit_price:.4f} "
-                f"pnl=${trade.pnl:.2f} ({trade.exit_reason})"
+                f"  signals={r['signals']} trades={r['trades']} win_rate={r['win_rate_pct']} "
+                f"pnl=${r['total_pnl']:.2f} ({r['total_pnl_pct']:.3f}%) "
+                f"dd=${r['max_drawdown']} ({r['max_drawdown_pct']})"
             )
-        payload_run = result.to_dict()
-        payload_run["pattern_hits"] = {"orb_reversal": r.signals}
-        runs = [payload_run]
-        compact_runs = [
-            {
-                "label": payload_run["label"],
-                "report": payload_run["report"],
-                "bars_used": payload_run["bars_used"],
-                "pattern_hits": payload_run.get("pattern_hits"),
-                "trades": payload_run["trades"],
-                "signals": [
-                    {
-                        k: sig[k]
-                        for k in (
-                            "rule_id",
-                            "symbol",
-                            "action_type",
-                            "signal_time",
-                            "accepted",
-                            "skip_reason",
-                        )
-                    }
-                    for sig in payload_run["signals"]
-                ],
-            }
-        ]
-        payload = {
-            "generated_at": now.isoformat().replace("+00:00", "Z"),
-            "config": args.config,
-            "starting_equity": args.starting_equity,
-            "friction": friction,
-            "data_source": source_label,
-            "data_spans": spans,
-            "sources": sources,
-            "assumptions": assumptions,
-            "runs": compact_runs,
-        }
-        write_results_json(args.output, payload)
-        report_path = Path(args.report)
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(format_report_md(payload), encoding="utf-8")
-        print(f"\nWrote {args.output}")
-        print(f"Wrote {args.report}")
-        return 0
+            runs.append(compact)
 
-    assumptions = [
-        "Signals come from the live evaluate_rule path (same pattern/SMA/RSI/volume detectors).",
-        "A rule is evaluated when any of its referenced timeframes prints a newly closed bar.",
-        "Entries and close-signals fill at the next bar open of the finest rule timeframe.",
-        "Stop/take are computed from the signal-bar close (same as live bracket_prices).",
-        "If stop and take both trade in the fill bar, the stop is assumed to fill first.",
-        "A gap through stop/take fills at that bar's open.",
-        "One open lot per symbol (no pyramiding). A second signal while flat-in-symbol is skipped.",
-        "Open lots still on the last bar are flattened at the last close (exit reason eod).",
-        "Regular-session Yahoo bars when the source is Yahoo (includePrePost=false), unadjusted OHLC.",
-        friction,
-        f"Starting equity ${args.starting_equity:,.2f}.",
-    ]
+    # Deduplicate assumption lines while keeping order (ORB + rules share fill notes).
+    seen: set[str] = set()
+    assumptions: list[str] = []
+    for item in assumption_blocks:
+        if item not in seen:
+            seen.add(item)
+            assumptions.append(item)
+    if comparing:
+        assumptions.append(MULTI_ENGINE_NOTE)
 
-    assert isinstance(cfg, BotConfig)
-    run_ids: list[list[str] | None]
-    if args.combined_only:
-        run_ids = [None]
-    else:
-        run_ids = [[r.id] for r in cfg.rules] + [None]
-
-    runs = []
-    for ids in run_ids:
-        subset = restrict_config(cfg, ids)
-        tag = "combined" if ids is None else ids[0]
-        notes = list(assumptions)
-        if ids is not None and subset.rules and subset.rules[0].action.type == "close":
-            notes.append(
-                "Exit-only rule: isolated book has no entries, so P&L is $0. "
-                "Signal count is how often the pattern would have fired; "
-                "the combined book uses those fires to flatten longs from the entry rules."
-            )
-        print(f"\n=== backtest {tag} ===")
-        result = run_backtest(
-            subset,
-            bars,
-            starting_equity=args.starting_equity,
-            commission=args.commission,
-            slippage_pct=args.slippage_pct,
-            label=tag,
-            data_source=source_label,
-            notes=notes,
-        )
-        r = result.report
-        print(
-            f"  signals={r.signals} trades={r.trades} win_rate={r.win_rate_pct} "
-            f"pnl=${r.total_pnl:.2f} ({r.total_pnl_pct:.3f}%) "
-            f"dd=${r.max_drawdown} ({r.max_drawdown_pct})"
-        )
-        payload_run = result.to_dict()
-        hits: dict[str, int] = {}
-        for sig in result.signals:
-            for name in (
-                "bullish_engulfing",
-                "bearish_engulfing",
-                "evening_star",
-                "hammer",
-            ):
-                if f"{name} matched" in sig.reason:
-                    hits[name] = hits.get(name, 0) + 1
-        payload_run["pattern_hits"] = hits
-        runs.append(payload_run)
-
-    compact_runs = []
-    for run in runs:
-        compact_runs.append(
-            {
-                "label": run["label"],
-                "report": run["report"],
-                "bars_used": run["bars_used"],
-                "pattern_hits": run.get("pattern_hits"),
-                "trades": run["trades"],
-                "signals": [
-                    {
-                        k: sig[k]
-                        for k in (
-                            "rule_id",
-                            "symbol",
-                            "action_type",
-                            "signal_time",
-                            "accepted",
-                            "skip_reason",
-                        )
-                    }
-                    for sig in run["signals"]
-                ],
-            }
-        )
+    window_notes = data_window_notes(spans, sources)
+    comparison = rank_books(runs)
     payload = {
         "generated_at": now.isoformat().replace("+00:00", "Z"),
         "config": args.config,
+        "configs": paths,
         "starting_equity": args.starting_equity,
         "friction": friction,
         "data_source": source_label,
         "data_spans": spans,
         "sources": sources,
         "assumptions": assumptions,
-        "runs": compact_runs,
+        "window_notes": window_notes,
+        "comparison": comparison,
+        "runs": runs,
     }
+    if comparing and args.output == "artifacts/backtest_results.json":
+        args.output = "artifacts/orb_vs_sample_comparison.json"
+    if comparing and args.report == "artifacts/backtest_results.md":
+        args.report = "artifacts/orb_vs_sample_comparison.md"
     write_results_json(args.output, payload)
     report_path = Path(args.report)
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(format_report_md(payload), encoding="utf-8")
+    report_text = format_comparison_md(payload) if comparing else format_report_md(payload)
+    report_path.write_text(report_text, encoding="utf-8")
+    if comparing:
+        print("\n=== ranking by P&L % ===")
+        for row in comparison:
+            print(
+                f"  {row['rank']}. {row['label']}: "
+                f"{row['total_pnl_pct']:.3f}% (${row['total_pnl']:.2f}) "
+                f"trades={row['trades']} [{row['caveat']}]"
+            )
     print(f"\nWrote {args.output}")
     print(f"Wrote {args.report}")
     return 0

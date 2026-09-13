@@ -1,0 +1,385 @@
+"""Side-by-side comparison of ORB and sample-rule backtest books.
+
+Keeps the two engines on separate books: the ORB state machine and the
+pattern-rule evaluator do not share positions or a combined equity curve.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Optional
+
+from dta_bot.backtest import (
+    BacktestResult,
+    format_report_md,
+    restrict_config,
+    run_backtest,
+)
+from dta_bot.config import BotConfig
+from dta_bot.history import YAHOO_INTERVAL
+from dta_bot.orb_backtest import run_orb_backtest
+from dta_bot.orb_config import OrbBotConfig
+from dta_bot.timeframes import normalize
+
+PATTERN_HIT_NAMES = (
+    "bullish_engulfing",
+    "bearish_engulfing",
+    "evening_star",
+    "hammer",
+)
+
+EXIT_ONLY_NOTE = (
+    "Exit-only rule: isolated book has no entries, so P&L is $0. "
+    "Signal count is how often the pattern would have fired; "
+    "the combined book uses those fires to flatten longs from the entry rules."
+)
+
+ENTRIES_ONLY_NOTE = (
+    "Entry rules only (no evening-star/engulfing flatten). "
+    "Stops and takes still apply; this is the B+C book without D."
+)
+
+COMBINED_NOTE = (
+    "All sample rules on one book. Close signals flatten longs from the entry rules. "
+    "This is not the sum of the isolated books (shared one-lot-per-symbol constraint)."
+)
+
+MULTI_ENGINE_NOTE = (
+    "ORB and the sample rules use separate engines and are not merged into one "
+    "shared-position book. Ranking is apples-to-apples across isolated (and sample "
+    "combined) books, not a single multi-strategy portfolio."
+)
+
+YAHOO_CAP_NOTE = (
+    "Yahoo Finance v8 regular-session bars (includePrePost=false, unadjusted OHLC). "
+    "Retention caps in this downloader: 1m=7d, 5m/15m/30m=60d, 1h=2y. "
+    "Requesting more than the cap returns HTTP 422. ORB needs 15m to build the "
+    "opening range and 5m for probe/reversal, so its longest reliable Yahoo window "
+    "is the 5m/15m 60-day cap."
+)
+
+
+def assumptions_orb(friction: str, starting_equity: float) -> list[str]:
+    return [
+        "Opening range is the first orb_timeframe bar at/after 9:30 America/New_York (configurable).",
+        "After the OR candle is complete, probe/reversal evaluation uses the signal timeframe.",
+        "Probe = signal-bar close inside the 5% (configurable) edge band under the OR high or above the OR low.",
+        "Reversal = the next signal bar, opposite color (top+bearish → short, bottom+bullish → long).",
+        "Entry fills at the open of the bar after the reversal candle.",
+        "Stop is the reversal candle extreme; take-profit is the OR midpoint (v1; A/B tested later).",
+        "Multiple trades are allowed (no daily cap). One open position per symbol; new signals skip while in a position unless on_open_position=replace.",
+        "If stop and take both trade in the fill bar, the stop is assumed to fill first.",
+        "A gap through stop/take fills at that bar's open.",
+        "Open lots still on the last bar are flattened at the last close (exit reason eod).",
+        "Regular-session Yahoo bars when the source is Yahoo (includePrePost=false), unadjusted OHLC.",
+        friction,
+        f"Starting equity ${starting_equity:,.2f}.",
+    ]
+
+
+def assumptions_rules(friction: str, starting_equity: float) -> list[str]:
+    return [
+        "Signals come from the live evaluate_rule path (same pattern/SMA/RSI/volume detectors).",
+        "A rule is evaluated when any of its referenced timeframes prints a newly closed bar.",
+        "Entries and close-signals fill at the next bar open of the finest rule timeframe.",
+        "Stop/take are computed from the signal-bar close (same as live bracket_prices).",
+        "If stop and take both trade in the fill bar, the stop is assumed to fill first.",
+        "A gap through stop/take fills at that bar's open.",
+        "One open lot per symbol (no pyramiding). A second signal while flat-in-symbol is skipped.",
+        "Open lots still on the last bar are flattened at the last close (exit reason eod).",
+        "Regular-session Yahoo bars when the source is Yahoo (includePrePost=false), unadjusted OHLC.",
+        friction,
+        f"Starting equity ${starting_equity:,.2f}.",
+    ]
+
+
+def pattern_hits_from_result(result: BacktestResult) -> dict[str, int]:
+    hits: dict[str, int] = {}
+    if result.label == "orb_reversal" or result.report.rule_id == "orb_reversal":
+        if result.report.signals:
+            hits["orb_reversal"] = result.report.signals
+        return hits
+    for sig in result.signals:
+        for name in PATTERN_HIT_NAMES:
+            if f"{name} matched" in sig.reason:
+                hits[name] = hits.get(name, 0) + 1
+    return hits
+
+
+def compact_run(result: BacktestResult, hits: Optional[dict[str, int]] = None) -> dict[str, Any]:
+    payload = result.to_dict()
+    payload["pattern_hits"] = hits if hits is not None else pattern_hits_from_result(result)
+    return {
+        "label": payload["label"],
+        "report": payload["report"],
+        "bars_used": payload["bars_used"],
+        "pattern_hits": payload["pattern_hits"],
+        "trades": payload["trades"],
+        "signals": [
+            {
+                k: sig[k]
+                for k in (
+                    "rule_id",
+                    "symbol",
+                    "action_type",
+                    "signal_time",
+                    "accepted",
+                    "skip_reason",
+                )
+            }
+            for sig in payload["signals"]
+        ],
+    }
+
+
+def entry_rule_ids(config: BotConfig) -> list[str]:
+    return [rule.id for rule in config.rules if rule.action.type != "close"]
+
+
+def rule_book_plan(
+    config: BotConfig,
+    *,
+    combined_only: bool = False,
+    include_entries_only: bool = True,
+) -> list[tuple[str, Optional[list[str]], Optional[str]]]:
+    """Return (label, rule_ids or None for all rules, extra_note)."""
+    if combined_only:
+        return [("combined", None, COMBINED_NOTE)]
+    plans: list[tuple[str, Optional[list[str]], Optional[str]]] = []
+    for rule in config.rules:
+        note = EXIT_ONLY_NOTE if rule.action.type == "close" else None
+        plans.append((rule.id, [rule.id], note))
+    entries = entry_rule_ids(config)
+    if include_entries_only and len(entries) >= 2:
+        plans.append(("sample-entries", entries, ENTRIES_ONLY_NOTE))
+    if len(config.rules) > 1:
+        plans.append(("combined", None, COMBINED_NOTE))
+    return plans
+
+
+def run_orb_book(
+    config: OrbBotConfig,
+    bars: dict,
+    *,
+    starting_equity: float,
+    commission: float,
+    slippage_pct: float,
+    data_source: str,
+    notes: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    result = run_orb_backtest(
+        config,
+        bars,
+        starting_equity=starting_equity,
+        commission=commission,
+        slippage_pct=slippage_pct,
+        label="orb_reversal",
+        data_source=data_source,
+        notes=notes,
+    )
+    return compact_run(result)
+
+
+def run_rule_books(
+    config: BotConfig,
+    bars: dict,
+    *,
+    starting_equity: float,
+    commission: float,
+    slippage_pct: float,
+    data_source: str,
+    assumptions: list[str],
+    combined_only: bool = False,
+    include_entries_only: bool = True,
+) -> list[dict[str, Any]]:
+    runs: list[dict[str, Any]] = []
+    for label, ids, extra in rule_book_plan(
+        config, combined_only=combined_only, include_entries_only=include_entries_only
+    ):
+        subset = restrict_config(config, ids)
+        notes = list(assumptions)
+        if extra:
+            notes.append(extra)
+        result = run_backtest(
+            subset,
+            bars,
+            starting_equity=starting_equity,
+            commission=commission,
+            slippage_pct=slippage_pct,
+            label=label,
+            data_source=data_source,
+            notes=notes,
+        )
+        runs.append(compact_run(result))
+    return runs
+
+
+def yahoo_cap_for_tf(timeframe: str) -> Optional[str]:
+    pair = YAHOO_INTERVAL.get(normalize(timeframe))
+    return pair[1] if pair else None
+
+
+def data_window_notes(spans: list[str], sources: dict[str, str]) -> list[str]:
+    notes = [YAHOO_CAP_NOTE]
+    yahooish = any(
+        str(v).startswith("yahoo") or "Yahoo" in str(v) or str(v).startswith("cache:")
+        for v in sources.values()
+    )
+    if yahooish:
+        notes.append(
+            "5m and 15m history is the binding limit for ORB and for the 15m sample rules. "
+            "The 1h hammer book can look back up to 2y on Yahoo, so its calendar window is longer "
+            "and its P&L% is not time-normalized against the 60-day books."
+        )
+    if spans:
+        notes.append("Actual closed-bar windows downloaded:")
+        notes.extend(f"  {span}" for span in spans)
+    return notes
+
+
+def _period_days(report: dict[str, Any]) -> Optional[float]:
+    start = report.get("period_start")
+    end = report.get("period_end")
+    if not start or not end:
+        return None
+    try:
+        a = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+        b = datetime.fromisoformat(str(end).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return max((b - a).total_seconds() / 86400.0, 0.0)
+
+
+def sample_size_caveat(report: dict[str, Any]) -> str:
+    trades = int(report.get("trades") or 0)
+    notes: list[str] = []
+    extra = " ".join(report.get("notes") or [])
+    if "Exit-only" in extra or trades == 0 and "close" in (report.get("rule_id") or ""):
+        notes.append("exit-only / no isolated entries")
+    if trades == 0:
+        notes.append("no closed trades")
+    elif trades < 30:
+        notes.append(f"small sample ({trades} trades)")
+    days = _period_days(report)
+    if days is not None and days >= 300:
+        notes.append(f"longer window (~{days:.0f}d) vs ~60d 5m/15m books")
+    elif days is not None and days > 0:
+        notes.append(f"~{days:.0f} calendar days")
+    return "; ".join(notes) if notes else "—"
+
+
+def rank_books(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rank compact runs by total P&L % (engine figure, not annualized)."""
+    ranked: list[dict[str, Any]] = []
+    ordered = sorted(
+        runs,
+        key=lambda block: float(block["report"].get("total_pnl_pct") or 0.0),
+        reverse=True,
+    )
+    for i, block in enumerate(ordered, start=1):
+        report = block["report"]
+        ranked.append(
+            {
+                "rank": i,
+                "label": block.get("label") or report.get("rule_id"),
+                "trades": report.get("trades"),
+                "win_rate_pct": report.get("win_rate_pct"),
+                "total_pnl": report.get("total_pnl"),
+                "total_pnl_pct": report.get("total_pnl_pct"),
+                "max_drawdown": report.get("max_drawdown"),
+                "max_drawdown_pct": report.get("max_drawdown_pct"),
+                "avg_win": report.get("avg_win"),
+                "avg_loss": report.get("avg_loss"),
+                "period_start": report.get("period_start"),
+                "period_end": report.get("period_end"),
+                "data_source": report.get("data_source"),
+                "caveat": sample_size_caveat(report),
+            }
+        )
+    return ranked
+
+
+def _fmt_money(value: Optional[float]) -> str:
+    if value is None:
+        return "n/a"
+    return f"${value:,.2f}"
+
+
+def _fmt_pct(value: Optional[float], digits: int = 3) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.{digits}f}%"
+
+
+def format_comparison_table(rows: list[dict[str, Any]]) -> list[str]:
+    lines = [
+        "| Rank | Book | Trades | Win rate | P&L $ | P&L % | Max DD | Avg win | Avg loss | Period | Caveat |",
+        "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+    ]
+    for row in rows:
+        period = "n/a"
+        if row.get("period_start") and row.get("period_end"):
+            period = f"{row['period_start']} → {row['period_end']}"
+        lines.append(
+            "| {rank} | {label} | {trades} | {win} | {pnl} | {pnl_pct} | {dd} | {avg_w} | {avg_l} | {period} | {caveat} |".format(
+                rank=row["rank"],
+                label=row["label"],
+                trades=row.get("trades") if row.get("trades") is not None else 0,
+                win=_fmt_pct(row.get("win_rate_pct"), 2),
+                pnl=_fmt_money(row.get("total_pnl")),
+                pnl_pct=_fmt_pct(row.get("total_pnl_pct"), 3),
+                dd=_fmt_money(row.get("max_drawdown")),
+                avg_w=_fmt_money(row.get("avg_win")),
+                avg_l=_fmt_money(row.get("avg_loss")),
+                period=period,
+                caveat=row.get("caveat") or "—",
+            )
+        )
+    return lines
+
+
+def format_comparison_md(payload: dict[str, Any]) -> str:
+    lines = [
+        "# ORB vs sample-rule backtest comparison",
+        "",
+        f"- Generated (UTC): {payload.get('generated_at')}",
+        f"- Configs: {', '.join(payload.get('configs') or [payload.get('config') or ''])}",
+        f"- Starting equity: ${payload.get('starting_equity'):,.2f}"
+        if payload.get("starting_equity") is not None
+        else "",
+        f"- Commission / slippage: {payload.get('friction')}",
+        f"- Data: {payload.get('data_source')}",
+        "",
+        "## Ranking by P&L % of starting equity",
+        "",
+        "Figures are the engine totals for each book. They are **not** annualized and "
+        "**not** size-normalized (ORB / engulfing use 10 shares; hammer uses 2% of equity). "
+        "Yahoo 5m/15m history is capped at ~60 days; the 1h hammer book can span ~2 years.",
+        "",
+    ]
+    rows = payload.get("comparison") or rank_books(payload.get("runs") or [])
+    lines.extend(format_comparison_table(rows))
+    lines.extend(["", MULTI_ENGINE_NOTE, ""])
+
+    window_notes = payload.get("window_notes") or []
+    if window_notes:
+        lines.extend(["## Data windows and Yahoo limits", ""])
+        for note in window_notes:
+            lines.append(f"- {note}" if not note.startswith("  ") else f"- `{note.strip()}`")
+        lines.append("")
+
+    per_book = format_report_md(
+        {
+            "generated_at": payload.get("generated_at"),
+            "starting_equity": payload.get("starting_equity"),
+            "friction": payload.get("friction"),
+            "data_source": payload.get("data_source"),
+            "runs": payload.get("runs") or [],
+            "assumptions": payload.get("assumptions") or [],
+        }
+    )
+    # Drop the duplicate title block; keep per-book sections + assumptions.
+    body = per_book.split("\n", 1)[1] if per_book.startswith("# ") else per_book
+    lines.append("# Per-book detail")
+    lines.append(body)
+    return "\n".join(line for line in lines if line is not None)

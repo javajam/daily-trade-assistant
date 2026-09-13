@@ -24,7 +24,7 @@ YAHOO_UA = (
 )
 
 # Yahoo retention caps (requesting more returns HTTP 422).
-_YAHOO_INTERVAL = {
+YAHOO_INTERVAL = {
     "1Min": ("1m", "7d"),
     "5Min": ("5m", "60d"),
     "15Min": ("15m", "60d"),
@@ -129,9 +129,9 @@ def fetch_yahoo_bars(
     range_hint: Optional[str] = None,
 ) -> list[Bar]:
     tf = normalize(timeframe)
-    if tf not in _YAHOO_INTERVAL:
+    if tf not in YAHOO_INTERVAL:
         raise ValueError(f"No Yahoo mapping for timeframe {timeframe!r}")
-    interval, default_range = _YAHOO_INTERVAL[tf]
+    interval, default_range = YAHOO_INTERVAL[tf]
     # 4h is not a Yahoo interval; caller should request 1h instead.
     if tf == "4Hour":
         log.warning("Yahoo has no 4h bars; fetching 60m for %s", symbol)
