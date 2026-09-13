@@ -1,0 +1,63 @@
+# 9 EMA trend — August-style live book (paper / dry_run).
+#
+# Locked product for the 1%-risk sim:
+#   - 15m bullish EMA(9) cross + close > SMA20 + RSI14 < 70 (long only)
+#   - exit: fixed_bracket — stop 1.5%, take 3.0%
+#   - universe: AAPL + MSFT (no SOXL)
+#   - size: risk ~1% of current equity at the 1.5% stop
+#       shares = floor( (0.01 * equity) / (0.015 * entry_price) )
+#              = floor( equity / (1.5 * entry_price) )
+#   - one lot per symbol; both names may be open if cash covers the second
+#
+#   python -m dta_bot validate --config config/ema9_trend_risk.example.yaml
+#   python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml \
+#     --source yahoo --start 2026-08-01 --end 2026-08-31 --combined-only \
+#     --output artifacts/ema9_aug2026_risk.json \
+#     --report artifacts/ema9_aug2026_risk.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "15m bullish EMA(9) cross while price holds above the 20-SMA and RSI is not overbought. 1% equity risk at a 1.5% stop; 3.0% take."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: risk_pct
+        equity_risk: 0.01
+        stop_pct: 1.5
+      order: market
+      exit: fixed_bracket
+      stop_loss_pct: 1.5
+      take_profit_pct: 3.0

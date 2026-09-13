@@ -53,6 +53,29 @@ def test_ema9_trend_config_loads():
     assert cfg.universe == ["AAPL", "MSFT", "SOXL"]
 
 
+def test_ema9_trend_risk_config_loads():
+    cfg = load_config("config/ema9_trend_risk.example.yaml")
+    assert cfg.universe == ["AAPL", "MSFT"]
+    assert [r.id for r in cfg.rules] == ["ema9_trend"]
+    rule = cfg.rules[0]
+    assert rule.action.exit == "fixed_bracket"
+    assert rule.action.stop_loss_pct == 1.5
+    assert rule.action.take_profit_pct == 3.0
+    assert rule.action.size is not None
+    assert rule.action.size.type == "risk_pct"
+    assert rule.action.size.equity_risk == 0.01
+    assert rule.action.size.stop_pct == 1.5
+    assert cfg.all_symbol_timeframes() == {("AAPL", "15Min"), ("MSFT", "15Min")}
+
+
+def test_ema9_trend_bracket_config_keeps_ten_shares():
+    cfg = load_config("config/ema9_trend_bracket.example.yaml")
+    assert cfg.universe == ["AAPL", "MSFT"]
+    assert cfg.rules[0].action.size and cfg.rules[0].action.size.type == "shares"
+    assert cfg.rules[0].action.size.value == 10
+    assert cfg.rules[0].action.exit == "fixed_bracket"
+
+
 def test_ema9_trend_5m_config_loads():
     cfg = load_config("config/ema9_trend_5m.example.yaml")
     assert [r.id for r in cfg.rules] == ["ema9_trend", "ema9_cross_raw", "engulfing-with-trend"]

@@ -187,7 +187,9 @@ rules:
       # any: [ ... ]         # OR; groups nest
     action:
       type: buy | sell | close
-      size: { type: shares | percent_equity, value: 10 }  # required for buy/sell
+      size: { type: shares | percent_equity | risk_pct, value: 10 }  # required for buy/sell
+      # risk_pct: { type: risk_pct, equity_risk: 0.01, stop_pct: 1.5 }
+      #   shares = floor( (equity_risk * equity) / ((stop_pct/100) * price) )
       order: market | limit
       limit_offset_pct: 0.05
       exit: ema_invalid | fixed_bracket   # default fixed_bracket
@@ -207,6 +209,16 @@ rules:
 `config/ema9_trend.example.yaml` is a long-only book on **AAPL / MSFT / SOXL**. Entry reuses the engulfing-with-trend filter: close above SMA(20), RSI(14) below 70, buy 10 shares, 60-minute **wall-clock** cooldown. The trigger is a bullish **EMA(9) cross** instead of a bullish engulfing candle.
 
 Default exit is **`action.exit: ema_invalid`**: stay in the long until a signal-timeframe bar **closes < EMA(9)** and flatten at that close. Close == EMA9 stays valid. There is no 1.5%/3.0% bracket on the 9 EMA rules. Optional `stop_loss_pct` is a catastrophic stop only and is **off** in the example configs. Set `exit: fixed_bracket` plus `stop_loss_pct` / `take_profit_pct` to restore the old brackets. Paper / `dry_run` defaults; no live.
+
+`config/ema9_trend_risk.example.yaml` is the same 15m entry on **AAPL / MSFT only**, but restores **`exit: fixed_bracket`** (stop 1.5% / take 3.0%) and sizes each long to risk ~1% of current equity at that stop (`size.type: risk_pct`). Both names may be open at once when cash covers the second notional; otherwise the later signal is skipped. `--start` / `--end` bound the trade window (prior bars stay for SMA/RSI/EMA warmup):
+
+```bash
+python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml --source yahoo \
+  --start 2026-08-01 --end 2026-08-31 --combined-only \
+  --output artifacts/ema9_aug2026_risk.json --report artifacts/ema9_aug2026_risk.md
+```
+
+The 10-share control on the same window is `config/ema9_trend_bracket.example.yaml`.
 
 Bar size is `settings.timeframe` (default **15m**). The same rules on 5-minute bars (every indicator on 5m; cooldown still 60 minutes):
 

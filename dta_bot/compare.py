@@ -286,11 +286,13 @@ def assumptions_rules(
         _rules_exit_assumption(config),
         "If stop and take (or EMA-invalidation) both trade in the fill bar, the stop is assumed to fill first.",
         "A gap through stop/take fills at that bar's open. EMA-invalidation fills at the invalidating close.",
-        "One open lot per symbol (no pyramiding). A second signal while flat-in-symbol is skipped.",
+        "One open lot per symbol (no pyramiding). A second signal while that symbol is already open is skipped.",
+        "A second symbol may open at the same time when cash covers its sized notional; otherwise the later signal is skipped (insufficient_cash).",
         "Open lots still on the last bar are flattened at the last close (exit reason eod).",
         "Regular-session Yahoo bars when the source is Yahoo (includePrePost=false), unadjusted OHLC.",
         friction,
-        f"Starting equity ${starting_equity:,.2f}.",
+        f"Starting equity ${starting_equity:,.2f}. Size types: shares, percent_equity, or risk_pct "
+        "(shares = floor((equity_risk * equity) / ((stop_pct/100) * price))).",
     ]
 
 
@@ -316,6 +318,7 @@ def compact_run(result: BacktestResult, hits: Optional[dict[str, int]] = None) -
         "bars_used": payload["bars_used"],
         "pattern_hits": payload["pattern_hits"],
         "trades": payload["trades"],
+        "period_stats": payload.get("period_stats"),
         "signals": [
             {
                 k: sig[k]
@@ -395,6 +398,8 @@ def run_rule_books(
     label_prefix: str = "",
     breakout_symbols: Optional[list[str]] = None,
     breakout_rule_ids: Optional[list[str]] = None,
+    trade_start: Optional[datetime] = None,
+    trade_end: Optional[datetime] = None,
 ) -> list[dict[str, Any]]:
     runs: list[dict[str, Any]] = []
     prefix = f"{label_prefix} " if label_prefix else ""
@@ -412,6 +417,8 @@ def run_rule_books(
             label=label,
             data_source=data_source,
             notes=notes,
+            trade_start=trade_start,
+            trade_end=trade_end,
         )
         runs.append(compact_run(result))
 

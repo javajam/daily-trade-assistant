@@ -10,7 +10,7 @@ from typing import Any, Literal, Optional
 Side = Literal["buy", "sell"]
 OrderType = Literal["market", "limit"]
 ActionType = Literal["buy", "sell", "close"]
-SizeType = Literal["shares", "percent_equity"]
+SizeType = Literal["shares", "percent_equity", "risk_pct"]
 
 
 @dataclass(frozen=True)

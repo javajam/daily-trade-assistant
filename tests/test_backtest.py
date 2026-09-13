@@ -319,3 +319,71 @@ def test_long_mark_to_market_still_adds_inventory():
     lot = _lot("buy", 300.0)
     assert _mark_to_market(cash, [lot], {"AAPL": 300.0}) == 100_000.0
     assert _mark_to_market(cash, [lot], {"AAPL": 310.0}) == 100_100.0
+
+
+def _engulf_at_200() -> list[Bar]:
+    # prev bearish 210→200, curr bullish 199→212 (engulfs). Signal close 212.
+    return [
+        Bar(bar(0, 210, 211.0, 199.0, 200.0).timestamp, 210.0, 211.0, 199.0, 200.0, 1000),
+        Bar(bar(1, 199, 220.0, 198.0, 212.0).timestamp, 199.0, 220.0, 198.0, 212.0, 1000),
+        Bar(bar(2, 212.0, 220.0, 210.0, 213.0).timestamp, 212.0, 220.0, 210.0, 213.0, 1000),
+    ]
+
+
+def test_risk_pct_sizes_from_equity_each_entry():
+    rule = _buy_rule(
+        action=ActionSpec(
+            type="buy",
+            size=SizeSpec(type="risk_pct", equity_risk=0.01, stop_pct=1.5),
+            stop_loss_pct=1.5,
+            take_profit_pct=3.0,
+        )
+    )
+    result = run_backtest(_cfg(rule), {("AAPL", "15Min"): _engulf_at_200()}, starting_equity=100_000)
+    # floor(100000 / (1.5 * 212)) = 314
+    assert result.trades[0].qty == 314
+    assert result.trades[0].exit_reason == "take"
+    assert result.period_stats is not None
+    assert result.period_stats["monthly"]["trades"] == 1
+
+
+def test_second_symbol_skips_when_cash_cannot_cover_risk_size():
+    rule = _buy_rule(
+        symbols=["AAPL", "MSFT"],
+        action=ActionSpec(
+            type="buy",
+            size=SizeSpec(type="risk_pct", equity_risk=0.01, stop_pct=1.5),
+            stop_loss_pct=1.5,
+            take_profit_pct=3.0,
+        ),
+    )
+    cfg = BotConfig(
+        settings=Settings(lookback_bars=80, max_open_positions=5),
+        universe=["AAPL", "MSFT"],
+        rules=[rule],
+    )
+    bars = _engulf_at_200()
+    result = run_backtest(
+        cfg,
+        {("AAPL", "15Min"): bars, ("MSFT", "15Min"): list(bars)},
+        starting_equity=100_000,
+    )
+    accepted = [s for s in result.signals if s.accepted]
+    skipped = [s for s in result.signals if s.skip_reason == "insufficient_cash"]
+    assert len(accepted) == 1
+    assert accepted[0].symbol == "AAPL"
+    assert len(skipped) == 1
+    assert skipped[0].symbol == "MSFT"
+    assert [t.symbol for t in result.trades] == ["AAPL"]
+
+
+def test_trade_window_blocks_entries_before_start():
+    start = datetime(2026, 9, 11, 14, 0, 1, tzinfo=timezone.utc)
+    result = run_backtest(
+        _cfg(_buy_rule()),
+        {("AAPL", "15Min"): _engulf_at_200()},
+        starting_equity=100_000,
+        trade_start=start,
+    )
+    assert result.report.signals == 0
+    assert result.report.trades == 0

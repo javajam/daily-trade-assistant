@@ -27,6 +27,7 @@ from dta_bot.compare import (
     run_rule_books,
 )
 from dta_bot.history import download_pairs, drop_empty_prints, drop_still_forming, series_span
+from dta_bot.period_stats import parse_trade_bound
 from dta_bot.killswitch import is_active, pause, reason as kill_reason, resume
 from dta_bot.logging_setup import setup_logging
 from dta_bot.market_data import FixtureMarketData, build_market_data
@@ -126,6 +127,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Also run an isolated book for this symbol (repeatable). "
         "Default target rule is ema9_trend when present.",
     )
+    bt.add_argument(
+        "--start",
+        default=None,
+        help="Trade-window start (YYYY-MM-DD, America/New_York midnight). "
+        "Bars before this stay for indicator warmup; no new entries before it.",
+    )
+    bt.add_argument(
+        "--end",
+        default=None,
+        help="Trade-window end date inclusive (YYYY-MM-DD, America/New_York). "
+        "No new entries after this session; open lots flatten at the last in-window mark.",
+    )
     return parser
 
 
@@ -173,10 +186,20 @@ def cmd_validate(args: argparse.Namespace) -> int:
     for rule in cfg.rules:
         syms = cfg.symbols_for(rule)
         tfs = ",".join(sorted(condition_timeframes(rule.when)))
+        size = rule.action.size
+        size_txt = ""
+        if size is not None:
+            if size.type == "risk_pct":
+                size_txt = (
+                    f" size=risk_pct equity_risk={size.equity_risk} "
+                    f"stop_pct={size.stop_pct or rule.action.stop_loss_pct}"
+                )
+            else:
+                size_txt = f" size={size.type} {size.value}"
         print(
             f"    - {rule.id}: enabled={rule.enabled} symbols={syms} "
             f"action={rule.action.type} exit={rule.action.exit} "
-            f"cooldown={rule.cooldown_minutes}m tf={tfs}"
+            f"cooldown={rule.cooldown_minutes}m tf={tfs}{size_txt}"
         )
     return 0
 
@@ -289,6 +312,15 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     comparing = len(loaded) > 1
     runs: list[dict] = []
     assumption_blocks: list[str] = []
+    trade_start = parse_trade_bound(getattr(args, "start", None))
+    trade_end = parse_trade_bound(getattr(args, "end", None), end=True)
+    if trade_start or trade_end:
+        assumption_blocks.append(
+            "CLI trade window "
+            f"{trade_start.isoformat() if trade_start else 'tape start'} → "
+            f"{trade_end.isoformat() if trade_end else 'tape end'} "
+            "(America/New_York date bounds; prior bars used only for warmup)."
+        )
 
     for path, kind, cfg in loaded:
         if isinstance(cfg, OrbBotConfig):
@@ -334,6 +366,8 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             include_entries_only=not args.combined_only,
             label_prefix=timeframe_label(cfg),
             breakout_symbols=list(args.breakout or []),
+            trade_start=trade_start,
+            trade_end=trade_end,
         )
         for compact in books:
             r = compact["report"]
@@ -369,6 +403,8 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         "assumptions": assumptions,
         "window_notes": window_notes,
         "comparison": comparison,
+        "trade_start": trade_start.isoformat() if trade_start else None,
+        "trade_end": trade_end.isoformat() if trade_end else None,
         "runs": runs,
     }
     if comparing and args.output == "artifacts/backtest_results.json":
