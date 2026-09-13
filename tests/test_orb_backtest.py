@@ -83,7 +83,7 @@ def test_skip_second_entry_while_still_in_position():
         _b(30, 102.55, 102.70, 102.40, 102.50),  # Fri entry; no stop/take
         _b(35, 102.50, 102.60, 102.30, 102.40),
         _b(day2 + 15, 102.2, 102.4, 102.0, 102.3),
-        _b(day2 + 20, 102.70, 103.00, 102.60, 102.85),  # Mon touch of 103
+        _b(day2 + 20, 102.70, 103.00, 102.60, 102.95),  # Mon touch of 103 + close in 5% band
         _b(day2 + 25, 102.80, 102.90, 102.20, 102.30),
         _b(day2 + 30, 102.25, 102.35, 102.15, 102.20),  # would-be entry
     ]
@@ -119,7 +119,7 @@ def test_evaluate_scan_fires_fixture_setups():
     assert aapl.extra["stop"] == 104.0
     assert aapl.extra["take"] == 100.0
     assert aapl.extra["stop_mode"] == "orb_extreme"
-    assert aapl.extra["probe_mode"] == "touch"
+    assert aapl.extra["probe_mode"] == "touch_and_band"
     assert aapl.extra["entry_open"] == 102.55
 
 

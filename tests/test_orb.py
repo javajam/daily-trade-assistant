@@ -34,7 +34,7 @@ def test_example_orb_config_is_paper_only():
     assert cfg.orb.orb_timeframe == "15Min"
     assert cfg.orb.signal_timeframe == "5Min"
     assert cfg.orb.edge_pct == 0.05
-    assert cfg.orb.probe_mode == "touch"
+    assert cfg.orb.probe_mode == "touch_and_band"
     assert cfg.orb.session_open == "09:30"
     assert cfg.orb.session_timezone == "America/New_York"
     assert cfg.orb.on_open_position == "skip"
@@ -74,7 +74,7 @@ sizing: {type: shares, value: 1}
 """,
         encoding="utf-8",
     )
-    with pytest.raises(Exception, match="touch"):
+    with pytest.raises(Exception, match="touch_and_band"):
         load_orb_config(path)
 
 
@@ -150,6 +150,28 @@ def test_classify_touch_requires_wick_of_or_extreme():
     assert rng.classify_probe(
         _b(20, 103.20, 103.85, 103.10, 103.80), probe_mode="edge_band", edge_pct=0.05
     ) == "top"
+    assert rng.classify_probe(
+        _b(20, 103.20, 103.85, 103.10, 103.80), probe_mode="touch_and_band", edge_pct=0.05
+    ) is None
+    assert rng.classify_touch_and_band(_b(20, 103.20, 104.00, 103.10, 103.80), 0.05) == "top"
+    assert rng.classify_touch_and_band(_b(20, 103.20, 104.25, 102.80, 102.90), 0.05) is None
+    assert rng.classify_touch_and_band(_b(20, 96.40, 96.80, 96.00, 96.20), 0.05) == "bottom"
+    assert rng.classify_touch_and_band(_b(20, 96.40, 96.80, 96.00, 97.00), 0.05) is None
+
+
+def test_probe_mode_aliases_include_hybrid(tmp_path):
+    path = tmp_path / "hybrid.yaml"
+    path.write_text(
+        """
+strategy: orb_reversal
+universe: [AAPL]
+orb: {probe_mode: hybrid}
+sizing: {type: shares, value: 1}
+""",
+        encoding="utf-8",
+    )
+    cfg = load_orb_config(path)
+    assert cfg.orb.probe_mode == "touch_and_band"
 
 
 def test_close_in_band_without_touch_does_not_fire():
@@ -164,7 +186,8 @@ def test_close_in_band_without_touch_does_not_fire():
     assert probe.high < rng.high
     assert find_setups("AAPL", [mid, probe, reversal, entry], rng) == []
     assert find_setups("AAPL", [mid, probe, reversal, entry], rng, probe_mode="touch") == []
-    # Old behavior still available.
+    assert find_setups("AAPL", [mid, probe, reversal, entry], rng, probe_mode="touch_and_band") == []
+    # Close-in-band-only behavior still available.
     band = find_setups(
         "AAPL", [mid, probe, reversal, entry], rng, probe_mode="edge_band", edge_pct=0.05
     )
@@ -184,9 +207,26 @@ def test_bottom_close_in_band_without_touch_does_not_fire():
     assert rng.classify_close(probe.close, 0.05) == "bottom"
     assert probe.low > rng.low
     assert find_setups("MSFT", series, rng) == []
+    assert find_setups("MSFT", series, rng, probe_mode="touch_and_band") == []
     band = find_setups("MSFT", series, rng, probe_mode="edge_band")
     assert len(band) == 1
     assert band[0].side == "buy"
+
+
+def test_hybrid_requires_touch_and_close_in_same_band():
+    rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    mid = _b(15, 101.0, 101.4, 100.6, 100.8)
+    reversal = _b(25, 103.70, 103.90, 102.50, 102.60)
+    entry = _b(30, 102.55, 102.70, 102.40, 102.45)
+    both = _b(20, 103.20, 104.00, 103.10, 103.80)
+    wick_only = _b(20, 103.20, 104.25, 102.80, 102.90)
+    band_only = _b(20, 103.20, 103.85, 103.10, 103.80)
+    assert find_setups("AAPL", [mid, both, reversal, entry], rng)[0].probe_mode == "touch_and_band"
+    assert find_setups("AAPL", [mid, wick_only, reversal, entry], rng) == []
+    assert find_setups("AAPL", [mid, band_only, reversal, entry], rng) == []
+    assert find_setups("AAPL", [mid, wick_only, reversal, entry], rng, probe_mode="touch")
+    assert find_setups("AAPL", [mid, band_only, reversal, entry], rng, probe_mode="edge_band")
 
 
 def test_touch_plus_opposite_color_still_fires():
@@ -204,6 +244,10 @@ def test_touch_plus_opposite_color_still_fires():
     assert setups[0].probe.high >= rng.high
     assert setups[0].stop == 104.0
     assert setups[0].take == 100.0
+    hybrid = find_setups("AAPL", [mid, probe, reversal, entry], rng)
+    assert len(hybrid) == 1
+    assert hybrid[0].probe_mode == "touch_and_band"
+    assert hybrid[0].probe.close >= rng.top_zone(0.05)[0]
 
 
 def test_touch_wick_through_or_extreme_still_fires():
@@ -213,15 +257,13 @@ def test_touch_wick_through_or_extreme_still_fires():
     probe = _b(20, 103.20, 104.25, 102.80, 102.90)
     reversal = _b(25, 102.80, 103.00, 101.50, 101.60)
     entry = _b(30, 101.55, 101.70, 101.40, 101.45)
-    setups = find_setups("AAPL", [_b(15, 101.0, 101.4, 100.6, 100.8), probe, reversal, entry], rng)
+    series = [_b(15, 101.0, 101.4, 100.6, 100.8), probe, reversal, entry]
+    setups = find_setups("AAPL", series, rng, probe_mode="touch")
     assert len(setups) == 1
     assert setups[0].side == "sell"
-    assert find_setups(
-        "AAPL",
-        [_b(15, 101.0, 101.4, 100.6, 100.8), probe, reversal, entry],
-        rng,
-        probe_mode="edge_band",
-    ) == []
+    assert find_setups("AAPL", series, rng, probe_mode="edge_band") == []
+    assert find_setups("AAPL", series, rng, probe_mode="touch_and_band") == []
+    assert find_setups("AAPL", series, rng) == []
 
 
 def test_aggregate_or_from_signal_bars():

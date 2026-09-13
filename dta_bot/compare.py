@@ -67,18 +67,26 @@ YAHOO_CAP_NOTE = (
 
 def _orb_probe_assumption(config: Optional[OrbBotConfig]) -> str:
     spec = config.orb if config is not None else None
-    mode = spec.probe_mode if spec is not None else "touch"
+    mode = spec.probe_mode if spec is not None else "touch_and_band"
     pct = spec.edge_pct if spec is not None else 0.05
     if mode == "edge_band":
         return (
             f"Probe = signal-bar close inside the {pct:.0%} (configurable) edge band "
             "under the OR high or above the OR low (probe_mode: edge_band)."
         )
+    if mode == "touch":
+        return (
+            "Probe = signal bar must touch the opening-range extreme "
+            "(top: high >= OR high; bottom: low <= OR low). "
+            "Close inside the edge band is not required "
+            "(probe_mode: touch)."
+        )
     return (
-        "Probe = signal bar must touch the opening-range extreme "
-        "(top: high >= OR high; bottom: low <= OR low). "
-        "Close inside the old 5% edge band is not sufficient "
-        "(probe_mode: touch, default)."
+        f"Probe = signal bar must touch the opening-range extreme "
+        f"(top: high >= OR high; bottom: low <= OR low) AND close inside the "
+        f"{pct:.0%} (configurable) edge band "
+        f"(top: [or_high - band, or_high]; bottom: [or_low, or_low + band]) "
+        f"(probe_mode: touch_and_band, default)."
     )
 
 

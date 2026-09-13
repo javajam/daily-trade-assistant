@@ -20,9 +20,9 @@ class OrbSpec(BaseModel):
     session_timezone: str = "America/New_York"
     orb_timeframe: str = "15m"
     signal_timeframe: str = "5m"
-    # touch (default) = probe wick must reach the OR extreme.
-    # edge_band = old close-inside-edge-pct-of-OR-height rule.
-    probe_mode: Literal["touch", "edge_band"] = "touch"
+    # touch_and_band (default) = wick must reach the OR extreme AND close in the
+    # edge_pct band. touch = wick only. edge_band = close-in-band only.
+    probe_mode: Literal["touch_and_band", "touch", "edge_band"] = "touch_and_band"
     edge_pct: float = Field(default=0.05, gt=0)
     # One open position per symbol (no blind pyramiding).
     # skip = ignore new entries until flat (default).
@@ -76,8 +76,13 @@ class OrbSpec(BaseModel):
     @field_validator("probe_mode", mode="before")
     @classmethod
     def _probe_mode(cls, v: Any) -> str:
-        key = str(v or "touch").strip().lower().replace("-", "_")
+        key = str(v or "touch_and_band").strip().lower().replace("-", "_")
         aliases = {
+            "touch_and_band": "touch_and_band",
+            "hybrid": "touch_and_band",
+            "touch_band": "touch_and_band",
+            "both": "touch_and_band",
+            "wick_and_band": "touch_and_band",
             "touch": "touch",
             "wick": "touch",
             "extreme": "touch",
@@ -88,7 +93,7 @@ class OrbSpec(BaseModel):
             "close_in_band": "edge_band",
         }
         if key not in aliases:
-            raise ValueError("probe_mode must be 'touch' or 'edge_band'")
+            raise ValueError("probe_mode must be 'touch_and_band', 'touch', or 'edge_band'")
         return aliases[key]
 
     @field_validator("edge_pct")

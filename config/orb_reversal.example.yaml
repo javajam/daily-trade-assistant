@@ -6,13 +6,13 @@
 # 1. Opening range = first orb_timeframe candle at/after session_open
 #    (default 15m → 9:30–9:45 America/New_York high/low).
 # 2. After that candle is fully formed, evaluate signal_timeframe bars (default 5m).
-# 3. Probe (probe_mode: touch, default): the signal bar must *touch* the OR edge.
-#      top (potential short):  candle high >= or_high  (wick/touch of range high)
-#      bottom (potential long): candle low  <= or_low  (wick/touch of range low)
-#    Close-inside-the-old-5%-band is not enough.
-#    probe_mode: edge_band restores the previous close-in-zone rule:
+# 3. Probe (probe_mode: touch_and_band, default): the signal bar must *touch*
+#    the OR edge AND *close* inside the edge band.
 #      band = edge_pct * (or_high - or_low)  (0.05 = 5% of OR height)
-#      top zone [or_high - band, or_high]; bottom [or_low, or_low + band].
+#      top (potential short):  high >= or_high  AND close in [or_high - band, or_high]
+#      bottom (potential long): low  <= or_low  AND close in [or_low, or_low + band]
+#    probe_mode: touch is wick-only (close-in-band not required).
+#    probe_mode: edge_band restores the previous close-in-zone rule (no touch).
 # 4. Reversal = the next signal bar, opposite color:
 #      top probe + bearish close  → short
 #      bottom probe + bullish close → long
@@ -64,8 +64,8 @@ orb:
   session_timezone: America/New_York
   orb_timeframe: 15m               # 5m / 15m / 30m — switch without code changes
   signal_timeframe: 5m
-  probe_mode: touch                # touch | edge_band  (touch = wick must reach OR extreme)
-  edge_pct: 0.05                   # used by edge_band; fraction of OR height (0.05 = 5%)
+  probe_mode: touch_and_band       # touch_and_band | touch | edge_band
+  edge_pct: 0.05                   # used by touch_and_band / edge_band; fraction of OR height (0.05 = 5%)
   on_open_position: skip           # skip | replace
   take_profit: midpoint            # v1; A/B tested later
   stop_mode: orb_extreme           # orb_extreme | reversal_candle
