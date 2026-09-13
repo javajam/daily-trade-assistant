@@ -226,7 +226,7 @@ rules:
 
 ### Refined EMA9 day-trade (sample strategy)
 
-`config/ema9_trend.example.yaml` is the **noon day-trade** book on **AAPL / MSFT** (not TSLA/MU). Default stop management is **lock-+1%**. Both sides are enabled in YAML (`ema9_trend` long + `ema9_trend_short`). One position per symbol — long or short, not both. An opposite signal while that symbol is already in a trade is skipped (`opposite_signal_in_trade`). Disable a side with `enabled: false`. SOXL is optional (`config/ema9_trend_bracket_soxl.example.yaml`, `config/ema9_trend_risk_soxl.example.yaml`).
+`config/ema9_trend.example.yaml` is the **noon day-trade** book on **AAPL / MSFT** (not TSLA/MU or SPY/QQQ). Default stop management is **lock-+1%**. Both sides are enabled in YAML (`ema9_trend` long + `ema9_trend_short`). One position per symbol — long or short, not both. An opposite signal while that symbol is already in a trade is skipped (`opposite_signal_in_trade`). Disable a side with `enabled: false`. SOXL is optional (`config/ema9_trend_bracket_soxl.example.yaml`, `config/ema9_trend_risk_soxl.example.yaml`). Long-only SPY/QQQ (shorts parked): `config/ema9_trend_spy_qqq.example.yaml` / `config/ema9_trend_risk_spy_qqq.example.yaml`.
 
 1. **Long entry** — price crosses **above EMA(9)** AND close **> SMA(20)** AND **RSI(14) < 70** on the signal timeframe (default 15m). Fill at the **next bar open**.
 2. **Short entry** — price crosses **below EMA(9)** AND close **< SMA(20)**. **No RSI** on shorts. Same fill (next bar open).

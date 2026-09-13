@@ -592,7 +592,7 @@ def _fixed_bracket_tag(config: BotConfig) -> Optional[str]:
 
 
 def universe_tag(config: BotConfig) -> str:
-    """AAPL+MSFT / TSLA+MU so combined books with the same gates stay distinct."""
+    """AAPL+MSFT / TSLA+MU / SPY+QQQ so combined books with the same gates stay distinct."""
     return "+".join(config.universe) if config.universe else ""
 
 

@@ -20,6 +20,8 @@ config/ema9_trend_5m.yaml
 config/ema9_trend_pair.yaml
 config/ema9_trend_5m_pair.yaml
 config/ema9_trend_risk.yaml
+config/ema9_trend_spy_qqq.yaml
+config/ema9_trend_risk_spy_qqq.yaml
 config/ema9_trend_risk_5m.yaml
 config/ema9_trend_risk_pair.yaml
 config/ema9_trend_bracket.yaml

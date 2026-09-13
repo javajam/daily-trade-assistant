@@ -1,0 +1,68 @@
+# Refined EMA9 day-trade — 1% equity-risk book, universe SPY / QQQ (long-only).
+#
+# Shorts are parked (not included). Same noon stack + lock-+1% as
+# config/ema9_trend_spy_qqq.example.yaml.
+# Size: risk ~1% of current equity at the 1.0% initial fill stop
+#   shares = floor( (0.01 * equity) / (0.01 * entry_price) )
+# No fixed take-profit. Session gates on (toggle to null / off).
+# 10-share sibling: config/ema9_trend_spy_qqq.example.yaml
+# AAPL/MSFT long-only 1% book: config/ema9_trend_risk_nobe_lock1.example.yaml
+#
+#   python -m dta_bot validate --config config/ema9_trend_risk_spy_qqq.example.yaml
+#   python -m dta_bot backtest --config config/ema9_trend_risk_spy_qqq.example.yaml \
+#     --compare-config config/ema9_trend_risk_nobe_lock1.example.yaml \
+#     --source yahoo --start 2026-08-01 --end 2026-08-31 --combined-only \
+#     --output artifacts/ema9_aug2026_risk_spy_qqq.json \
+#     --report artifacts/ema9_aug2026_risk_spy_qqq.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"   # null / off disables
+  flatten_by: "15:55"     # null / off disables
+
+universe:
+  - SPY
+  - QQQ
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [SPY, QQQ]
+    cooldown_minutes: 60
+    notes: "Noon long-only on SPY/QQQ: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 1% equity risk at a 1.0% fill stop; lock to +1% on first touch of entry×1.01; no take. Shorts parked."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: risk_pct
+        equity_risk: 0.01
+        stop_pct: 1.0
+      order: market
+      exit: fixed_bracket
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      lock_trigger_pct: 1.0
+      lock_stop_pct: 1.0
