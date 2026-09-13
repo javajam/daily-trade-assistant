@@ -1,19 +1,24 @@
-# Refined EMA9 day-trade — long-only (paper / dry_run). Default product.
+# Refined EMA9 day-trade — long + mirrored short (paper / dry_run). Default product.
 #
-# Universe AAPL / MSFT. Entry (noon stack):
+# Universe AAPL / MSFT (not TSLA/MU). One position per symbol (long or short,
+# not both). An opposite signal while that symbol is already in a trade is
+# skipped (skip_reason: opposite_signal_in_trade). Disable a side with
+# enabled: false on that rule.
 #
+# Long (ema9_trend):
 #   close crosses above EMA(9) AND close > SMA(20) AND RSI(14) < 70
-#   Fill at the next bar open.
+#   Stop: initial fill × 0.99; first touch of fill × 1.01 locks stop there.
+#
+# Short (ema9_trend_short):
+#   close crosses below EMA(9) AND close < SMA(20) AND RSI(14) > 30
+#   Stop: initial fill × 1.01; first touch of fill × 0.99 (−1%) locks stop there.
+#
+# Fill at the next bar open. No fixed take-profit.
+# Exits = stop / lock_stop / session_flatten (flatten covers longs and shorts).
 #
 # Session gates (America/New_York) — toggle either to null / off:
 #   entry_cutoff: "12:00"   # skip fills at/after this clock; null = off
 #   flatten_by: "15:55"     # force-flat at flatten-bar close; null = off
-#
-# Stop (default stop_mode: lock_plus):
-#   initial stop = fill × 0.99
-#   first trade/touch of fill × 1.01 (bar high ≥ trigger) moves the stop to
-#   fill × 1.01 and leaves it. Locked stop is live from the next bar.
-# No fixed take-profit. Exits = stop / lock_stop / session_flatten.
 #
 # Optional stop siblings (same entry / session):
 #   fixed 1% from fill:  config/ema9_trend_bracket_nobe_fixed1.example.yaml
@@ -57,7 +62,7 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "Noon book: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 10 shares, lock stop to +1% on first touch of entry×1.01, no take."
+    notes: "Noon long: 15m price crosses above EMA(9) while above SMA20 and RSI < 70. 10 shares, lock stop to +1% on first touch of entry×1.01, no take."
     when:
       all:
         - ema_cross:
@@ -74,6 +79,36 @@ rules:
             below: 70
     action:
       type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      exit: fixed_bracket
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      lock_trigger_pct: 1.0
+      lock_stop_pct: 1.0
+  - id: ema9_trend_short
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Noon short: 15m price crosses below EMA(9) while below SMA20 and RSI > 30. 10 shares, lock stop to fill×0.99 on first touch of −1%, no take."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bearish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: below
+        - rsi:
+            period: 14
+            timeframe: 15m
+            above: 30
+    action:
+      type: sell
       size:
         type: shares
         value: 10

@@ -103,9 +103,10 @@ class ActionSpec(BaseModel):
     # level, not trailed). Longs skip when that SMA is at/above the signal close
     # or the next-bar fill. take_profit_pct is unchanged (omit for stop-only).
     # entry_pct = stop_loss_pct below the *fill* (next-bar open); never moves.
-    # lock_plus = entry_pct initial stop; first trade/touch of
-    #   entry * (1 + lock_trigger_pct/100) moves the stop to
-    #   entry * (1 + lock_stop_pct/100) and leaves it (live next bar).
+    # lock_plus = entry_pct initial stop; first trade/touch of the lock
+    #   trigger moves the stop to the lock level and leaves it (live next bar).
+    #   Long: initial fill×(1 − stop/100); trigger/lock fill×(1 + lock/100).
+    #   Short: initial fill×(1 + stop/100); trigger/lock fill×(1 − lock/100).
     # trail = stop = peak_price_since_entry * (1 - trail_pct/100), ratchets
     #   up only; peak updates from each bar high after the stop check.
     stop_mode: Literal["percent", "sma20", "entry_pct", "lock_plus", "trail"] = "percent"
@@ -508,7 +509,7 @@ def _flatten_conditions(cond: AnyCondition) -> list[AnyCondition]:
 
 
 def has_noon_stack(cond: AnyCondition) -> bool:
-    """Price EMA-cross + SMA-above + RSI — the default ema9_trend entry."""
+    """Price EMA-cross + SMA-above + RSI — the default ema9_trend long entry."""
     leaves = _flatten_conditions(cond)
     has_cross = any(
         isinstance(leaf, MaCrossCond) and leaf.ma == "ema" and leaf.direction == "bullish"
@@ -520,6 +521,30 @@ def has_noon_stack(cond: AnyCondition) -> bool:
     )
     has_rsi = any(isinstance(leaf, RsiCond) for leaf in leaves)
     return has_cross and has_sma and has_rsi
+
+
+def has_noon_short_stack(cond: AnyCondition) -> bool:
+    """Bearish EMA-cross + SMA-below + RSI — the mirrored ema9_trend_short entry."""
+    leaves = _flatten_conditions(cond)
+    has_cross = any(
+        isinstance(leaf, MaCrossCond) and leaf.ma == "ema" and leaf.direction == "bearish"
+        for leaf in leaves
+    )
+    has_sma = any(
+        isinstance(leaf, MaCond) and leaf.ma == "sma" and leaf.compare == "below"
+        for leaf in leaves
+    )
+    has_rsi = any(isinstance(leaf, RsiCond) for leaf in leaves)
+    return has_cross and has_sma and has_rsi
+
+
+def entry_sides(config: BotConfig) -> set[str]:
+    """Enabled entry action types: ``{'buy'}``, ``{'sell'}``, or both."""
+    return {
+        rule.action.type
+        for rule in config.rules
+        if rule.enabled and rule.action.type in {"buy", "sell"}
+    }
 
 
 def rsi_filter_label(config: BotConfig) -> Optional[str]:

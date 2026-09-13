@@ -1,4 +1,4 @@
-# Refined EMA9 day-trade on 5-minute bars — same rules as ema9_trend.example.yaml.
+# Refined EMA9 day-trade on 5-minute bars — same long + short as ema9_trend.example.yaml.
 #
 # Identical except settings.timeframe / every condition is 5m. Cooldown stays
 # 60 wall-clock minutes. Yahoo 5m history is capped at ~60 days.
@@ -39,7 +39,7 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "Noon book: 5m price crosses EMA(9) while above SMA20 and RSI < 70. 10 shares, lock stop to +1% on first touch of entry×1.01, no take."
+    notes: "Noon long: 5m price crosses above EMA(9) while above SMA20 and RSI < 70. 10 shares, lock stop to +1% on first touch of entry×1.01, no take."
     when:
       all:
         - ema_cross:
@@ -56,6 +56,36 @@ rules:
             below: 70
     action:
       type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      exit: fixed_bracket
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      lock_trigger_pct: 1.0
+      lock_stop_pct: 1.0
+  - id: ema9_trend_short
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Noon short: 5m price crosses below EMA(9) while below SMA20 and RSI > 30. 10 shares, lock stop to fill×0.99 on first touch of −1%, no take."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 5m
+            direction: bearish
+        - sma:
+            period: 20
+            timeframe: 5m
+            compare: below
+        - rsi:
+            period: 14
+            timeframe: 5m
+            above: 30
+    action:
+      type: sell
       size:
         type: shares
         value: 10

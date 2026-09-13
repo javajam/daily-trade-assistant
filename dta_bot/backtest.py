@@ -205,6 +205,7 @@ class RuleReport:
     skip_reasons: dict[str, int] = field(default_factory=dict)
     signals_by_symbol: dict[str, int] = field(default_factory=dict)
     trades_by_symbol: dict[str, int] = field(default_factory=dict)
+    sides: dict[str, dict[str, Any]] = field(default_factory=dict)
     breakeven_armed: int = 0
     lock_armed: int = 0
     trail_ratcheted: int = 0
@@ -472,6 +473,46 @@ def _signal_sma_stop(
     return _sma_through(series, signal_bar, action.stop_sma_period)
 
 
+def _open_side(lots: list[OpenLot], symbol: str) -> Optional[str]:
+    for lot in lots:
+        if lot.symbol == symbol:
+            return lot.side
+    return None
+
+
+def _action_side(action: str) -> str:
+    return "buy" if action == "buy" else "sell"
+
+
+def _side_stats(trades: list[Trade], starting_equity: float) -> dict[str, dict[str, Any]]:
+    """Trades / win rate / P&L by lot side. Max DD stays on the isolated book."""
+    out: dict[str, dict[str, Any]] = {}
+    for side in ("buy", "sell"):
+        group = [t for t in trades if t.side == side]
+        if not group:
+            continue
+        wins = [t for t in group if t.pnl > 0]
+        losses = [t for t in group if t.pnl < 0]
+        pnl = sum(t.pnl for t in group)
+        closed = len(group)
+        reasons: dict[str, int] = {}
+        for t in group:
+            reasons[t.exit_reason] = reasons.get(t.exit_reason, 0) + 1
+        out[side] = {
+            "trades": closed,
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_rate_pct": (len(wins) / closed * 100.0) if closed else None,
+            "total_pnl": pnl,
+            "total_pnl_pct": (pnl / starting_equity * 100.0) if starting_equity else 0.0,
+            "avg_win": (sum(t.pnl for t in wins) / len(wins)) if wins else None,
+            "avg_loss": (sum(t.pnl for t in losses) / len(losses)) if losses else None,
+            "exit_reasons": reasons,
+            "lock_armed": sum(1 for t in group if t.lock_armed),
+        }
+    return out
+
+
 def _exit_pnl_note(trades: list[Trade]) -> Optional[str]:
     if not trades:
         return None
@@ -623,6 +664,7 @@ def summarize(
         skip_reasons=skips,
         signals_by_symbol=by_sig,
         trades_by_symbol=by_tr,
+        sides=_side_stats(trades, starting_equity),
         breakeven_armed=sum(1 for t in trades if t.breakeven_armed),
         lock_armed=sum(1 for t in trades if t.lock_armed),
         trail_ratcheted=sum(1 for t in trades if t.trail_ratcheted),
@@ -975,7 +1017,12 @@ def run_backtest(
                         )
                 elif not allow_pyramid and symbol in symbols_in_position():
                     accepted = False
-                    skip_reason = "already_in_position"
+                    open_side = _open_side(lots, symbol)
+                    incoming = _action_side(action)
+                    if open_side is not None and open_side != incoming:
+                        skip_reason = "opposite_signal_in_trade"
+                    else:
+                        skip_reason = "already_in_position"
                 elif (
                     symbol not in symbols_in_position()
                     and len(symbols_in_position()) >= config.settings.max_open_positions
@@ -1188,11 +1235,18 @@ def run_backtest(
     if pnl_note:
         extra_notes.append(pnl_note)
     extra_notes.append(
-        f"One lot per symbol; both names may be open at once if cash covers the second "
-        f"risk-sized entry, otherwise the later signal is skipped. "
-        f"Max concurrent symbols this run: {max_concurrent}. "
+        f"One lot per symbol (long or short, not both); both names may be open at once "
+        f"if cash covers the second risk-sized entry, otherwise the later signal is skipped. "
+        f"An opposite-side signal while that symbol is already in a trade is skipped "
+        f"(opposite_signal_in_trade). Max concurrent symbols this run: {max_concurrent}. "
         f"Ticks with 2+ names open: {both_open_ticks}."
     )
+    opp_skips = sum(1 for s in signals if s.skip_reason == "opposite_signal_in_trade")
+    if opp_skips:
+        extra_notes.append(
+            f"{opp_skips} signal(s) skipped as opposite_signal_in_trade "
+            "(one position per symbol; the other side does not reverse an open lot)."
+        )
     sma_rules = [
         r
         for r in config.rules
@@ -1247,12 +1301,13 @@ def run_backtest(
             trig = sample.resolved_lock_trigger_pct()
             lock = sample.resolved_lock_stop_pct()
             extra_notes.append(
-                f"Lock-plus (stop_mode: lock_plus): first trade/touch of "
-                f"entry×(1+{(trig or 0):g}/100) — bar high ≥ that print for a long — "
-                f"moves the stop to entry×(1+{(lock or 0):g}/100) and leaves it. "
+                f"Lock-plus (stop_mode: lock_plus): first trade/touch of the lock trigger "
+                f"moves the stop to the lock level and leaves it. Long: trigger/lock at "
+                f"entry×(1+{(trig or 0):g}/100) (bar high ≥ that print). Short: trigger/lock "
+                f"at entry×(1−{(lock or 0):g}/100) (bar low ≤ that print). "
                 "The locked stop is live from the next bar; same-bar pullback after the "
                 "tag still uses the initial 1% protective stop. Later hit of the locked "
-                "stop is exit reason lock_stop."
+                "stop is exit reason lock_stop. Session flatten covers longs and shorts."
             )
             extra_notes.append(
                 f"{sum(1 for t in trades if t.lock_armed)} trade(s) armed the +lock; "
@@ -1361,6 +1416,7 @@ def format_report_md(payload: dict[str, Any]) -> str:
                 if r.get("trail_ratcheted") or (r.get("exit_reasons") or {}).get("trail_stop")
                 else "",
                 f"- Skip reasons: {r.get('skip_reasons')}" if r.get("skip_reasons") else "",
+                *(_format_side_lines(r.get("sides") or {})),
             ]
         )
         extra_notes = [
@@ -1388,6 +1444,8 @@ def format_report_md(payload: dict[str, Any]) -> str:
             or "trail_stop" in n
             or "armed the +lock" in n
             or "ratcheted the trail" in n
+            or "opposite_signal_in_trade" in n
+            or n.startswith("One lot per symbol")
         ]
         for note in extra_notes:
             lines.append(f"- {note}")
@@ -1404,6 +1462,30 @@ def format_report_md(payload: dict[str, Any]) -> str:
             lines.append(f"- {item}")
         lines.append("")
     return "\n".join(line for line in lines if line is not None)
+
+
+def _format_side_lines(sides: dict[str, Any]) -> list[str]:
+    if not sides:
+        return []
+    labels = {"buy": "Long", "sell": "Short"}
+    lines = ["- By side:"]
+    for key in ("buy", "sell"):
+        block = sides.get(key)
+        if not block:
+            continue
+        wr = _fmt_opt_pct(block.get("win_rate_pct"))
+        lines.append(
+            f"  - {labels.get(key, key)}: {block.get('trades', 0)} trades, "
+            f"{block.get('wins', 0)} / {block.get('losses', 0)} wins/losses, "
+            f"WR {wr}, P&L ${_fmt_side_pnl(block.get('total_pnl'))}"
+        )
+    return lines
+
+
+def _fmt_side_pnl(value: Any) -> str:
+    if value is None:
+        return "n/a"
+    return f"{float(value):,.2f}"
 
 
 def _fmt_opt_money(value: Optional[float]) -> str:

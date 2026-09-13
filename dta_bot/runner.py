@@ -143,6 +143,23 @@ def execute_decision(
         )
         return
 
+    if ev.action_type != "close" and ev.symbol in positions:
+        pos = positions[ev.symbol]
+        incoming = "buy" if ev.action_type == "buy" else "sell"
+        open_side = "buy" if str(pos.side).lower() in {"buy", "long"} else "sell"
+        reason = (
+            "opposite_signal_in_trade" if open_side != incoming else "already_in_position"
+        )
+        log.info(
+            "[SKIP] %s / %s — %s (open %s qty=%s; one position per symbol)",
+            ev.symbol,
+            ev.rule_id,
+            reason,
+            pos.side,
+            pos.qty,
+        )
+        return
+
     if ev.action_type == "close":
         if ev.symbol not in positions:
             log.info("[SKIP] close %s / %s — no open position", ev.symbol, ev.rule_id)

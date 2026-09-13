@@ -1066,3 +1066,114 @@ def test_trail_never_ratchets_down():
     assert trade.exit_reason == "eod"
     assert trade.trail_ratcheted is True
     assert trade.exit_price == 102.1
+
+
+def _manage_sell_rule(**action_kw) -> RuleSpec:
+    defaults = dict(
+        type="sell",
+        size=SizeSpec(type="shares", value=10),
+        exit="fixed_bracket",
+        stop_mode="lock_plus",
+        stop_loss_pct=1.0,
+        lock_trigger_pct=1.0,
+        lock_stop_pct=1.0,
+    )
+    defaults.update(action_kw)
+    return _buy_rule(id="ema9_trend_short", action=ActionSpec(**defaults))
+
+
+def test_lock_plus_short_arms_on_minus_one_and_fills_next_bar():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        # Fill short at 100. Low 99.8 — no −1% touch yet. High 100.4 stays under 101 stop.
+        Bar(bar(2, 100.0, 100.4, 99.8, 100.2).timestamp, 100.0, 100.4, 99.8, 100.2, 1000),
+        # First touch of 99. Same-bar high 100.3 must NOT fill the locked stop.
+        Bar(bar(3, 100.2, 100.3, 98.90, 99.80).timestamp, 100.2, 100.3, 98.90, 99.80, 1000),
+        # Next bar opens below the initial 101 stop, then tags 99 from below.
+        Bar(bar(4, 98.80, 99.05, 98.70, 98.90).timestamp, 98.80, 99.05, 98.70, 98.90, 1000),
+    ]
+    result = run_backtest(_cfg(_manage_sell_rule()), {("AAPL", "15Min"): bars})
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.side == "sell"
+    assert trade.entry_price == 100.0
+    assert trade.lock_armed is True
+    assert trade.exit_reason == "lock_stop"
+    assert trade.exit_price == pytest.approx(99.0)
+    assert result.report.sides["sell"]["trades"] == 1
+    assert any("Short:" not in n or "lock" in n for n in result.report.notes)
+    assert any("bar low" in n and "lock_plus" in n for n in result.report.notes)
+
+
+def test_lock_plus_short_initial_stop_before_touch():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        Bar(bar(2, 100.0, 101.20, 99.80, 100.50).timestamp, 100.0, 101.20, 99.80, 100.50, 1000),
+    ]
+    result = run_backtest(_cfg(_manage_sell_rule()), {("AAPL", "15Min"): bars})
+    trade = result.trades[0]
+    assert trade.side == "sell"
+    assert trade.lock_armed is False
+    assert trade.exit_reason == "stop"
+    assert trade.exit_price == pytest.approx(101.0)
+
+
+def test_opposite_signal_skipped_while_in_trade():
+    bars = [
+        Bar(bar(0, 10, 10.2, 8.0, 8.2).timestamp, 10.0, 10.2, 8.0, 8.2, 1000),
+        Bar(bar(1, 8.1, 11.0, 8.0, 10.0).timestamp, 8.1, 11.0, 8.0, 10.0, 1000),
+        Bar(bar(2, 10.0, 10.15, 9.95, 10.10).timestamp, 10.0, 10.15, 9.95, 10.10, 1000),
+        Bar(bar(3, 10.10, 10.20, 10.00, 10.18).timestamp, 10.10, 10.20, 10.00, 10.18, 1000),
+        Bar(bar(4, 10.25, 10.30, 9.90, 9.95).timestamp, 10.25, 10.30, 9.90, 9.95, 1000),
+        Bar(bar(5, 9.95, 10.00, 9.90, 9.92).timestamp, 9.95, 10.00, 9.90, 9.92, 1000),
+    ]
+    long_rule = _buy_rule(
+        cooldown_minutes=0,
+        action=ActionSpec(type="buy", size=SizeSpec(type="shares", value=10), stop_loss_pct=5.0),
+    )
+    short_rule = _close_rule(
+        id="ema9_trend_short",
+        cooldown_minutes=0,
+        when=parse_condition({"pattern": "bearish_engulfing", "timeframe": "15m"}),
+        action=ActionSpec(
+            type="sell",
+            size=SizeSpec(type="shares", value=10),
+            stop_mode="lock_plus",
+            stop_loss_pct=1.0,
+        ),
+    )
+    result = run_backtest(
+        _cfg(long_rule, short_rule),
+        {("AAPL", "15Min"): bars},
+        starting_equity=100_000,
+    )
+    skipped = [s for s in result.signals if s.skip_reason == "opposite_signal_in_trade"]
+    assert skipped
+    assert all(s.action_type == "sell" for s in skipped)
+    assert result.report.trades == 1
+    assert result.trades[0].side == "buy"
+    assert "sell" not in result.report.sides
+
+
+def test_flatten_by_closes_short_at_1545_bar_close():
+    bars = [
+        _et_bar(9, 30, 10.0, 10.2, 8.0, 8.2),
+        _et_bar(9, 45, 8.1, 11.0, 8.0, 10.0),
+        _et_bar(10, 0, 10.0, 10.1, 9.95, 10.05),
+    ]
+    t = datetime(2026, 9, 11, 10, 15, tzinfo=NY)
+    while t <= datetime(2026, 9, 11, 15, 45, tzinfo=NY):
+        bars.append(_et_bar(t.hour, t.minute, 10.05, 10.10, 10.00, 10.06))
+        t = t.replace(hour=t.hour + (t.minute + 15) // 60, minute=(t.minute + 15) % 60)
+    result = run_backtest(
+        _cfg(_manage_sell_rule(stop_loss_pct=50.0), entry_cutoff="12:00", flatten_by="15:55"),
+        {("AAPL", "15Min"): bars},
+        starting_equity=100_000,
+    )
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.side == "sell"
+    assert trade.exit_reason == "session_flatten"
+    assert trade.exit_price == 10.06
