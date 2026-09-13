@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -7,9 +8,19 @@ from dta_bot.config import ActionSpec, BotConfig, RuleSpec, Settings, SizeSpec, 
 from dta_bot.models import Bar
 from tests.conftest import bar
 
+NY = ZoneInfo("America/New_York")
 
-def _cfg(*rules: RuleSpec, lookback: int = 80) -> BotConfig:
-    return BotConfig(settings=Settings(lookback_bars=lookback, max_open_positions=5), universe=["AAPL"], rules=list(rules))
+
+def _cfg(*rules: RuleSpec, lookback: int = 80, **settings) -> BotConfig:
+    return BotConfig(
+        settings=Settings(lookback_bars=lookback, max_open_positions=5, **settings),
+        universe=["AAPL"],
+        rules=list(rules),
+    )
+
+
+def _et_bar(hour: int, minute: int, o: float, h: float, l: float, c: float) -> Bar:
+    return Bar(datetime(2026, 9, 11, hour, minute, tzinfo=NY), o, h, l, c, 1000)
 
 
 def _buy_rule(**kwargs) -> RuleSpec:
@@ -387,3 +398,110 @@ def test_trade_window_blocks_entries_before_start():
     )
     assert result.report.signals == 0
     assert result.report.trades == 0
+
+
+def _session_cfg(*, gates: bool = True, tf: str = "15m") -> BotConfig:
+    settings = dict(entry_cutoff="13:00", flatten_by="15:55") if gates else dict(
+        entry_cutoff=None, flatten_by=None
+    )
+    return _cfg(_buy_rule(cooldown_minutes=0), **settings)
+
+
+def test_entry_cutoff_skips_fill_at_or_after_1300_et():
+    # Engulfing completes on the 12:45 ET bar (closes 13:00); next open is 13:00.
+    bars = [
+        _et_bar(12, 30, 10.0, 10.2, 8.0, 8.2),
+        _et_bar(12, 45, 8.1, 11.0, 8.0, 10.4),
+        _et_bar(13, 0, 10.4, 10.5, 10.3, 10.45),
+    ]
+    result = run_backtest(_session_cfg(), {("AAPL", "15Min"): bars}, starting_equity=100_000)
+    assert result.report.signals == 1
+    assert result.signals[0].accepted is False
+    assert result.signals[0].skip_reason == "entry_cutoff"
+    assert result.report.trades == 0
+    assert result.report.skip_reasons == {"entry_cutoff": 1}
+
+
+def test_entry_cutoff_allows_fill_before_1300_et():
+    # Engulfing completes on the 12:30 ET bar (closes 12:45); fill at 12:45 open.
+    bars = [
+        _et_bar(12, 15, 10.0, 10.2, 8.0, 8.2),
+        _et_bar(12, 30, 8.1, 11.0, 8.0, 10.4),
+        _et_bar(12, 45, 10.4, 10.72, 10.3, 10.5),
+        _et_bar(13, 0, 10.5, 10.6, 10.4, 10.55),
+    ]
+    result = run_backtest(_session_cfg(), {("AAPL", "15Min"): bars}, starting_equity=100_000)
+    assert result.report.signals == 1
+    assert result.signals[0].accepted is True
+    assert result.report.trades == 1
+    assert result.trades[0].entry_time == datetime(2026, 9, 11, 12, 45, tzinfo=NY)
+
+
+def test_flatten_by_closes_15m_at_1545_bar_close():
+    # Enter 10:00, no stop/take, hold into the 15:45 bar → session_flatten at that close.
+    bars = [
+        _et_bar(9, 30, 10.0, 10.2, 8.0, 8.2),
+        _et_bar(9, 45, 8.1, 11.0, 8.0, 10.0),
+        _et_bar(10, 0, 10.0, 10.1, 9.95, 10.05),
+    ]
+    t = datetime(2026, 9, 11, 10, 15, tzinfo=NY)
+    while t <= datetime(2026, 9, 11, 15, 45, tzinfo=NY):
+        bars.append(_et_bar(t.hour, t.minute, 10.05, 10.10, 10.00, 10.06))
+        t = t.replace(hour=t.hour + (t.minute + 15) // 60, minute=(t.minute + 15) % 60)
+    result = run_backtest(_session_cfg(), {("AAPL", "15Min"): bars}, starting_equity=100_000)
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.exit_reason == "session_flatten"
+    assert trade.exit_price == 10.06
+    assert trade.exit_time == datetime(2026, 9, 11, 16, 0, tzinfo=NY)
+    assert result.report.exit_reasons == {"session_flatten": 1}
+
+
+def test_flatten_by_closes_5m_at_1550_bar_close():
+    bars = [
+        _et_bar(9, 30, 10.0, 10.2, 8.0, 8.2),
+        _et_bar(9, 35, 8.1, 11.0, 8.0, 10.0),
+        _et_bar(9, 40, 10.0, 10.1, 9.95, 10.05),
+    ]
+    t = datetime(2026, 9, 11, 9, 45, tzinfo=NY)
+    end = datetime(2026, 9, 11, 15, 55, tzinfo=NY)
+    while t <= end:
+        bars.append(_et_bar(t.hour, t.minute, 10.05, 10.10, 10.00, 10.06))
+        nxt_min = t.minute + 5
+        t = t.replace(hour=t.hour + nxt_min // 60, minute=nxt_min % 60)
+    rule = _buy_rule(
+        cooldown_minutes=0,
+        when=parse_condition({"pattern": "bullish_engulfing", "timeframe": "5m"}),
+    )
+    cfg = _cfg(rule, entry_cutoff="13:00", flatten_by="15:55")
+    result = run_backtest(cfg, {("AAPL", "5Min"): bars}, starting_equity=100_000)
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.exit_reason == "session_flatten"
+    assert trade.exit_time == datetime(2026, 9, 11, 15, 55, tzinfo=NY)
+    assert trade.exit_price == 10.06
+
+
+def test_overnight_book_holds_past_flatten_bar():
+    bars = [
+        _et_bar(9, 30, 10.0, 10.2, 8.0, 8.2),
+        _et_bar(9, 45, 8.1, 11.0, 8.0, 10.0),
+        _et_bar(10, 0, 10.0, 10.1, 9.95, 10.05),
+        _et_bar(15, 45, 10.05, 10.10, 10.00, 10.20),
+    ]
+    result = run_backtest(_session_cfg(gates=False), {("AAPL", "15Min"): bars}, starting_equity=100_000)
+    assert result.report.trades == 1
+    assert result.trades[0].exit_reason == "eod"
+    assert result.trades[0].exit_price == 10.20
+
+
+def test_stop_on_flatten_bar_beats_session_flatten():
+    bars = [
+        _et_bar(9, 30, 10.0, 10.2, 8.0, 8.2),
+        _et_bar(9, 45, 8.1, 11.0, 8.0, 10.0),
+        _et_bar(10, 0, 10.0, 10.1, 9.95, 10.05),
+        _et_bar(15, 45, 10.05, 10.10, 9.70, 9.80),
+    ]
+    result = run_backtest(_session_cfg(), {("AAPL", "15Min"): bars}, starting_equity=100_000)
+    assert result.report.trades == 1
+    assert result.trades[0].exit_reason == "stop"

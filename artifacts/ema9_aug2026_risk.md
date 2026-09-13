@@ -1,137 +1,130 @@
-# ema9_trend — August 2026 live-style book ($100k, 1% risk)
+# ema9_trend — August 2026 1% risk book with session gates
 
-Replay of a **$100,000** long-only book on **AAPL + MSFT** for **2026-08-01 through 2026-08-31** (RTH, America/New_York). Numbers are engine totals from Yahoo 15m bars. Nothing here is estimated.
+- Window: 2026-08-01 → 2026-08-31 America/New_York (inclusive). Tape is the same Yahoo 15m AAPL/MSFT series as the full-window book (2026-06-17 → 2026-09-11); bars before August are warmup only.
+- Entry: 15m bullish EMA(9) cross + close > SMA20 + RSI14 < 70
+- Exit: fixed 1.5% stop / 3.0% take, plus session gates
+- Session: `entry_cutoff: "13:00"`, `flatten_by: "15:55"` America/New_York. 15m force-flat at the **15:45 ET bar close** (prints 16:00 ET).
+- Sizing: `size: { type: risk_pct, equity_risk: 0.01, stop_pct: 1.5 }` on $100,000 start
+- Universe: AAPL + MSFT
+- Config: `config/ema9_trend_risk.example.yaml`
+- Replay: `python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml --source yahoo --start 2026-08-01 --end 2026-08-31 --combined-only --output artifacts/ema9_aug2026_risk.json --report artifacts/ema9_aug2026_risk.md`
 
-## Locked settings
+**WITH session gates:** **17 trades, 70.59%, $3,022.49**, max DD $1,663.57. Exits: **16 `session_flatten` time-exits**, 1 stop, 0 take. Signals 58; skips `entry_cutoff` 17, already_in_position 17, insufficient_cash 7. Max concurrent symbols: 1 (risk-sized notionals did not leave cash for a second name).
 
-| Knob | Value |
-| --- | --- |
-| Strategy | 15m EMA(9) bullish cross + close > SMA20 + RSI14 < 70 |
-| Exit | `fixed_bracket` — stop 1.5%, take 3.0% (not `ema_invalid`) |
-| Universe | AAPL, MSFT (SOXL not in this book) |
-| Starting equity | $100,000 |
-| Sizing | `size: { type: risk_pct, equity_risk: 0.01, stop_pct: 1.5 }` |
-| Share formula | `floor((0.01 * equity) / (0.015 * entry_price))` = `floor(equity / (1.5 * entry_price))` |
-| Recalc | From marked-to-market equity at each signal; one lot per symbol |
-| Both names open? | Allowed if cash covers the second notional; otherwise skip |
-| Friction | $0 commission, 0% slippage |
-| Config | `config/ema9_trend_risk.example.yaml` |
-| Replay | `python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml --source yahoo --start 2026-08-01 --end 2026-08-31 --output artifacts/ema9_aug2026_risk.json --report artifacts/ema9_aug2026_risk.md` |
+Prior overnight August book on the same window/sizing (gates off, recorded in the previous risk writeup): **7 trades, 57.14%, $5,502.59**, max DD $3,282.83.
 
-JSON: `artifacts/ema9_aug2026_risk.json`. The 10-share control is `artifacts/ema9_aug2026_10share.json` / `.md`.
+## Closed trades (August, gated)
 
-## Yahoo window
+| # | Symbol | Qty | Entry | Exit | Reason | P&L |
+| ---: | --- | ---: | --- | --- | --- | ---: |
+| 1 | AAPL | 217 | 2026-08-03 12:30 ET @ 306.35 | 2026-08-03 16:00 ET @ 303.27 | session_flatten | $-668.36 |
+| 2 | MSFT | 134 | 2026-08-04 10:00 ET @ 491.08 | 2026-08-04 16:00 ET @ 492.82 | session_flatten | $233.16 |
+| 3 | AAPL | 214 | 2026-08-05 10:45 ET @ 308.85 | 2026-08-05 16:00 ET @ 310.92 | session_flatten | $442.98 |
+| 4 | MSFT | 135 | 2026-08-06 09:45 ET @ 493.27 | 2026-08-06 16:00 ET @ 499.86 | session_flatten | $889.65 |
+| 5 | AAPL | 215 | 2026-08-07 10:15 ET @ 312.14 | 2026-08-07 16:00 ET @ 313.30 | session_flatten | $249.37 |
+| 6 | MSFT | 133 | 2026-08-10 09:45 ET @ 505.20 | 2026-08-10 16:00 ET @ 505.97 | session_flatten | $103.07 |
+| 7 | MSFT | 135 | 2026-08-13 09:45 ET @ 497.89 | 2026-08-13 16:00 ET @ 496.81 | session_flatten | $-145.13 |
+| 8 | MSFT | 135 | 2026-08-14 10:00 ET @ 498.48 | 2026-08-14 16:00 ET @ 495.42 | session_flatten | $-413.10 |
+| 9 | MSFT | 139 | 2026-08-18 10:15 ET @ 481.38 | 2026-08-18 16:00 ET @ 481.93 | session_flatten | $76.10 |
+| 10 | AAPL | 215 | 2026-08-19 09:45 ET @ 311.69 | 2026-08-19 16:00 ET @ 316.88 | session_flatten | $1,115.42 |
+| 11 | AAPL | 213 | 2026-08-20 11:00 ET @ 317.43 | 2026-08-20 16:00 ET @ 312.66 | stop | $-1,016.28 |
+| 12 | MSFT | 139 | 2026-08-21 09:45 ET @ 482.00 | 2026-08-21 16:00 ET @ 483.35 | session_flatten | $187.65 |
+| 13 | AAPL | 216 | 2026-08-24 09:45 ET @ 311.15 | 2026-08-24 16:00 ET @ 310.35 | session_flatten | $-172.80 |
+| 14 | MSFT | 137 | 2026-08-25 09:45 ET @ 488.79 | 2026-08-25 16:00 ET @ 491.50 | session_flatten | $371.95 |
+| 15 | AAPL | 217 | 2026-08-26 09:30 ET @ 310.24 | 2026-08-26 16:00 ET @ 313.48 | session_flatten | $702.00 |
+| 16 | MSFT | 135 | 2026-08-27 12:15 ET @ 501.08 | 2026-08-27 16:00 ET @ 504.88 | session_flatten | $513.00 |
+| 17 | AAPL | 217 | 2026-08-28 09:30 ET @ 317.09 | 2026-08-28 16:00 ET @ 319.64 | session_flatten | $553.78 |
 
-Yahoo v8 15m regular-session bars (`includePrePost=false`, unadjusted OHLC) are capped at **60d** in this downloader. This run downloaded:
+# Per-book detail
 
-- AAPL 15m: 1560 closed bars, **2026-06-17 13:30Z → 2026-09-11 19:45Z**
-- MSFT 15m: 1560 closed bars, same span
+- Generated (UTC): 2026-09-13T17:14:21.160409Z
+- Starting equity: $100,000.00
+- Commission / slippage: commission=$0.00/fill, slippage=0.0%
+- Data: Yahoo Finance v8 chart (unadjusted regular-session OHLC)
 
-**August 2026 was not clipped.** Bars before 2026-08-01 were used only for SMA/RSI/EMA warmup (lookback 80). No new entries after the Aug 31 session. Open lots flatten at the last in-window mark (`eod`).
+## 15m ema9_trend (cutoff 13:00, flat 15:55)
 
-First RTH day in the month is **Mon 2026-08-03** (Aug 1–2 is the weekend). Last is **Mon 2026-08-31**. 21 session days.
+- Period: 2026-08-01T04:00:00Z → 2026-09-01T03:59:59.999999Z
+- Bars used: {'AAPL:15Min': 1560, 'MSFT:15Min': 1560}
+- Data source: Yahoo Finance v8 chart (unadjusted regular-session OHLC)
+- Signals: 58  (by symbol: {'AAPL': 26, 'MSFT': 32})
+- Pattern hits in those signals: {'ema_cross': 58}
+- Trades: 17  (by symbol: {'AAPL': 8, 'MSFT': 9})
+- Wins / losses / scratch: 12 / 5 / 0
+- Win rate: 70.59%
+- Total P&L: $3,022.49 (3.022% of starting equity)
+- Avg win: $453.18
+- Avg loss: $-483.13
+- Max drawdown: $1,663.57 (1.63%)
+- Ending equity: $103,022.49
+- Exit reasons: {'session_flatten': 16, 'stop': 1}
+- Skip reasons: {'already_in_position': 17, 'entry_cutoff': 17, 'insufficient_cash': 7}
+- Session gates (America/New_York): entry_cutoff=13:00 skips a signal when the next-bar fill (bar open) is at/after that clock. flatten_by=15:55 force-flats at the close of the bar that contains that clock (exit reason session_flatten): 15m RTH bars opening :00,:15,:30,:45 flatten on the 15:45 ET bar close when flatten_by is 15:55 (last regular 15m bar, aligned with “by 15:55”); 5m flattens on the 15:50 ET bar close (last 5m bar that completes at/before 15:55). Stop/take/ema_invalid on that bar still win if they hit first. Set entry_cutoff / flatten_by to null to restore overnight holds.
+- Session gates (America/New_York): entry_cutoff=13:00 (skip signals whose next-bar fill is at/after that clock); flatten_by=15:55 (force flat at the close of the bar containing that clock: 15m RTH → 15:45 ET bar close when flatten_by is 15:55; 5m RTH → 15:50 ET bar close, the last 5m bar that completes at/before 15:55).
+- 17 signal(s) skipped as entry_cutoff (13:00 America/New_York; fill would be at/after the cutoff).
+- 16 trade(s) exited as session_flatten (time-exit at the flatten bar close; flatten_by 15:55 America/New_York).
 
-## Monthly summary (1% risk)
+### Monthly
 
-| | |
-| --- | ---: |
-| Starting equity | $100,000.00 |
-| Ending equity | $105,502.59 |
-| **Total P&L** | **$5,502.59** |
-| **Return** | **5.503%** |
-| Max drawdown | $3,282.83 (3.13%) |
-| Trades | 7 (AAPL 1, MSFT 6) |
-| Wins / losses | 4 / 3 |
-| **Win rate** | **57.14%** |
-| Avg win | $2,035.18 |
-| Avg loss | $-879.38 |
-| Exit mix | take 4, stop 2, eod 1 |
-| Best day (realized) | 2026-08-28 **$2,085.22** (1 trade) |
-| Worst day (realized) | 2026-08-17 **$-1,050.45** (1 trade) |
-| Signals | 58 (AAPL 26, MSFT 32) |
+- Month: 2026-08
+- Session days: 21
+- Trades: 17  (wins 12 / losses 5)
+- Win rate: 70.59%
+- Total P&L: $3,022.49 (3.02% of starting equity)
+- Ending equity: $103,022.49
+- Best day (realized): 2026-08-19 $1,115.42 (1 trades)
+- Worst day (realized): 2026-08-20 $-1,016.28 (1 trades)
 
-Signals that did not become trades: **29** `already_in_position` (same symbol still open), **22** `insufficient_cash` (the other name’s risk size would have spent more cash than was left). **Max concurrent symbols: 1. Ticks with both names open: 0.**
-
-At these prices a 1% / 1.5% lot is about two-thirds of the book (first fill: 217 AAPL × $306.35 ≈ $66,478). The second name cannot open until the first lot is flat. That is why this month is almost entirely MSFT after the opening AAPL take.
-
-Daily P&L in the tables below is **realized** (sum of trades whose exit falls on that NY date) as a percent of the $100k start. Equity EOD is mark-to-market and can move on days with 0 closed trades.
-
-## Weekly
+### Weekly
 
 | Week | Trades | Win rate | P&L $ | P&L % | Equity EOW |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 2026-W32 (2026-08-03 → 2026-08-07) | 1 | 100.00% | $1,996.57 | 2.00% | $102,903.51 |
-| 2026-W33 (2026-08-10 → 2026-08-14) | 2 | 50.00% | $998.52 | 1.00% | $102,657.38 |
-| 2026-W34 (2026-08-17 → 2026-08-21) | 1 | 0.00% | $-1,050.45 | -1.05% | $102,222.06 |
-| 2026-W35 (2026-08-24 → 2026-08-28) | 2 | 100.00% | $4,118.92 | 4.12% | $106,063.56 |
-| 2026-W36 (2026-08-31 → 2026-08-31) | 1 | 0.00% | $-560.97 | -0.56% | $105,502.59 |
+| 2026-W32 (2026-08-03 → 2026-08-07) | 5 | 80.00% | $1,146.80 | 1.15% | $101,146.80 |
+| 2026-W33 (2026-08-10 → 2026-08-14) | 3 | 33.33% | $-455.15 | -0.46% | $100,691.65 |
+| 2026-W34 (2026-08-17 → 2026-08-21) | 4 | 75.00% | $362.89 | 0.36% | $101,054.55 |
+| 2026-W35 (2026-08-24 → 2026-08-28) | 5 | 80.00% | $1,967.94 | 1.97% | $103,022.49 |
+| 2026-W36 (2026-08-31 → 2026-08-31) | 0 | n/a | $0.00 | 0.00% | $103,022.49 |
 
-## Daily
+### Daily
 
 | Date | Trades | Wins | Losses | P&L $ | P&L % | Equity EOD |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2026-08-03 | 0 | 0 | 0 | $0.00 | 0.00% | $99,331.64 |
-| 2026-08-04 | 0 | 0 | 0 | $0.00 | 0.00% | $100,659.68 |
-| 2026-08-05 | 0 | 0 | 0 | $0.00 | 0.00% | $100,991.69 |
-| 2026-08-06 | 1 | 1 | 0 | $1,996.57 | 2.00% | $102,899.40 |
-| 2026-08-07 | 0 | 0 | 0 | $0.00 | 0.00% | $102,903.51 |
-| 2026-08-10 | 1 | 1 | 0 | $2,025.23 | 2.03% | $104,127.97 |
-| 2026-08-11 | 0 | 0 | 0 | $0.00 | 0.00% | $103,832.05 |
-| 2026-08-12 | 1 | 0 | 1 | $-1,026.71 | -1.03% | $102,995.09 |
-| 2026-08-13 | 0 | 0 | 0 | $0.00 | 0.00% | $102,847.81 |
-| 2026-08-14 | 0 | 0 | 0 | $0.00 | 0.00% | $102,657.38 |
-| 2026-08-17 | 1 | 0 | 1 | $-1,050.45 | -1.05% | $101,944.64 |
-| 2026-08-18 | 0 | 0 | 0 | $0.00 | 0.00% | $102,021.83 |
-| 2026-08-19 | 0 | 0 | 0 | $0.00 | 0.00% | $102,381.39 |
-| 2026-08-20 | 0 | 0 | 0 | $0.00 | 0.00% | $101,944.14 |
-| 2026-08-21 | 0 | 0 | 0 | $0.00 | 0.00% | $102,222.06 |
-| 2026-08-24 | 0 | 0 | 0 | $0.00 | 0.00% | $102,784.64 |
-| 2026-08-25 | 0 | 0 | 0 | $0.00 | 0.00% | $103,371.21 |
-| 2026-08-26 | 1 | 1 | 0 | $2,033.70 | 2.03% | $104,223.34 |
-| 2026-08-27 | 0 | 0 | 0 | $0.00 | 0.00% | $105,442.74 |
-| 2026-08-28 | 1 | 1 | 0 | $2,085.22 | 2.09% | $106,063.56 |
-| 2026-08-31 | 1 | 0 | 1 | $-560.97 | -0.56% | $105,502.59 |
+| 2026-08-03 | 1 | 0 | 1 | $-668.36 | -0.67% | $99,331.64 |
+| 2026-08-04 | 1 | 1 | 0 | $233.16 | 0.23% | $99,564.80 |
+| 2026-08-05 | 1 | 1 | 0 | $442.98 | 0.44% | $100,007.78 |
+| 2026-08-06 | 1 | 1 | 0 | $889.65 | 0.89% | $100,897.43 |
+| 2026-08-07 | 1 | 1 | 0 | $249.37 | 0.25% | $101,146.80 |
+| 2026-08-10 | 1 | 1 | 0 | $103.07 | 0.10% | $101,249.88 |
+| 2026-08-11 | 0 | 0 | 0 | $0.00 | 0.00% | $101,249.88 |
+| 2026-08-12 | 0 | 0 | 0 | $0.00 | 0.00% | $101,249.88 |
+| 2026-08-13 | 1 | 0 | 1 | $-145.13 | -0.15% | $101,104.75 |
+| 2026-08-14 | 1 | 0 | 1 | $-413.10 | -0.41% | $100,691.65 |
+| 2026-08-17 | 0 | 0 | 0 | $0.00 | 0.00% | $100,691.65 |
+| 2026-08-18 | 1 | 1 | 0 | $76.10 | 0.08% | $100,767.75 |
+| 2026-08-19 | 1 | 1 | 0 | $1,115.42 | 1.12% | $101,883.18 |
+| 2026-08-20 | 1 | 0 | 1 | $-1,016.28 | -1.02% | $100,866.89 |
+| 2026-08-21 | 1 | 1 | 0 | $187.65 | 0.19% | $101,054.55 |
+| 2026-08-24 | 1 | 0 | 1 | $-172.80 | -0.17% | $100,881.75 |
+| 2026-08-25 | 1 | 1 | 0 | $371.95 | 0.37% | $101,253.70 |
+| 2026-08-26 | 1 | 1 | 0 | $702.00 | 0.70% | $101,955.70 |
+| 2026-08-27 | 1 | 1 | 0 | $513.00 | 0.51% | $102,468.70 |
+| 2026-08-28 | 1 | 1 | 0 | $553.78 | 0.55% | $103,022.49 |
+| 2026-08-31 | 0 | 0 | 0 | $0.00 | 0.00% | $103,022.49 |
 
-## Trade blotter (1% risk)
 
-Times are UTC as stored by the engine (EDT = UTC−4 in August). Qty is recalculated from equity at the signal.
+## Assumptions
 
-| Symbol | Qty | Entry (UTC) | Entry $ | Exit (UTC) | Exit $ | P&L $ | Reason |
-| --- | ---: | --- | ---: | --- | ---: | ---: | --- |
-| AAPL | 217 | 2026-08-03 16:30Z | 306.3500 | 2026-08-06 13:45Z | 315.5508 | +1,996.57 | take |
-| MSFT | 137 | 2026-08-06 13:45Z | 493.2700 | 2026-08-10 13:45Z | 508.0527 | +2,025.23 | take |
-| MSFT | 137 | 2026-08-10 13:45Z | 505.1950 | 2026-08-12 13:45Z | 497.7008 | −1,026.71 | stop |
-| MSFT | 137 | 2026-08-13 13:45Z | 497.8850 | 2026-08-17 13:45Z | 490.2175 | −1,050.45 | stop |
-| MSFT | 141 | 2026-08-18 14:15Z | 481.3825 | 2026-08-26 14:00Z | 495.8059 | +2,033.70 | take |
-| MSFT | 140 | 2026-08-26 16:15Z | 494.4200 | 2026-08-28 13:45Z | 509.3144 | +2,085.22 | take |
-| MSFT | 138 | 2026-08-31 17:00Z | 511.3850 | 2026-08-31 20:00Z | 507.3200 | −560.97 | eod |
-
-First lot check: `floor(100000 / (1.5 * 306.35)) = floor(217.615) = 217`. Later MSFT sizes move with equity (137 → 141 → 140 → 138).
-
-The August 31 MSFT long was still open at the 16:00 ET close and was flattened there (`eod`), not at the 1.5% stop.
-
-## Same month, old fixed 10-share sizing
-
-Same tape, same window, same entry/exit (`config/ema9_trend_bracket.example.yaml`). Only the share count changes.
-
-| | 1% risk | 10 shares |
-| --- | ---: | ---: |
-| Trades | 7 (AAPL 1 / MSFT 6) | 11 (AAPL 5 / MSFT 6) |
-| Win rate | 57.14% | 54.55% |
-| Total P&L | **$5,502.59** (5.503%) | **$430.47** (0.430%) |
-| Max DD | $3,282.83 (3.13%) | $251.10 (0.25%) |
-| Ending equity | $105,502.59 | $100,430.47 |
-| Avg win / avg loss | $2,035.18 / $-879.38 | $119.52 / $-57.34 |
-| Exits | take 4, stop 2, eod 1 | take 6, stop 4, eod 1 |
-| Both names open | never (22 cash skips) | yes (max 2; 7 ticks) |
-| Best / worst day | Aug 28 $2,085.22 / Aug 17 $-1,050.45 | Aug 28 $242.40 / Aug 17 $-76.68 |
-
-The 10-share book took the same six MSFT swings plus four extra AAPL fills the risk book could not fund, and it also got the Aug 3 MSFT entry while AAPL was already open. Dollar P&L is larger on the risk book because each lot is ~14–22× the 10-share notional; drawdown scales the same way. This is one month on two names, not a robustness study.
-
-## Assumptions (engine)
-
-- Signals use the live `evaluate_rule` path (same EMA-cross / SMA / RSI detectors).
-- Entries fill at the next 15m open. Stop/take are computed from the signal-bar close. Same-bar stop+take → stop. A gap through a level fills at the open.
-- One lot per symbol; no pyramiding.
-- $0 commission / 0% slippage.
-- Open lots still on the last August bar flatten at that close (`eod`).
+- CLI trade window 2026-08-01T04:00:00+00:00 → 2026-09-01T04:00:00+00:00 (America/New_York date bounds; prior bars used only for warmup).
+- Signals come from the live evaluate_rule path (same pattern/SMA/EMA/RSI/volume/MA-cross detectors).
+- A rule is evaluated when any of its referenced timeframes prints a newly closed bar.
+- Entries and close-signals fill at the next bar open of the finest rule timeframe.
+- Stop/take are computed from the signal-bar close (same as live bracket_prices; action.exit: fixed_bracket, default). Set action.exit: ema_invalid to hold until a signal-timeframe close is on the wrong side of EMA (long: close < EMA; exit at that close).
+- If stop and take (or EMA-invalidation) both trade in the fill bar, the stop is assumed to fill first.
+- A gap through stop/take fills at that bar's open. EMA-invalidation fills at the invalidating close.
+- One open lot per symbol (no pyramiding). A second signal while that symbol is already open is skipped.
+- A second symbol may open at the same time when cash covers its sized notional; otherwise the later signal is skipped (insufficient_cash).
+- Open lots still on the last bar are flattened at the last close (exit reason eod).
+- Session gates (America/New_York): entry_cutoff=13:00 skips a signal when the next-bar fill (bar open) is at/after that clock. flatten_by=15:55 force-flats at the close of the bar that contains that clock (exit reason session_flatten): 15m RTH bars opening :00,:15,:30,:45 flatten on the 15:45 ET bar close when flatten_by is 15:55 (last regular 15m bar, aligned with “by 15:55”); 5m flattens on the 15:50 ET bar close (last 5m bar that completes at/before 15:55). Stop/take/ema_invalid on that bar still win if they hit first. Set entry_cutoff / flatten_by to null to restore overnight holds.
+- Regular-session Yahoo bars when the source is Yahoo (includePrePost=false), unadjusted OHLC.
+- commission=$0.00/fill, slippage=0.0%
+- Starting equity $100,000.00. Size types: shares, percent_equity, or risk_pct (shares = floor((equity_risk * equity) / ((stop_pct/100) * price))).

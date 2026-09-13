@@ -51,6 +51,9 @@ def test_ema9_trend_config_loads():
     assert pairs == {("AAPL", "15Min"), ("MSFT", "15Min"), ("SOXL", "15Min")}
     assert cfg.settings.timeframe == "15Min"
     assert cfg.universe == ["AAPL", "MSFT", "SOXL"]
+    assert cfg.settings.session_timezone == "America/New_York"
+    assert cfg.settings.entry_cutoff == "13:00"
+    assert cfg.settings.flatten_by == "15:55"
 
 
 def test_ema9_trend_risk_config_loads():
@@ -65,6 +68,8 @@ def test_ema9_trend_risk_config_loads():
     assert rule.action.size.type == "risk_pct"
     assert rule.action.size.equity_risk == 0.01
     assert rule.action.size.stop_pct == 1.5
+    assert cfg.settings.entry_cutoff == "13:00"
+    assert cfg.settings.flatten_by == "15:55"
     assert cfg.all_symbol_timeframes() == {("AAPL", "15Min"), ("MSFT", "15Min")}
 
 
@@ -74,6 +79,17 @@ def test_ema9_trend_bracket_config_keeps_ten_shares():
     assert cfg.rules[0].action.size and cfg.rules[0].action.size.type == "shares"
     assert cfg.rules[0].action.size.value == 10
     assert cfg.rules[0].action.exit == "fixed_bracket"
+    assert cfg.settings.entry_cutoff == "13:00"
+    assert cfg.settings.flatten_by == "15:55"
+
+
+def test_ema9_trend_overnight_config_disables_session_gates():
+    cfg = load_config("config/ema9_trend_bracket_overnight.example.yaml")
+    assert cfg.universe == ["AAPL", "MSFT"]
+    assert cfg.rules[0].action.size and cfg.rules[0].action.size.value == 10
+    assert cfg.settings.entry_cutoff is None
+    assert cfg.settings.flatten_by is None
+    assert cfg.settings.session_timezone == "America/New_York"
 
 
 def test_ema9_trend_5m_config_loads():
@@ -83,6 +99,8 @@ def test_ema9_trend_5m_config_loads():
     assert cfg.rules[0].action.exit == "ema_invalid"
     assert cfg.rules[2].action.exit == "fixed_bracket"
     assert cfg.settings.timeframe == "5Min"
+    assert cfg.settings.entry_cutoff == "13:00"
+    assert cfg.settings.flatten_by == "15:55"
     assert cfg.all_symbol_timeframes() == {("AAPL", "5Min"), ("MSFT", "5Min"), ("SOXL", "5Min")}
     for rule in cfg.rules:
         assert condition_timeframes(rule.when) == {"5Min"}
@@ -92,6 +110,8 @@ def test_with_timeframe_rewrites_ema9_conditions_and_keeps_cooldown():
     cfg = load_config("config/ema9_trend.example.yaml")
     five = with_timeframe(cfg, "5m")
     assert five.settings.timeframe == "5Min"
+    assert five.settings.entry_cutoff == cfg.settings.entry_cutoff
+    assert five.settings.flatten_by == cfg.settings.flatten_by
     assert five.all_symbol_timeframes() == {("AAPL", "5Min"), ("MSFT", "5Min"), ("SOXL", "5Min")}
     assert [r.cooldown_minutes for r in five.rules] == [60, 60, 60]
     assert [r.id for r in five.rules] == [r.id for r in cfg.rules]
@@ -149,6 +169,8 @@ def test_cli_validate_timeframe_override(capsys):
     assert "tf=5Min" in out
     assert "cooldown=60m" in out
     assert "exit=ema_invalid" in out
+    assert "entry_cutoff=13:00" in out
+    assert "flatten_by=15:55" in out
 
 
 def test_ema_cross_yaml_parses_and_does_not_steal_level_ema():

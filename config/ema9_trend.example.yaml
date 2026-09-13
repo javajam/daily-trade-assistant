@@ -9,6 +9,10 @@
 #   action.exit: ema_invalid     # this file's default
 #   action.exit: fixed_bracket   # restore percent stop/take (set stop_loss_pct / take_profit_pct)
 #
+# Session gates (America/New_York): no new fills at/after 13:00; force-flat at
+# the 15:45 ET 15m bar close (last regular 15m bar, aligned with flatten_by 15:55).
+# Set entry_cutoff / flatten_by to null to restore overnight holds.
+#
 # Bar size is parameterized: settings.timeframe (or --timeframe on the CLI)
 # rewrites every condition. Default here is 15m. Same book on 5m:
 #
@@ -44,6 +48,9 @@ settings:
   data_feed: iex
   lookback_bars: 80
   timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "13:00"
+  flatten_by: "15:55"
 
 universe:
   - AAPL

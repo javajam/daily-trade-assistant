@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-13T16:47:14.864548Z",
+  "generated_at": "2026-09-13T17:14:21.160409Z",
   "config": "config/ema9_trend_risk.example.yaml",
   "configs": [
     "config/ema9_trend_risk.example.yaml"
@@ -26,6 +26,7 @@
     "One open lot per symbol (no pyramiding). A second signal while that symbol is already open is skipped.",
     "A second symbol may open at the same time when cash covers its sized notional; otherwise the later signal is skipped (insufficient_cash).",
     "Open lots still on the last bar are flattened at the last close (exit reason eod).",
+    "Session gates (America/New_York): entry_cutoff=13:00 skips a signal when the next-bar fill (bar open) is at/after that clock. flatten_by=15:55 force-flats at the close of the bar that contains that clock (exit reason session_flatten): 15m RTH bars opening :00,:15,:30,:45 flatten on the 15:45 ET bar close when flatten_by is 15:55 (last regular 15m bar, aligned with \u201cby 15:55\u201d); 5m flattens on the 15:50 ET bar close (last 5m bar that completes at/before 15:55). Stop/take/ema_invalid on that bar still win if they hit first. Set entry_cutoff / flatten_by to null to restore overnight holds.",
     "Regular-session Yahoo bars when the source is Yahoo (includePrePost=false), unadjusted OHLC.",
     "commission=$0.00/fill, slippage=0.0%",
     "Starting equity $100,000.00. Size types: shares, percent_equity, or risk_pct (shares = floor((equity_risk * equity) / ((stop_pct/100) * price)))."
@@ -40,42 +41,42 @@
   "comparison": [
     {
       "rank": 1,
-      "label": "15m ema9_trend",
-      "trades": 7,
-      "win_rate_pct": 57.14285714285714,
-      "total_pnl": 5502.588038787859,
-      "total_pnl_pct": 5.502588038787859,
-      "max_drawdown": 3282.8318428039493,
-      "max_drawdown_pct": 3.126125578696269,
-      "avg_win": 2035.1784872436563,
-      "avg_loss": -879.3753033955887,
+      "label": "15m combined (cutoff 13:00, flat 15:55)",
+      "trades": 17,
+      "win_rate_pct": 70.58823529411765,
+      "total_pnl": 3022.487863006591,
+      "total_pnl_pct": 3.022487863006591,
+      "max_drawdown": 1663.566366729734,
+      "max_drawdown_pct": 1.626228591040471,
+      "avg_win": 453.1798146565755,
+      "avg_loss": -483.13398257446306,
       "period_start": "2026-08-01T04:00:00Z",
       "period_end": "2026-09-01T03:59:59.999999Z",
       "data_source": "Yahoo Finance v8 chart (unadjusted regular-session OHLC)",
-      "caveat": "small sample (7 trades); ~31 calendar days"
+      "caveat": "small sample (17 trades); ~31 calendar days"
     }
   ],
   "trade_start": "2026-08-01T04:00:00+00:00",
   "trade_end": "2026-09-01T04:00:00+00:00",
   "runs": [
     {
-      "label": "15m ema9_trend",
+      "label": "15m combined (cutoff 13:00, flat 15:55)",
       "report": {
-        "rule_id": "15m ema9_trend",
+        "rule_id": "15m combined (cutoff 13:00, flat 15:55)",
         "signals": 58,
-        "trades": 7,
-        "wins": 4,
-        "losses": 3,
+        "trades": 17,
+        "wins": 12,
+        "losses": 5,
         "breakeven": 0,
-        "win_rate_pct": 57.14285714285714,
-        "total_pnl": 5502.588038787859,
-        "total_pnl_pct": 5.502588038787859,
-        "avg_win": 2035.1784872436563,
-        "avg_loss": -879.3753033955887,
-        "max_drawdown": 3282.8318428039493,
-        "max_drawdown_pct": 3.126125578696269,
+        "win_rate_pct": 70.58823529411765,
+        "total_pnl": 3022.487863006591,
+        "total_pnl_pct": 3.022487863006591,
+        "avg_win": 453.1798146565755,
+        "avg_loss": -483.13398257446306,
+        "max_drawdown": 1663.566366729734,
+        "max_drawdown_pct": 1.626228591040471,
         "starting_equity": 100000.0,
-        "ending_equity": 105502.58803878789,
+        "ending_equity": 103022.4878630066,
         "period_start": "2026-08-01T04:00:00Z",
         "period_end": "2026-09-01T03:59:59.999999Z",
         "data_source": "Yahoo Finance v8 chart (unadjusted regular-session OHLC)",
@@ -89,26 +90,35 @@
           "One open lot per symbol (no pyramiding). A second signal while that symbol is already open is skipped.",
           "A second symbol may open at the same time when cash covers its sized notional; otherwise the later signal is skipped (insufficient_cash).",
           "Open lots still on the last bar are flattened at the last close (exit reason eod).",
+          "Session gates (America/New_York): entry_cutoff=13:00 skips a signal when the next-bar fill (bar open) is at/after that clock. flatten_by=15:55 force-flats at the close of the bar that contains that clock (exit reason session_flatten): 15m RTH bars opening :00,:15,:30,:45 flatten on the 15:45 ET bar close when flatten_by is 15:55 (last regular 15m bar, aligned with \u201cby 15:55\u201d); 5m flattens on the 15:50 ET bar close (last 5m bar that completes at/before 15:55). Stop/take/ema_invalid on that bar still win if they hit first. Set entry_cutoff / flatten_by to null to restore overnight holds.",
           "Regular-session Yahoo bars when the source is Yahoo (includePrePost=false), unadjusted OHLC.",
           "commission=$0.00/fill, slippage=0.0%",
           "Starting equity $100,000.00. Size types: shares, percent_equity, or risk_pct (shares = floor((equity_risk * equity) / ((stop_pct/100) * price))).",
+          "All sample rules on one book. Close signals flatten longs from the entry rules. This is not the sum of the isolated books (shared one-lot-per-symbol constraint).",
+          "Session gates (America/New_York): entry_cutoff=13:00 (skip signals whose next-bar fill is at/after that clock); flatten_by=15:55 (force flat at the close of the bar containing that clock: 15m RTH \u2192 15:45 ET bar close when flatten_by is 15:55; 5m RTH \u2192 15:50 ET bar close, the last 5m bar that completes at/before 15:55).",
+          "17 signal(s) skipped as entry_cutoff (13:00 America/New_York; fill would be at/after the cutoff).",
+          "16 trade(s) exited as session_flatten (time-exit at the flatten bar close; flatten_by 15:55 America/New_York).",
           "Trade window 2026-08-01T04:00:00Z \u2192 2026-09-01T04:00:00Z (prior bars kept for indicator warmup; no new entries outside the window).",
           "Downloaded tape span 2026-06-17T13:30:00Z \u2192 2026-09-11T19:45:00Z.",
           "One lot per symbol; both names may be open at once if cash covers the second risk-sized entry, otherwise the later signal is skipped. Max concurrent symbols this run: 1. Ticks with 2+ names open: 0.",
-          "22 signal(s) skipped at size time for insufficient cash."
+          "7 signal(s) skipped at size time for insufficient cash."
         ],
         "exit_reasons": {
-          "take": 4,
-          "stop": 2,
-          "eod": 1
+          "session_flatten": 16,
+          "stop": 1
+        },
+        "skip_reasons": {
+          "already_in_position": 17,
+          "entry_cutoff": 17,
+          "insufficient_cash": 7
         },
         "signals_by_symbol": {
           "AAPL": 26,
           "MSFT": 32
         },
         "trades_by_symbol": {
-          "AAPL": 1,
-          "MSFT": 6
+          "AAPL": 8,
+          "MSFT": 9
         }
       },
       "bars_used": {
@@ -126,102 +136,252 @@
           "side": "buy",
           "entry_time": "2026-08-03T16:30:00Z",
           "entry_price": 306.3500061035156,
-          "exit_time": "2026-08-06T13:45:00Z",
-          "exit_price": 315.5507849121094,
-          "pnl": 1996.5690014648508,
-          "pnl_pct": 3.003355190234545,
-          "exit_reason": "take",
+          "exit_time": "2026-08-03T20:00:00Z",
+          "exit_price": 303.2699890136719,
+          "pnl": -668.3637084960938,
+          "pnl_pct": -1.0053915549141568,
+          "exit_reason": "session_flatten",
           "signal_time": "2026-08-03T16:30:00Z",
           "entry_rule_id": "ema9_trend"
         },
         {
           "rule_id": "ema9_trend",
           "symbol": "MSFT",
-          "qty": 137.0,
+          "qty": 134.0,
           "side": "buy",
-          "entry_time": "2026-08-06T13:45:00Z",
-          "entry_price": 493.2699890136719,
-          "exit_time": "2026-08-10T13:45:00Z",
-          "exit_price": 508.0526550292969,
-          "pnl": 2025.2252441406265,
-          "pnl_pct": 2.996871154716709,
-          "exit_reason": "take",
-          "signal_time": "2026-08-06T13:45:00Z",
+          "entry_time": "2026-08-04T14:00:00Z",
+          "entry_price": 491.0799865722656,
+          "exit_time": "2026-08-04T20:00:00Z",
+          "exit_price": 492.82000732421875,
+          "pnl": 233.16278076171875,
+          "pnl_pct": 0.35432532368066066,
+          "exit_reason": "session_flatten",
+          "signal_time": "2026-08-04T14:00:00Z",
+          "entry_rule_id": "ema9_trend"
+        },
+        {
+          "rule_id": "ema9_trend",
+          "symbol": "AAPL",
+          "qty": 214.0,
+          "side": "buy",
+          "entry_time": "2026-08-05T14:45:00Z",
+          "entry_price": 308.8500061035156,
+          "exit_time": "2026-08-05T20:00:00Z",
+          "exit_price": 310.9200134277344,
+          "pnl": 442.9815673828125,
+          "pnl_pct": 0.6702306243519893,
+          "exit_reason": "session_flatten",
+          "signal_time": "2026-08-05T14:45:00Z",
           "entry_rule_id": "ema9_trend"
         },
         {
           "rule_id": "ema9_trend",
           "symbol": "MSFT",
-          "qty": 137.0,
+          "qty": 135.0,
+          "side": "buy",
+          "entry_time": "2026-08-06T13:45:00Z",
+          "entry_price": 493.2699890136719,
+          "exit_time": "2026-08-06T20:00:00Z",
+          "exit_price": 499.8599853515625,
+          "pnl": 889.6495056152344,
+          "pnl_pct": 1.3359816093956551,
+          "exit_reason": "session_flatten",
+          "signal_time": "2026-08-06T13:45:00Z",
+          "entry_rule_id": "ema9_trend"
+        },
+        {
+          "rule_id": "ema9_trend",
+          "symbol": "AAPL",
+          "qty": 215.0,
+          "side": "buy",
+          "entry_time": "2026-08-07T14:15:00Z",
+          "entry_price": 312.1401062011719,
+          "exit_time": "2026-08-07T20:00:00Z",
+          "exit_price": 313.29998779296875,
+          "pnl": 249.37454223632812,
+          "pnl_pct": 0.37159005483561297,
+          "exit_reason": "session_flatten",
+          "signal_time": "2026-08-07T14:15:00Z",
+          "entry_rule_id": "ema9_trend"
+        },
+        {
+          "rule_id": "ema9_trend",
+          "symbol": "MSFT",
+          "qty": 133.0,
           "side": "buy",
           "entry_time": "2026-08-10T13:45:00Z",
           "entry_price": 505.19500732421875,
-          "exit_time": "2026-08-12T13:45:00Z",
-          "exit_price": 497.70079879760743,
-          "pnl": -1026.7065681457505,
-          "pnl_pct": -1.4834288577602197,
-          "exit_reason": "stop",
+          "exit_time": "2026-08-10T20:00:00Z",
+          "exit_price": 505.9700012207031,
+          "pnl": 103.07418823242188,
+          "pnl_pct": 0.1534049001373063,
+          "exit_reason": "session_flatten",
           "signal_time": "2026-08-10T13:45:00Z",
           "entry_rule_id": "ema9_trend"
         },
         {
           "rule_id": "ema9_trend",
           "symbol": "MSFT",
-          "qty": 137.0,
+          "qty": 135.0,
           "side": "buy",
           "entry_time": "2026-08-13T13:45:00Z",
           "entry_price": 497.885009765625,
-          "exit_time": "2026-08-17T13:45:00Z",
-          "exit_price": 490.2174987792969,
-          "pnl": -1050.4490051269531,
-          "pnl_pct": -1.5400164367144813,
-          "exit_reason": "stop",
+          "exit_time": "2026-08-13T20:00:00Z",
+          "exit_price": 496.80999755859375,
+          "pnl": -145.12664794921875,
+          "pnl_pct": -0.2159157608575728,
+          "exit_reason": "session_flatten",
           "signal_time": "2026-08-13T13:45:00Z",
           "entry_rule_id": "ema9_trend"
         },
         {
           "rule_id": "ema9_trend",
           "symbol": "MSFT",
-          "qty": 141.0,
+          "qty": 135.0,
+          "side": "buy",
+          "entry_time": "2026-08-14T14:00:00Z",
+          "entry_price": 498.4800109863281,
+          "exit_time": "2026-08-14T20:00:00Z",
+          "exit_price": 495.4200134277344,
+          "pnl": -413.09967041015625,
+          "pnl_pct": -0.613865649805901,
+          "exit_reason": "session_flatten",
+          "signal_time": "2026-08-14T14:00:00Z",
+          "entry_rule_id": "ema9_trend"
+        },
+        {
+          "rule_id": "ema9_trend",
+          "symbol": "MSFT",
+          "qty": 139.0,
           "side": "buy",
           "entry_time": "2026-08-18T14:15:00Z",
           "entry_price": 481.38250732421875,
-          "exit_time": "2026-08-26T14:00:00Z",
-          "exit_price": 495.8059399414063,
-          "pnl": 2033.7039990234416,
-          "pnl_pct": 2.996251919780109,
-          "exit_reason": "take",
+          "exit_time": "2026-08-18T20:00:00Z",
+          "exit_price": 481.92999267578125,
+          "pnl": 76.1004638671875,
+          "pnl_pct": 0.11373187501259989,
+          "exit_reason": "session_flatten",
           "signal_time": "2026-08-18T14:15:00Z",
           "entry_rule_id": "ema9_trend"
         },
         {
           "rule_id": "ema9_trend",
-          "symbol": "MSFT",
-          "qty": 140.0,
+          "symbol": "AAPL",
+          "qty": 215.0,
           "side": "buy",
-          "entry_time": "2026-08-26T16:15:00Z",
-          "entry_price": 494.4200134277344,
-          "exit_time": "2026-08-28T13:45:00Z",
-          "exit_price": 509.314411315918,
-          "pnl": 2085.2157043457064,
-          "pnl_pct": 3.012498985411847,
-          "exit_reason": "take",
-          "signal_time": "2026-08-26T16:15:00Z",
+          "entry_time": "2026-08-19T13:45:00Z",
+          "entry_price": 311.6919860839844,
+          "exit_time": "2026-08-19T20:00:00Z",
+          "exit_price": 316.8800048828125,
+          "pnl": 1115.4240417480469,
+          "pnl_pct": 1.664469742712676,
+          "exit_reason": "session_flatten",
+          "signal_time": "2026-08-19T13:45:00Z",
+          "entry_rule_id": "ema9_trend"
+        },
+        {
+          "rule_id": "ema9_trend",
+          "symbol": "AAPL",
+          "qty": 213.0,
+          "side": "buy",
+          "entry_time": "2026-08-20T15:00:00Z",
+          "entry_price": 317.42999267578125,
+          "exit_time": "2026-08-20T20:00:00Z",
+          "exit_price": 312.65871322631835,
+          "pnl": -1016.2825227355967,
+          "pnl_pct": -1.5030966069851552,
+          "exit_reason": "stop",
+          "signal_time": "2026-08-20T15:00:00Z",
           "entry_rule_id": "ema9_trend"
         },
         {
           "rule_id": "ema9_trend",
           "symbol": "MSFT",
-          "qty": 138.0,
+          "qty": 139.0,
           "side": "buy",
-          "entry_time": "2026-08-31T17:00:00Z",
-          "entry_price": 511.385009765625,
-          "exit_time": "2026-08-31T20:00:00Z",
-          "exit_price": 507.32000732421875,
-          "pnl": -560.9703369140625,
-          "pnl_pct": -0.7949005864034415,
-          "exit_reason": "eod",
-          "signal_time": "2026-08-31T17:00:00Z",
+          "entry_time": "2026-08-21T13:45:00Z",
+          "entry_price": 482.0,
+          "exit_time": "2026-08-21T20:00:00Z",
+          "exit_price": 483.3500061035156,
+          "pnl": 187.65084838867188,
+          "pnl_pct": 0.28008425384141594,
+          "exit_reason": "session_flatten",
+          "signal_time": "2026-08-21T13:45:00Z",
+          "entry_rule_id": "ema9_trend"
+        },
+        {
+          "rule_id": "ema9_trend",
+          "symbol": "AAPL",
+          "qty": 216.0,
+          "side": "buy",
+          "entry_time": "2026-08-24T13:45:00Z",
+          "entry_price": 311.1499938964844,
+          "exit_time": "2026-08-24T20:00:00Z",
+          "exit_price": 310.3500061035156,
+          "pnl": -172.79736328125,
+          "pnl_pct": -0.25710680014825765,
+          "exit_reason": "session_flatten",
+          "signal_time": "2026-08-24T13:45:00Z",
+          "entry_rule_id": "ema9_trend"
+        },
+        {
+          "rule_id": "ema9_trend",
+          "symbol": "MSFT",
+          "qty": 137.0,
+          "side": "buy",
+          "entry_time": "2026-08-25T13:45:00Z",
+          "entry_price": 488.7850036621094,
+          "exit_time": "2026-08-25T20:00:00Z",
+          "exit_price": 491.5,
+          "pnl": 371.9544982910156,
+          "pnl_pct": 0.5554581907278535,
+          "exit_reason": "session_flatten",
+          "signal_time": "2026-08-25T13:45:00Z",
+          "entry_rule_id": "ema9_trend"
+        },
+        {
+          "rule_id": "ema9_trend",
+          "symbol": "AAPL",
+          "qty": 217.0,
+          "side": "buy",
+          "entry_time": "2026-08-26T13:30:00Z",
+          "entry_price": 310.2449951171875,
+          "exit_time": "2026-08-26T20:00:00Z",
+          "exit_price": 313.4800109863281,
+          "pnl": 701.9984436035156,
+          "pnl_pct": 1.042729429984415,
+          "exit_reason": "session_flatten",
+          "signal_time": "2026-08-25T20:00:00Z",
+          "entry_rule_id": "ema9_trend"
+        },
+        {
+          "rule_id": "ema9_trend",
+          "symbol": "MSFT",
+          "qty": 135.0,
+          "side": "buy",
+          "entry_time": "2026-08-27T16:15:00Z",
+          "entry_price": 501.0799865722656,
+          "exit_time": "2026-08-27T20:00:00Z",
+          "exit_price": 504.8800048828125,
+          "pnl": 513.0024719238281,
+          "pnl_pct": 0.7583656127520945,
+          "exit_reason": "session_flatten",
+          "signal_time": "2026-08-27T16:15:00Z",
+          "entry_rule_id": "ema9_trend"
+        },
+        {
+          "rule_id": "ema9_trend",
+          "symbol": "AAPL",
+          "qty": 217.0,
+          "side": "buy",
+          "entry_time": "2026-08-28T13:30:00Z",
+          "entry_price": 317.0880126953125,
+          "exit_time": "2026-08-28T20:00:00Z",
+          "exit_price": 319.6400146484375,
+          "pnl": 553.784423828125,
+          "pnl_pct": 0.8048244812008076,
+          "exit_reason": "session_flatten",
+          "signal_time": "2026-08-27T20:00:00Z",
           "entry_rule_id": "ema9_trend"
         }
       ],
@@ -229,69 +389,69 @@
         "daily": [
           {
             "date": "2026-08-03",
-            "trades": 0,
+            "trades": 1,
             "wins": 0,
-            "losses": 0,
-            "pnl": 0,
-            "pnl_pct": 0.0,
+            "losses": 1,
+            "pnl": -668.3637084960938,
+            "pnl_pct": -0.6683637084960937,
             "equity_eod": 99331.6362915039,
             "equity_change": -668.3637084960938,
             "equity_change_pct": -0.6683637084960937
           },
           {
             "date": "2026-08-04",
-            "trades": 0,
-            "wins": 0,
+            "trades": 1,
+            "wins": 1,
             "losses": 0,
-            "pnl": 0,
-            "pnl_pct": 0.0,
-            "equity_eod": 100659.68185424805,
-            "equity_change": 1328.0455627441406,
-            "equity_change_pct": 1.336981461622949
+            "pnl": 233.16278076171875,
+            "pnl_pct": 0.23316278076171876,
+            "equity_eod": 99564.79907226562,
+            "equity_change": 233.16278076171875,
+            "equity_change_pct": 0.23473164186832365
           },
           {
             "date": "2026-08-05",
-            "trades": 0,
-            "wins": 0,
+            "trades": 1,
+            "wins": 1,
             "losses": 0,
-            "pnl": 0,
-            "pnl_pct": 0.0,
-            "equity_eod": 100991.69158935547,
-            "equity_change": 332.0097351074219,
-            "equity_change_pct": 0.3298338808463166
+            "pnl": 442.9815673828125,
+            "pnl_pct": 0.4429815673828125,
+            "equity_eod": 100007.78063964844,
+            "equity_change": 442.9815673828125,
+            "equity_change_pct": 0.4449178540111248
           },
           {
             "date": "2026-08-06",
             "trades": 1,
             "wins": 1,
             "losses": 0,
-            "pnl": 1996.5690014648508,
-            "pnl_pct": 1.996569001464851,
-            "equity_eod": 102899.39849975587,
-            "equity_change": 1907.706910400404,
-            "equity_change_pct": 1.8889741129967135
+            "pnl": 889.6495056152344,
+            "pnl_pct": 0.8896495056152344,
+            "equity_eod": 100897.43014526367,
+            "equity_change": 889.6495056152344,
+            "equity_change_pct": 0.8895802905784409
           },
           {
             "date": "2026-08-07",
-            "trades": 0,
-            "wins": 0,
+            "trades": 1,
+            "wins": 1,
             "losses": 0,
-            "pnl": 0,
-            "pnl_pct": 0.0,
-            "equity_eod": 102903.51251342775,
-            "equity_change": 4.114013671875,
-            "equity_change_pct": 0.003998093022754414
+            "pnl": 249.37454223632812,
+            "pnl_pct": 0.24937454223632813,
+            "equity_eod": 101146.8046875,
+            "equity_change": 249.37454223632812,
+            "equity_change_pct": 0.24715648543010416
           },
           {
             "date": "2026-08-10",
             "trades": 1,
             "wins": 1,
             "losses": 0,
-            "pnl": 2025.2252441406265,
-            "pnl_pct": 2.025225244140626,
-            "equity_eod": 104127.96840942385,
-            "equity_change": 1224.4558959960996,
-            "equity_change_pct": 1.1899068030708104
+            "pnl": 103.07418823242188,
+            "pnl_pct": 0.10307418823242188,
+            "equity_eod": 101249.87887573242,
+            "equity_change": 103.07418823242188,
+            "equity_change_pct": 0.10190553082806389
           },
           {
             "date": "2026-08-11",
@@ -300,163 +460,163 @@
             "losses": 0,
             "pnl": 0,
             "pnl_pct": 0.0,
-            "equity_eod": 103832.04790771486,
-            "equity_change": -295.9205017089844,
-            "equity_change_pct": -0.28418925887946433
+            "equity_eod": 101249.87887573242,
+            "equity_change": 0.0,
+            "equity_change_pct": 0.0
           },
           {
             "date": "2026-08-12",
-            "trades": 1,
+            "trades": 0,
             "wins": 0,
-            "losses": 1,
-            "pnl": -1026.7065681457505,
-            "pnl_pct": -1.0267065681457503,
-            "equity_eod": 102995.08767745974,
-            "equity_change": -836.9602302551211,
-            "equity_change_pct": -0.8060711958594952
+            "losses": 0,
+            "pnl": 0,
+            "pnl_pct": 0.0,
+            "equity_eod": 101249.87887573242,
+            "equity_change": 0.0,
+            "equity_change_pct": 0.0
           },
           {
             "date": "2026-08-13",
-            "trades": 0,
-            "wins": 0,
-            "losses": 0,
-            "pnl": 0,
-            "pnl_pct": 0.0,
-            "equity_eod": 102847.81100509646,
-            "equity_change": -147.27667236328125,
-            "equity_change_pct": -0.14299388027562449
-          },
-          {
-            "date": "2026-08-14",
-            "trades": 0,
-            "wins": 0,
-            "losses": 0,
-            "pnl": 0,
-            "pnl_pct": 0.0,
-            "equity_eod": 102657.38317916873,
-            "equity_change": -190.42782592773438,
-            "equity_change_pct": -0.18515496252836924
-          },
-          {
-            "date": "2026-08-17",
             "trades": 1,
             "wins": 0,
             "losses": 1,
-            "pnl": -1050.4490051269531,
-            "pnl_pct": -1.0504490051269533,
-            "equity_eod": 101944.63867233279,
-            "equity_change": -712.7445068359375,
-            "equity_change_pct": -0.6942944430913254
+            "pnl": -145.12664794921875,
+            "pnl_pct": -0.14512664794921876,
+            "equity_eod": 101104.7522277832,
+            "equity_change": -145.12664794921875,
+            "equity_change_pct": -0.14333513240775117
+          },
+          {
+            "date": "2026-08-14",
+            "trades": 1,
+            "wins": 0,
+            "losses": 1,
+            "pnl": -413.09967041015625,
+            "pnl_pct": -0.4130996704101562,
+            "equity_eod": 100691.65255737305,
+            "equity_change": -413.09967041015625,
+            "equity_change_pct": -0.40858580957645435
+          },
+          {
+            "date": "2026-08-17",
+            "trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "pnl": 0,
+            "pnl_pct": 0.0,
+            "equity_eod": 100691.65255737305,
+            "equity_change": 0.0,
+            "equity_change_pct": 0.0
           },
           {
             "date": "2026-08-18",
-            "trades": 0,
-            "wins": 0,
+            "trades": 1,
+            "wins": 1,
             "losses": 0,
-            "pnl": 0,
-            "pnl_pct": 0.0,
-            "equity_eod": 102021.8341069031,
-            "equity_change": 77.1954345703125,
-            "equity_change_pct": 0.0757228978155797
+            "pnl": 76.1004638671875,
+            "pnl_pct": 0.0761004638671875,
+            "equity_eod": 100767.75302124023,
+            "equity_change": 76.1004638671875,
+            "equity_change_pct": 0.07557772857469616
           },
           {
             "date": "2026-08-19",
-            "trades": 0,
-            "wins": 0,
+            "trades": 1,
+            "wins": 1,
             "losses": 0,
-            "pnl": 0,
-            "pnl_pct": 0.0,
-            "equity_eod": 102381.38668869021,
-            "equity_change": 359.5525817871094,
-            "equity_change_pct": 0.3524270906660567
+            "pnl": 1115.4240417480469,
+            "pnl_pct": 1.1154240417480468,
+            "equity_eod": 101883.17706298828,
+            "equity_change": 1115.4240417480469,
+            "equity_change_pct": 1.1069255871101276
           },
           {
             "date": "2026-08-20",
-            "trades": 0,
+            "trades": 1,
             "wins": 0,
-            "losses": 0,
-            "pnl": 0,
-            "pnl_pct": 0.0,
-            "equity_eod": 101944.14382980349,
-            "equity_change": -437.24285888671875,
-            "equity_change_pct": -0.4270726086336744
+            "losses": 1,
+            "pnl": -1016.2825227355967,
+            "pnl_pct": -1.0162825227355965,
+            "equity_eod": 100866.89454025269,
+            "equity_change": -1016.2825227355934,
+            "equity_change_pct": -0.9974978716135704
           },
           {
             "date": "2026-08-21",
-            "trades": 0,
-            "wins": 0,
+            "trades": 1,
+            "wins": 1,
             "losses": 0,
-            "pnl": 0,
-            "pnl_pct": 0.0,
-            "equity_eod": 102222.05600021365,
-            "equity_change": 277.91217041015625,
-            "equity_change_pct": 0.27261219719901975
+            "pnl": 187.65084838867188,
+            "pnl_pct": 0.18765084838867188,
+            "equity_eod": 101054.54538864136,
+            "equity_change": 187.65084838867188,
+            "equity_change_pct": 0.18603809430634005
           },
           {
             "date": "2026-08-24",
-            "trades": 0,
+            "trades": 1,
             "wins": 0,
-            "losses": 0,
-            "pnl": 0,
-            "pnl_pct": 0.0,
-            "equity_eod": 102784.64462326052,
-            "equity_change": 562.588623046875,
-            "equity_change_pct": 0.5503593305203127
+            "losses": 1,
+            "pnl": -172.79736328125,
+            "pnl_pct": -0.17279736328125,
+            "equity_eod": 100881.74802536011,
+            "equity_change": -172.79736328125,
+            "equity_change_pct": -0.1709941523329762
           },
           {
             "date": "2026-08-25",
-            "trades": 0,
-            "wins": 0,
+            "trades": 1,
+            "wins": 1,
             "losses": 0,
-            "pnl": 0,
-            "pnl_pct": 0.0,
-            "equity_eod": 103371.20513961794,
-            "equity_change": 586.5605163574219,
-            "equity_change_pct": 0.5706694015505515
+            "pnl": 371.9544982910156,
+            "pnl_pct": 0.3719544982910156,
+            "equity_eod": 101253.70252365113,
+            "equity_change": 371.9544982910156,
+            "equity_change_pct": 0.3687034627884442
           },
           {
             "date": "2026-08-26",
             "trades": 1,
             "wins": 1,
             "losses": 0,
-            "pnl": 2033.7039990234416,
-            "pnl_pct": 2.033703999023442,
-            "equity_eod": 104223.34267135624,
-            "equity_change": 852.1375317382917,
-            "equity_change_pct": 0.8243470999369266
+            "pnl": 701.9984436035156,
+            "pnl_pct": 0.7019984436035156,
+            "equity_eod": 101955.70096725464,
+            "equity_change": 701.9984436035156,
+            "equity_change_pct": 0.6933064432281287
           },
           {
             "date": "2026-08-27",
-            "trades": 0,
-            "wins": 0,
+            "trades": 1,
+            "wins": 1,
             "losses": 0,
-            "pnl": 0,
-            "pnl_pct": 0.0,
-            "equity_eod": 105442.74147506717,
-            "equity_change": 1219.3988037109375,
-            "equity_change_pct": 1.169986274145922
+            "pnl": 513.0024719238281,
+            "pnl_pct": 0.5130024719238281,
+            "equity_eod": 102468.70343917847,
+            "equity_change": 513.0024719238281,
+            "equity_change_pct": 0.5031621253710867
           },
           {
             "date": "2026-08-28",
             "trades": 1,
             "wins": 1,
             "losses": 0,
-            "pnl": 2085.2157043457064,
-            "pnl_pct": 2.0852157043457065,
-            "equity_eod": 106063.55837570195,
-            "equity_change": 620.8169006347744,
-            "equity_change_pct": 0.5887715853647183
+            "pnl": 553.784423828125,
+            "pnl_pct": 0.553784423828125,
+            "equity_eod": 103022.4878630066,
+            "equity_change": 553.784423828125,
+            "equity_change_pct": 0.5404425012138758
           },
           {
             "date": "2026-08-31",
-            "trades": 1,
+            "trades": 0,
             "wins": 0,
-            "losses": 1,
-            "pnl": -560.9703369140625,
-            "pnl_pct": -0.5609703369140625,
-            "equity_eod": 105502.58803878789,
-            "equity_change": -560.9703369140625,
-            "equity_change_pct": -0.5289001665651969
+            "losses": 0,
+            "pnl": 0,
+            "pnl_pct": 0.0,
+            "equity_eod": 103022.4878630066,
+            "equity_change": 0.0,
+            "equity_change_pct": 0.0
           }
         ],
         "weekly": [
@@ -464,81 +624,81 @@
             "week": "2026-W32 (2026-08-03 \u2192 2026-08-07)",
             "iso_year": 2026,
             "iso_week": 32,
-            "trades": 1,
-            "wins": 1,
-            "losses": 0,
-            "win_rate_pct": 100.0,
-            "pnl": 1996.5690014648508,
-            "pnl_pct": 1.996569001464851,
-            "equity": 102903.51251342775
+            "trades": 5,
+            "wins": 4,
+            "losses": 1,
+            "win_rate_pct": 80.0,
+            "pnl": 1146.8046875,
+            "pnl_pct": 1.1468046875,
+            "equity": 101146.8046875
           },
           {
             "week": "2026-W33 (2026-08-10 \u2192 2026-08-14)",
             "iso_year": 2026,
             "iso_week": 33,
-            "trades": 2,
+            "trades": 3,
             "wins": 1,
-            "losses": 1,
-            "win_rate_pct": 50.0,
-            "pnl": 998.518675994876,
-            "pnl_pct": 0.998518675994876,
-            "equity": 102657.38317916873
+            "losses": 2,
+            "win_rate_pct": 33.33333333333333,
+            "pnl": -455.1521301269531,
+            "pnl_pct": -0.4551521301269531,
+            "equity": 100691.65255737305
           },
           {
             "week": "2026-W34 (2026-08-17 \u2192 2026-08-21)",
             "iso_year": 2026,
             "iso_week": 34,
-            "trades": 1,
-            "wins": 0,
+            "trades": 4,
+            "wins": 3,
             "losses": 1,
-            "win_rate_pct": 0.0,
-            "pnl": -1050.4490051269531,
-            "pnl_pct": -1.0504490051269533,
-            "equity": 102222.05600021365
+            "win_rate_pct": 75.0,
+            "pnl": 362.8928312683096,
+            "pnl_pct": 0.36289283126830957,
+            "equity": 101054.54538864136
           },
           {
             "week": "2026-W35 (2026-08-24 \u2192 2026-08-28)",
             "iso_year": 2026,
             "iso_week": 35,
-            "trades": 2,
-            "wins": 2,
-            "losses": 0,
-            "win_rate_pct": 100.0,
-            "pnl": 4118.919703369148,
-            "pnl_pct": 4.118919703369148,
-            "equity": 106063.55837570195
+            "trades": 5,
+            "wins": 4,
+            "losses": 1,
+            "win_rate_pct": 80.0,
+            "pnl": 1967.9424743652344,
+            "pnl_pct": 1.9679424743652345,
+            "equity": 103022.4878630066
           },
           {
             "week": "2026-W36 (2026-08-31 \u2192 2026-08-31)",
             "iso_year": 2026,
             "iso_week": 36,
-            "trades": 1,
+            "trades": 0,
             "wins": 0,
-            "losses": 1,
-            "win_rate_pct": 0.0,
-            "pnl": -560.9703369140625,
-            "pnl_pct": -0.5609703369140625,
-            "equity": 105502.58803878789
+            "losses": 0,
+            "win_rate_pct": null,
+            "pnl": 0,
+            "pnl_pct": 0.0,
+            "equity": 103022.4878630066
           }
         ],
         "monthly": {
           "month": "2026-08",
-          "trades": 7,
-          "wins": 4,
-          "losses": 3,
-          "win_rate_pct": 57.14285714285714,
-          "total_pnl": 5502.588038787859,
-          "return_pct": 5.502588038787859,
+          "trades": 17,
+          "wins": 12,
+          "losses": 5,
+          "win_rate_pct": 70.58823529411765,
+          "total_pnl": 3022.487863006591,
+          "return_pct": 3.022487863006591,
           "starting_equity": 100000.0,
-          "ending_equity": 105502.58803878789,
+          "ending_equity": 103022.4878630066,
           "best_day": {
-            "date": "2026-08-28",
-            "pnl": 2085.2157043457064,
+            "date": "2026-08-19",
+            "pnl": 1115.4240417480469,
             "trades": 1
           },
           "worst_day": {
-            "date": "2026-08-17",
-            "pnl": -1050.4490051269531,
+            "date": "2026-08-20",
+            "pnl": -1016.2825227355967,
             "trades": 1
           },
           "session_days": 21
@@ -567,15 +727,15 @@
           "action_type": "buy",
           "signal_time": "2026-08-03T19:30:00Z",
           "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "skip_reason": "entry_cutoff"
         },
         {
           "rule_id": "ema9_trend",
           "symbol": "MSFT",
           "action_type": "buy",
           "signal_time": "2026-08-04T14:00:00Z",
-          "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "accepted": true,
+          "skip_reason": null
         },
         {
           "rule_id": "ema9_trend",
@@ -583,7 +743,7 @@
           "action_type": "buy",
           "signal_time": "2026-08-04T15:45:00Z",
           "accepted": false,
-          "skip_reason": "already_in_position"
+          "skip_reason": "insufficient_cash"
         },
         {
           "rule_id": "ema9_trend",
@@ -591,7 +751,7 @@
           "action_type": "buy",
           "signal_time": "2026-08-04T17:15:00Z",
           "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "skip_reason": "already_in_position"
         },
         {
           "rule_id": "ema9_trend",
@@ -599,15 +759,15 @@
           "action_type": "buy",
           "signal_time": "2026-08-04T19:30:00Z",
           "accepted": false,
-          "skip_reason": "already_in_position"
+          "skip_reason": "entry_cutoff"
         },
         {
           "rule_id": "ema9_trend",
           "symbol": "AAPL",
           "action_type": "buy",
           "signal_time": "2026-08-05T14:45:00Z",
-          "accepted": false,
-          "skip_reason": "already_in_position"
+          "accepted": true,
+          "skip_reason": null
         },
         {
           "rule_id": "ema9_trend",
@@ -631,7 +791,7 @@
           "action_type": "buy",
           "signal_time": "2026-08-05T18:15:00Z",
           "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "skip_reason": "entry_cutoff"
         },
         {
           "rule_id": "ema9_trend",
@@ -670,8 +830,8 @@
           "symbol": "AAPL",
           "action_type": "buy",
           "signal_time": "2026-08-07T14:15:00Z",
-          "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "accepted": true,
+          "skip_reason": null
         },
         {
           "rule_id": "ema9_trend",
@@ -687,7 +847,7 @@
           "action_type": "buy",
           "signal_time": "2026-08-11T18:45:00Z",
           "accepted": false,
-          "skip_reason": "already_in_position"
+          "skip_reason": "entry_cutoff"
         },
         {
           "rule_id": "ema9_trend",
@@ -710,8 +870,8 @@
           "symbol": "MSFT",
           "action_type": "buy",
           "signal_time": "2026-08-14T14:00:00Z",
-          "accepted": false,
-          "skip_reason": "already_in_position"
+          "accepted": true,
+          "skip_reason": null
         },
         {
           "rule_id": "ema9_trend",
@@ -743,7 +903,7 @@
           "action_type": "buy",
           "signal_time": "2026-08-14T17:45:00Z",
           "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "skip_reason": "entry_cutoff"
         },
         {
           "rule_id": "ema9_trend",
@@ -751,7 +911,7 @@
           "action_type": "buy",
           "signal_time": "2026-08-14T19:30:00Z",
           "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "skip_reason": "entry_cutoff"
         },
         {
           "rule_id": "ema9_trend",
@@ -775,7 +935,7 @@
           "action_type": "buy",
           "signal_time": "2026-08-18T18:15:00Z",
           "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "skip_reason": "entry_cutoff"
         },
         {
           "rule_id": "ema9_trend",
@@ -791,15 +951,15 @@
           "action_type": "buy",
           "signal_time": "2026-08-18T19:45:00Z",
           "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "skip_reason": "entry_cutoff"
         },
         {
           "rule_id": "ema9_trend",
           "symbol": "AAPL",
           "action_type": "buy",
           "signal_time": "2026-08-19T13:45:00Z",
-          "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "accepted": true,
+          "skip_reason": null
         },
         {
           "rule_id": "ema9_trend",
@@ -807,7 +967,7 @@
           "action_type": "buy",
           "signal_time": "2026-08-19T14:00:00Z",
           "accepted": false,
-          "skip_reason": "already_in_position"
+          "skip_reason": "insufficient_cash"
         },
         {
           "rule_id": "ema9_trend",
@@ -815,15 +975,15 @@
           "action_type": "buy",
           "signal_time": "2026-08-19T15:00:00Z",
           "accepted": false,
-          "skip_reason": "already_in_position"
+          "skip_reason": "insufficient_cash"
         },
         {
           "rule_id": "ema9_trend",
           "symbol": "AAPL",
           "action_type": "buy",
           "signal_time": "2026-08-20T15:00:00Z",
-          "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "accepted": true,
+          "skip_reason": null
         },
         {
           "rule_id": "ema9_trend",
@@ -831,7 +991,7 @@
           "action_type": "buy",
           "signal_time": "2026-08-20T16:00:00Z",
           "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "skip_reason": "already_in_position"
         },
         {
           "rule_id": "ema9_trend",
@@ -839,7 +999,7 @@
           "action_type": "buy",
           "signal_time": "2026-08-20T17:45:00Z",
           "accepted": false,
-          "skip_reason": "already_in_position"
+          "skip_reason": "entry_cutoff"
         },
         {
           "rule_id": "ema9_trend",
@@ -847,15 +1007,15 @@
           "action_type": "buy",
           "signal_time": "2026-08-20T18:45:00Z",
           "accepted": false,
-          "skip_reason": "already_in_position"
+          "skip_reason": "entry_cutoff"
         },
         {
           "rule_id": "ema9_trend",
           "symbol": "MSFT",
           "action_type": "buy",
           "signal_time": "2026-08-21T13:45:00Z",
-          "accepted": false,
-          "skip_reason": "already_in_position"
+          "accepted": true,
+          "skip_reason": null
         },
         {
           "rule_id": "ema9_trend",
@@ -863,7 +1023,7 @@
           "action_type": "buy",
           "signal_time": "2026-08-21T17:00:00Z",
           "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "skip_reason": "entry_cutoff"
         },
         {
           "rule_id": "ema9_trend",
@@ -878,8 +1038,8 @@
           "symbol": "AAPL",
           "action_type": "buy",
           "signal_time": "2026-08-24T13:45:00Z",
-          "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "accepted": true,
+          "skip_reason": null
         },
         {
           "rule_id": "ema9_trend",
@@ -887,7 +1047,7 @@
           "action_type": "buy",
           "signal_time": "2026-08-24T16:30:00Z",
           "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "skip_reason": "already_in_position"
         },
         {
           "rule_id": "ema9_trend",
@@ -895,15 +1055,15 @@
           "action_type": "buy",
           "signal_time": "2026-08-24T18:30:00Z",
           "accepted": false,
-          "skip_reason": "already_in_position"
+          "skip_reason": "entry_cutoff"
         },
         {
           "rule_id": "ema9_trend",
           "symbol": "MSFT",
           "action_type": "buy",
           "signal_time": "2026-08-25T13:45:00Z",
-          "accepted": false,
-          "skip_reason": "already_in_position"
+          "accepted": true,
+          "skip_reason": null
         },
         {
           "rule_id": "ema9_trend",
@@ -918,16 +1078,16 @@
           "symbol": "AAPL",
           "action_type": "buy",
           "signal_time": "2026-08-25T20:00:00Z",
-          "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "accepted": true,
+          "skip_reason": null
         },
         {
           "rule_id": "ema9_trend",
           "symbol": "MSFT",
           "action_type": "buy",
           "signal_time": "2026-08-26T16:15:00Z",
-          "accepted": true,
-          "skip_reason": null
+          "accepted": false,
+          "skip_reason": "insufficient_cash"
         },
         {
           "rule_id": "ema9_trend",
@@ -935,7 +1095,7 @@
           "action_type": "buy",
           "signal_time": "2026-08-26T17:00:00Z",
           "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "skip_reason": "already_in_position"
         },
         {
           "rule_id": "ema9_trend",
@@ -943,7 +1103,7 @@
           "action_type": "buy",
           "signal_time": "2026-08-26T17:30:00Z",
           "accepted": false,
-          "skip_reason": "already_in_position"
+          "skip_reason": "entry_cutoff"
         },
         {
           "rule_id": "ema9_trend",
@@ -951,7 +1111,7 @@
           "action_type": "buy",
           "signal_time": "2026-08-26T18:00:00Z",
           "accepted": false,
-          "skip_reason": "insufficient_cash"
+          "skip_reason": "already_in_position"
         },
         {
           "rule_id": "ema9_trend",
@@ -959,15 +1119,15 @@
           "action_type": "buy",
           "signal_time": "2026-08-26T19:00:00Z",
           "accepted": false,
-          "skip_reason": "already_in_position"
+          "skip_reason": "entry_cutoff"
         },
         {
           "rule_id": "ema9_trend",
           "symbol": "MSFT",
           "action_type": "buy",
           "signal_time": "2026-08-27T16:15:00Z",
-          "accepted": false,
-          "skip_reason": "already_in_position"
+          "accepted": true,
+          "skip_reason": null
         },
         {
           "rule_id": "ema9_trend",
@@ -982,14 +1142,6 @@
           "symbol": "AAPL",
           "action_type": "buy",
           "signal_time": "2026-08-27T20:00:00Z",
-          "accepted": false,
-          "skip_reason": "insufficient_cash"
-        },
-        {
-          "rule_id": "ema9_trend",
-          "symbol": "MSFT",
-          "action_type": "buy",
-          "signal_time": "2026-08-31T17:00:00Z",
           "accepted": true,
           "skip_reason": null
         },
@@ -997,9 +1149,17 @@
           "rule_id": "ema9_trend",
           "symbol": "MSFT",
           "action_type": "buy",
+          "signal_time": "2026-08-31T17:00:00Z",
+          "accepted": false,
+          "skip_reason": "entry_cutoff"
+        },
+        {
+          "rule_id": "ema9_trend",
+          "symbol": "MSFT",
+          "action_type": "buy",
           "signal_time": "2026-08-31T18:00:00Z",
           "accepted": false,
-          "skip_reason": "already_in_position"
+          "skip_reason": "entry_cutoff"
         },
         {
           "rule_id": "ema9_trend",
@@ -1007,7 +1167,7 @@
           "action_type": "buy",
           "signal_time": "2026-08-31T19:00:00Z",
           "accepted": false,
-          "skip_reason": "already_in_position"
+          "skip_reason": "entry_cutoff"
         }
       ]
     }
