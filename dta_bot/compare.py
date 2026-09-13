@@ -114,14 +114,19 @@ def _orb_reversal_range_assumption(config: Optional[OrbBotConfig]) -> str:
 
 def _orb_stop_assumption(config: Optional[OrbBotConfig]) -> str:
     mode = config.orb.stop_mode if config is not None else "orb_extreme"
-    take = config.orb.take_profit_mode if config is not None else "first_profitable_close"
+    take = config.orb.take_profit_mode if config is not None else "one_r"
     if take == "or_midpoint":
         take_txt = "take-profit is the OR midpoint (take_profit_mode: or_midpoint)."
-    else:
+    elif take == "first_profitable_close":
         take_txt = (
             "take-profit is the close of the first signal-timeframe bar that is "
             "strictly profitable vs entry (long: close > entry; short: close < entry; "
-            "take_profit_mode: first_profitable_close, default)."
+            "take_profit_mode: first_profitable_close)."
+        )
+    else:
+        take_txt = (
+            "take-profit is 1R from entry (R = |entry − stop|; long: entry + R; "
+            "short: entry − R; take_profit_mode: one_r, default)."
         )
     if mode == "reversal_candle":
         return f"Stop is the reversal candle extreme; {take_txt}"
@@ -129,7 +134,8 @@ def _orb_stop_assumption(config: Optional[OrbBotConfig]) -> str:
         "Stop is the opening-range extreme (long → OR low, short → OR high); "
         f"{take_txt} "
         "Set orb.stop_mode: reversal_candle to restore the previous candle-extreme stop. "
-        "Set orb.take_profit_mode: or_midpoint to restore the previous midpoint target."
+        "Set orb.take_profit_mode: or_midpoint to restore the previous midpoint target. "
+        "Set orb.take_profit_mode: first_profitable_close to restore the first-profit close exit."
     )
 
 
@@ -158,6 +164,23 @@ def _orb_frequency_assumption(config: Optional[OrbBotConfig]) -> str:
     )
 
 
+def _orb_height_assumption(config: Optional[OrbBotConfig]) -> str:
+    spec = config.orb if config is not None else None
+    floor = spec.min_or_height_pct if spec is not None else 0.01
+    if floor is None or floor <= 0:
+        return (
+            "High-vol gate is off (min_or_height_pct 0 / null). "
+            "Set orb.min_or_height_pct: 0.01 to require OR height of at least 1% of OR open."
+        )
+    return (
+        f"High-vol gate: trade only when (or_high − or_low) / or_open "
+        f">= {floor:.2%} (min_or_height_pct, default 1%). "
+        "Denominator is the OR candle open; if that print is missing, the OR midpoint "
+        "is used. Below the threshold, skip the symbol for that session (no entries). "
+        "Set 0 / null to disable."
+    )
+
+
 def assumptions_orb(
     friction: str,
     starting_equity: float,
@@ -171,8 +194,9 @@ def assumptions_orb(
         _orb_reversal_range_assumption(config),
         "Entry fills at the open of the bar after the reversal candle.",
         _orb_stop_assumption(config),
+        _orb_height_assumption(config),
         _orb_frequency_assumption(config),
-        "If stop and take (midpoint or first-profit close) both trade in the same bar, the stop is assumed to fill first.",
+        "If stop and take (1R, midpoint, or first-profit close) both trade in the same bar, the stop is assumed to fill first.",
         "A gap through stop/take fills at that bar's open.",
         "Open lots still on the last bar are flattened at the last close (exit reason eod).",
         SHORT_MTM_NOTE,

@@ -25,13 +25,21 @@
 #      long  → opening-range low  (bottom of the range)
 #      short → opening-range high (top of the range)
 #    Previous behavior is stop_mode: reversal_candle (reversal low/high).
-# 7. Take profit (take_profit_mode: first_profitable_close, default):
-#      after entry, exit at the close of the first signal-timeframe bar
-#      that is strictly profitable vs entry (long: close > entry;
-#      short: close < entry). or_midpoint restores the previous
-#      (or_high + or_low) / 2 target. If stop and first-profit (or
-#      midpoint) both trade on the same bar, the stop fills first.
-# 8. Frequency (defaults aimed at fewer late/choppy trades):
+# 7. Take profit (take_profit_mode: one_r, default):
+#      R = |entry − stop| (stop is the OR extreme: long → or_low,
+#      short → or_high). Long TP = entry + R; short TP = entry − R.
+#      or_midpoint restores the previous (or_high + or_low) / 2 target.
+#      first_profitable_close exits at the close of the first
+#      signal-timeframe bar that is strictly profitable vs entry
+#      (long: close > entry; short: close < entry). If stop and take
+#      (1R, midpoint, or first-profit) both trade on the same bar,
+#      the stop fills first.
+# 8. High-vol gate (min_or_height_pct: 0.01, default = 1%):
+#      trade only when (or_high - or_low) / or_open >= min_or_height_pct.
+#      Denominator is the OR candle's open; if that print is missing,
+#      fall back to the OR midpoint. Below the threshold, skip the
+#      symbol for that session (no entries). Set 0 / null to disable.
+# 9. Frequency (defaults aimed at fewer late/choppy trades):
 #      entry_cutoff: "10:30"          # session timezone (America/New_York)
 #      max_trades_before_cutoff: 1    # per symbol per session
 #      allow_entries_after_cutoff: false
@@ -43,7 +51,7 @@
 #    One open position per symbol (no pyramiding). Default is skip new
 #    entries while already in a position; set on_open_position: replace
 #    to close/replace on a new signal.
-# 9. Universe is fully configurable below. A morning screener will populate
+# 10. Universe is fully configurable below. A morning screener will populate
 #    this list later — edit it by hand for now.
 
 strategy: orb_reversal
@@ -64,6 +72,7 @@ universe:
   - AAPL
   - MSFT
   - SPY
+  - SOXL
 
 orb:
   session_open: "09:30"
@@ -75,8 +84,9 @@ orb:
   edge_pct: 0.05                   # used by touch_and_band / edge_band; fraction of OR height (0.05 = 5%)
   on_open_position: skip           # skip | replace
   reversal_in_range: close         # close | body | off  (body = high+low inside OR)
-  take_profit_mode: first_profitable_close  # first_profitable_close | or_midpoint
+  take_profit_mode: one_r                  # one_r | or_midpoint | first_profitable_close
   stop_mode: orb_extreme           # orb_extreme | reversal_candle
+  min_or_height_pct: 0.01          # 1% of OR open; 0 / null disables the high-vol gate
   entry_cutoff: "10:30"            # no new entries at/after this clock (ET)
   max_trades_before_cutoff: 1      # per symbol per session before the cutoff
   allow_entries_after_cutoff: false

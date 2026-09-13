@@ -32,13 +32,18 @@ class OrbSpec(BaseModel):
     # body = high and low both inside the OR (stricter fully-inside mode).
     # off = no in-range filter on the reversal candle.
     reversal_in_range: Literal["close", "body", "off"] = "close"
-    # first_profitable_close (default) = exit at the close of the first
-    # signal-timeframe bar that is strictly profitable vs entry.
+    # one_r (default) = 1R from entry (R = |entry − stop|; long entry+R, short entry−R).
     # or_midpoint = previous OR-midpoint take-profit.
-    take_profit_mode: Literal["first_profitable_close", "or_midpoint"] = "first_profitable_close"
+    # first_profitable_close = exit at the close of the first signal-timeframe
+    # bar that is strictly profitable vs entry.
+    take_profit_mode: Literal["one_r", "or_midpoint", "first_profitable_close"] = "one_r"
     # orb_extreme = long stop at OR low, short stop at OR high (default).
     # reversal_candle = previous stop at the reversal candle extreme.
     stop_mode: Literal["orb_extreme", "reversal_candle"] = "orb_extreme"
+    # High-vol gate: skip the symbol/session when OR height / OR open is below
+    # this fraction (0.01 = 1%). Denominator is the OR candle open; if that
+    # print is missing, the OR midpoint is used. 0 / null disables the gate.
+    min_or_height_pct: Optional[float] = 0.01
     # Strict morning window: at most max_trades_before_cutoff entries per symbol
     # whose fill time is strictly before entry_cutoff (session timezone).
     # allow_entries_after_cutoff=false means the session stops taking new entries
@@ -58,6 +63,26 @@ class OrbSpec(BaseModel):
     def _hhmm(cls, v: str) -> str:
         parsed = parse_hhmm(v)
         return f"{parsed.hour:02d}:{parsed.minute:02d}"
+
+    @field_validator("min_or_height_pct", mode="before")
+    @classmethod
+    def _min_or_height(cls, v: Any) -> Optional[float]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            raw = v.strip().lower()
+            if raw in {"", "none", "off", "disabled"}:
+                return None
+            v = float(raw)
+        value = float(v)
+        if value < 0:
+            raise ValueError("min_or_height_pct cannot be negative")
+        if value > 1:
+            raise ValueError(
+                f"min_or_height_pct should be a fraction of OR open (0.01 = 1%), not {value}. "
+                "Use 0.01 for a 1% gate, or 0 / null to disable."
+            )
+        return None if value == 0 else value
 
     @field_validator("entry_cutoff")
     @classmethod
@@ -146,8 +171,15 @@ class OrbSpec(BaseModel):
     @field_validator("take_profit_mode", mode="before")
     @classmethod
     def _take_profit_mode(cls, v: Any) -> str:
-        key = str(v or "first_profitable_close").strip().lower().replace("-", "_")
+        key = str(v or "one_r").strip().lower().replace("-", "_")
         aliases = {
+            "one_r": "one_r",
+            "1r": "one_r",
+            "1_r": "one_r",
+            "oner": "one_r",
+            "r": "one_r",
+            "risk": "one_r",
+            "one_r_target": "one_r",
             "first_profitable_close": "first_profitable_close",
             "first_profit": "first_profitable_close",
             "first_close": "first_profitable_close",
@@ -158,7 +190,9 @@ class OrbSpec(BaseModel):
             "or_mid": "or_midpoint",
         }
         if key not in aliases:
-            raise ValueError("take_profit_mode must be 'first_profitable_close' or 'or_midpoint'")
+            raise ValueError(
+                "take_profit_mode must be 'one_r', 'or_midpoint', or 'first_profitable_close'"
+            )
         return aliases[key]
 
     @model_validator(mode="before")
@@ -178,6 +212,9 @@ class OrbSpec(BaseModel):
             "midpoint": "or_midpoint",
             "or_midpoint": "or_midpoint",
             "mid": "or_midpoint",
+            "one_r": "one_r",
+            "1r": "one_r",
+            "1_r": "one_r",
             "first_profitable_close": "first_profitable_close",
             "first_profit": "first_profitable_close",
         }
@@ -212,6 +249,7 @@ class OrbSpec(BaseModel):
             "allow_entries_after_cutoff": self.allow_entries_after_cutoff,
             "session_timezone": self.session_timezone,
             "signal_timeframe": self.signal_timeframe,
+            "min_or_height_pct": self.min_or_height_pct,
         }
 
     def detector_kwargs(self) -> dict[str, Any]:

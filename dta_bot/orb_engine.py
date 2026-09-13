@@ -20,6 +20,7 @@ from dta_bot.orb import (
     gate_setups,
     live_setup,
     no_setup_reason,
+    one_r_take,
     session_dt,
 )
 from dta_bot.orb_config import OrbBotConfig
@@ -65,6 +66,8 @@ def _eval_from_setup(
             "or_high": setup.opening_range.high,
             "or_low": setup.opening_range.low,
             "or_mid": setup.opening_range.midpoint,
+            "or_open": setup.opening_range.open_price,
+            "or_height_pct": setup.opening_range.height_pct(),
             "band": setup.opening_range.band(edge_pct),
             "stop": setup.stop,
             "take": setup.take,
@@ -95,6 +98,7 @@ def _eval_miss(
         session_close=config.orb.session_close,
         probe_mode=config.orb.probe_mode,
         reversal_in_range=config.orb.reversal_in_range,
+        min_or_height_pct=config.orb.min_or_height_pct,
     )
     extra: dict = {"strategy": RULE_ID}
     if opening_range is not None:
@@ -103,6 +107,8 @@ def _eval_miss(
                 "or_high": opening_range.high,
                 "or_low": opening_range.low,
                 "or_mid": opening_range.midpoint,
+                "or_open": opening_range.open_price,
+                "or_height_pct": opening_range.height_pct(),
             }
         )
     return EvalResult(
@@ -253,6 +259,23 @@ def evaluate_orb(
     return results
 
 
+def _order_take_price(
+    setup: OrbSetup,
+    config: OrbBotConfig,
+    last_price: Optional[float],
+) -> Optional[float]:
+    mode = config.orb.take_profit_mode
+    if mode == "or_midpoint":
+        return setup.take
+    if mode != "one_r":
+        return None
+    if setup.take is not None:
+        return setup.take
+    if last_price is None:
+        return None
+    return one_r_take(side=setup.side, entry_price=last_price, stop=setup.stop)
+
+
 def build_orb_order(
     setup: OrbSetup,
     *,
@@ -284,7 +307,7 @@ def build_orb_order(
         time_in_force=config.order.time_in_force,
         limit_price=limit,
         stop_loss_price=setup.stop,
-        take_profit_price=setup.take if config.orb.take_profit_mode == "or_midpoint" else None,
+        take_profit_price=_order_take_price(setup, config, px),
     )
 
 

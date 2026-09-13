@@ -31,6 +31,7 @@ from dta_bot.orb import (
     first_profitable_close,
     gate_setups,
     next_signal_bar,
+    one_r_take,
 )
 from dta_bot.orb_config import OrbBotConfig
 from dta_bot.orb_engine import RULE_ID
@@ -210,6 +211,9 @@ def run_orb_backtest(
                 mark_skip(order.symbol, order.signal_time, "size_zero")
                 continue
             fill_px = _apply_slippage(fill_bar.open, order.side, slippage_pct, is_entry=True)
+            take = order.take
+            if config.orb.take_profit_mode == "one_r" and order.stop is not None:
+                take = one_r_take(side=order.side, entry_price=fill_px, stop=order.stop)
             if order.side == "buy":
                 cash -= qty * fill_px + commission
             else:
@@ -223,7 +227,7 @@ def run_orb_backtest(
                     entry_time=_aware(fill_bar.timestamp),
                     entry_price=fill_px,
                     stop=order.stop,
-                    take=order.take,
+                    take=take,
                     signal_time=order.signal_time,
                     tf=order.tf,
                 )
@@ -231,9 +235,9 @@ def run_orb_backtest(
         pending = still_pending
 
         # 2) Stop / take on the bar that just completed (after any fill at its open).
-        #    Stop is always checked first. first_profitable_close then exits at
-        #    this bar's close if it is strictly profitable vs entry. Same-bar
-        #    stop + first-profit (or midpoint) → stop wins.
+        #    Stop is always checked first. one_r / or_midpoint use a price target
+        #    on the lot. first_profitable_close then exits at this bar's close if
+        #    it is strictly profitable vs entry. Same-bar stop + take → stop wins.
         for symbol, tf, bar in closing:
             last_price[symbol] = bar.close
             survivors: list[OpenLot] = []
