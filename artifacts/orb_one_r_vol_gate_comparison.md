@@ -57,6 +57,13 @@ SOXL 5m/15m covered the same window (15m 1560, 5m 4680). Isolated book — its o
 
 SOXL's opening ranges all cleared 1% of OR open (3x semiconductor ETF), so the vol gate did not drop any SOXL session. The 10:30 / one-trade morning rule did almost all the work: 56 setups → 2 fills. One take and one stop; the loser ($18.70) is larger than the winner ($8.30) at 10 shares, so the isolated book finished red. Two trades is a very small sample.
 
+The two isolated fills (10 shares, times UTC):
+
+| Side | Entry | Exit | P&L | Reason |
+| --- | --- | --- | ---: | --- |
+| short | 2026-07-08 14:10 @ 171.17 | 14:15 @ 170.34 | +$8.30 | take (1R) |
+| long | 2026-07-28 14:05 @ 107.14 | 14:10 @ 105.27 | −$18.70 | stop (OR extreme) |
+
 ## Full example universe (AAPL / MSFT / SPY / SOXL, 1R + 1% vol)
 
 This is the new example-config default book (shared equity curve).
