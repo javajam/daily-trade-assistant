@@ -156,6 +156,16 @@ class Settings(BaseModel):
     max_open_positions: int = Field(default=10, ge=1)
     data_feed: str = "iex"
     lookback_bars: int = Field(default=80, ge=20)
+    # If set, every rule condition is rewritten to this bar size on load.
+    # Per-condition timeframe still documents the default; cooldown stays minutes.
+    timeframe: Optional[str] = None
+
+    @field_validator("timeframe")
+    @classmethod
+    def _tf(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or str(v).strip() == "":
+            return None
+        return normalize(v)
 
 
 class BotConfig(BaseModel):
@@ -192,7 +202,48 @@ class BotConfig(BaseModel):
         return pairs
 
 
-def _parse_ma_cross(raw: dict[str, Any]) -> MaCrossCond:
+def _condition_timeframe(*sources: Any, default: Optional[str] = None) -> str:
+    for src in sources:
+        if isinstance(src, dict) and src.get("timeframe"):
+            return str(src["timeframe"])
+    if default:
+        return default
+    raise ValueError(
+        "condition needs timeframe (set settings.timeframe or a per-condition timeframe)"
+    )
+
+
+def condition_timeframes(cond: AnyCondition) -> set[str]:
+    if isinstance(cond, GroupCond):
+        out: set[str] = set()
+        for child in cond.conditions:
+            out |= condition_timeframes(child)
+        return out
+    return {cond.timeframe}
+
+
+def rewrite_condition_timeframe(cond: AnyCondition, timeframe: str) -> AnyCondition:
+    tf = normalize(timeframe)
+    if isinstance(cond, GroupCond):
+        return GroupCond(
+            kind=cond.kind,
+            conditions=[rewrite_condition_timeframe(child, tf) for child in cond.conditions],
+        )
+    return cond.model_copy(update={"timeframe": tf})
+
+
+def with_timeframe(config: BotConfig, timeframe: str) -> BotConfig:
+    """Rewrite every rule condition to ``timeframe``. Cooldown stays wall-clock minutes."""
+    tf = normalize(timeframe)
+    settings = config.settings.model_copy(update={"timeframe": tf})
+    rules = [
+        rule.model_copy(update={"when": rewrite_condition_timeframe(rule.when, tf)})
+        for rule in config.rules
+    ]
+    return BotConfig(settings=settings, universe=list(config.universe), rules=rules)
+
+
+def _parse_ma_cross(raw: dict[str, Any], default_timeframe: Optional[str] = None) -> MaCrossCond:
     block = (
         raw.get("ema_cross")
         or raw.get("sma_cross")
@@ -227,20 +278,23 @@ def _parse_ma_cross(raw: dict[str, Any]) -> MaCrossCond:
     return MaCrossCond(
         ma=ma,
         period=int(merged["period"]),
-        timeframe=merged.get("timeframe") or raw["timeframe"],
+        timeframe=_condition_timeframe(merged, raw, default=default_timeframe),
         direction=direction,
     )
 
 
-def _parse_leaf(raw: dict[str, Any]) -> LeafCondition:
+def _parse_leaf(raw: dict[str, Any], default_timeframe: Optional[str] = None) -> LeafCondition:
     """Accept several human-friendly YAML shapes for a single condition."""
     if "pattern" in raw:
         name = raw["pattern"]
         if isinstance(name, dict):
-            return PatternCond(name=name.get("name") or name.get("pattern"), timeframe=name["timeframe"])
-        return PatternCond(name=name, timeframe=raw["timeframe"])
+            return PatternCond(
+                name=name.get("name") or name.get("pattern"),
+                timeframe=_condition_timeframe(name, raw, default=default_timeframe),
+            )
+        return PatternCond(name=name, timeframe=_condition_timeframe(raw, default=default_timeframe))
     if any(key in raw for key in ("ema_cross", "sma_cross", "ma_cross", "cross")):
-        return _parse_ma_cross(raw)
+        return _parse_ma_cross(raw, default_timeframe=default_timeframe)
     if "sma" in raw or "ema" in raw or "price_vs_ma" in raw:
         block = raw.get("sma") or raw.get("ema") or raw.get("price_vs_ma") or {}
         if not isinstance(block, dict):
@@ -253,7 +307,7 @@ def _parse_leaf(raw: dict[str, Any]) -> LeafCondition:
         return MaCond(
             ma=ma,
             period=int(merged["period"]),
-            timeframe=merged.get("timeframe") or raw["timeframe"],
+            timeframe=_condition_timeframe(merged, raw, default=default_timeframe),
             compare=compare,
         )
     if "rsi" in raw or "rsi_below" in raw or "rsi_above" in raw:
@@ -263,7 +317,7 @@ def _parse_leaf(raw: dict[str, Any]) -> LeafCondition:
         above = merged.get("above", merged.get("rsi_above"))
         return RsiCond(
             period=int(merged.get("period", 14)),
-            timeframe=merged.get("timeframe") or raw["timeframe"],
+            timeframe=_condition_timeframe(merged, raw, default=default_timeframe),
             below=below,
             above=above,
         )
@@ -273,14 +327,14 @@ def _parse_leaf(raw: dict[str, Any]) -> LeafCondition:
         mult = merged.get("multiplier", merged.get("volume_above_avg", 1.0))
         return VolumeCond(
             period=int(merged.get("period", 20)),
-            timeframe=merged.get("timeframe") or raw["timeframe"],
+            timeframe=_condition_timeframe(merged, raw, default=default_timeframe),
             multiplier=float(mult),
             compare=merged.get("compare", "above"),
         )
     raise ValueError(f"Unrecognized condition: {raw!r}")
 
 
-def parse_condition(raw: Any) -> AnyCondition:
+def parse_condition(raw: Any, default_timeframe: Optional[str] = None) -> AnyCondition:
     if not isinstance(raw, dict):
         raise ValueError(f"Condition must be a mapping, got {type(raw).__name__}")
     if "all" in raw and raw["all"] is not None:
@@ -289,13 +343,19 @@ def parse_condition(raw: Any) -> AnyCondition:
         if extra:
             # `{all: [...], pattern: ...}` is invalid; keep strict
             raise ValueError(f"'all' group cannot mix leaf keys: {list(extra)}")
-        return GroupCond(kind="all", conditions=[parse_condition(c) for c in children])
+        return GroupCond(
+            kind="all",
+            conditions=[parse_condition(c, default_timeframe=default_timeframe) for c in children],
+        )
     if "any" in raw and raw["any"] is not None:
         extra = {k: v for k, v in raw.items() if k != "any"}
         if extra:
             raise ValueError(f"'any' group cannot mix leaf keys: {list(extra)}")
-        return GroupCond(kind="any", conditions=[parse_condition(c) for c in raw["any"]])
-    return _parse_leaf(raw)
+        return GroupCond(
+            kind="any",
+            conditions=[parse_condition(c, default_timeframe=default_timeframe) for c in raw["any"]],
+        )
+    return _parse_leaf(raw, default_timeframe=default_timeframe)
 
 
 def _parse_action(raw: dict[str, Any]) -> ActionSpec:
@@ -316,19 +376,19 @@ def _parse_action(raw: dict[str, Any]) -> ActionSpec:
     )
 
 
-def _parse_rule(raw: dict[str, Any]) -> RuleSpec:
+def _parse_rule(raw: dict[str, Any], default_timeframe: Optional[str] = None) -> RuleSpec:
     return RuleSpec(
         id=raw["id"],
         enabled=raw.get("enabled", True),
         symbols=raw.get("symbols"),
         cooldown_minutes=raw.get("cooldown_minutes", 60),
-        when=parse_condition(raw["when"]),
+        when=parse_condition(raw["when"], default_timeframe=default_timeframe),
         action=_parse_action(raw["action"]),
         notes=raw.get("notes"),
     )
 
 
-def load_config(path: str | Path) -> BotConfig:
+def load_config(path: str | Path, timeframe: Optional[str] = None) -> BotConfig:
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Config not found: {path}")
@@ -344,10 +404,14 @@ def load_config(path: str | Path) -> BotConfig:
     universe = data.get("universe") or []
     if isinstance(universe, dict):
         universe = universe.get("symbols") or []
-    rules = [_parse_rule(r) for r in (data.get("rules") or [])]
+    rules = [_parse_rule(r, default_timeframe=settings.timeframe) for r in (data.get("rules") or [])]
     if not rules:
         raise ValueError("Config must define at least one rule")
     ids = [r.id for r in rules]
     if len(ids) != len(set(ids)):
         raise ValueError(f"Duplicate rule ids: {ids}")
-    return BotConfig(settings=settings, universe=list(universe), rules=rules)
+    cfg = BotConfig(settings=settings, universe=list(universe), rules=rules)
+    override = timeframe or settings.timeframe
+    if override:
+        cfg = with_timeframe(cfg, override)
+    return cfg

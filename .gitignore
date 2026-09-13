@@ -16,3 +16,4 @@ data/*
 config/rules.yaml
 config/orb_reversal.yaml
 config/ema9_trend.yaml
+config/ema9_trend_5m.yaml

@@ -1,0 +1,102 @@
+# 9 EMA trend on 5-minute bars — same rules as ema9_trend.example.yaml.
+#
+# Identical except settings.timeframe / every condition is 5m. Cooldown stays
+# 60 wall-clock minutes (12 five-minute bars, not 4). Yahoo 5m history is
+# capped at ~60 days; requesting more returns HTTP 422.
+#
+#   python -m dta_bot validate --config config/ema9_trend_5m.example.yaml
+#   python -m dta_bot backtest --config config/ema9_trend_5m.example.yaml --source yahoo \
+#     --output artifacts/ema9_5m.json --report artifacts/ema9_5m.md
+#
+# Equivalent: --config config/ema9_trend.example.yaml --timeframe 5m
+# Copy to config/ema9_trend_5m.yaml (gitignored) to paper-trade.
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 5m
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "5m bullish EMA(9) cross while price holds above the 20-SMA and RSI is not overbought."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 5m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 5m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 5m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      stop_loss_pct: 1.5
+      take_profit_pct: 3.0
+
+  - id: ema9_cross_raw
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Ablation: 5m bullish EMA(9) cross with no SMA/RSI trend filter. Same 10-share 1.5/3.0 brackets."
+    when:
+      ema_cross:
+        period: 9
+        timeframe: 5m
+        direction: bullish
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      stop_loss_pct: 1.5
+      take_profit_pct: 3.0
+
+  - id: engulfing-with-trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Control: 5m bullish engulfing while price holds above the 20-SMA and RSI is not overbought."
+    when:
+      all:
+        - pattern: bullish_engulfing
+          timeframe: 5m
+        - sma:
+            period: 20
+            timeframe: 5m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 5m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      stop_loss_pct: 1.5
+      take_profit_pct: 3.0

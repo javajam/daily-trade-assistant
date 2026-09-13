@@ -7,6 +7,7 @@ from dta_bot.compare import (
     assumptions_rules,
     combined_book_effect,
     format_comparison_md,
+    format_side_by_side_table,
     pattern_hits_from_result,
     rank_books,
     rule_book_plan,
@@ -148,6 +149,43 @@ def test_ema9_rule_book_plan_isolates_each_entry():
     assert labels[:3] == ["ema9_trend", "ema9_cross_raw", "engulfing-with-trend"]
     assert "sample-entries" in labels
     assert "combined" in labels
+    five = load_config("config/ema9_trend_5m.example.yaml")
+    assert [label for label, _ids, _note in rule_book_plan(five)][:3] == labels[:3]
+
+
+def test_format_side_by_side_table_lists_requested_metrics():
+    left = {
+        "report": {
+            "trades": 44,
+            "win_rate_pct": 50.0,
+            "total_pnl": 1404.89,
+            "max_drawdown": 407.70,
+            "avg_win": 123.61,
+            "avg_loss": -62.59,
+            "exit_reasons": {"stop": 22, "take": 21, "eod": 1},
+        }
+    }
+    right = {
+        "report": {
+            "trades": 10,
+            "win_rate_pct": 40.0,
+            "total_pnl": 100.0,
+            "max_drawdown": 50.0,
+            "avg_win": 40.0,
+            "avg_loss": -20.0,
+            "exit_reasons": {"stop": 6, "take": 4},
+        }
+    }
+    lines = format_side_by_side_table(
+        [("15m ema9_trend", left), ("5m ema9_trend", right)]
+    )
+    text = "\n".join(lines)
+    assert "| Trades | 44 | 10 |" in text
+    assert "| Win rate | 50.00% | 40.00% |" in text
+    assert "| P&L | $1,404.89 | $100.00 |" in text
+    assert "| Max DD | $407.70 | $50.00 |" in text
+    assert "take 21, stop 22, eod 1" in text
+    assert "take 4, stop 6" in text
 
 
 def test_rule_book_plan_includes_entries_and_combined():
