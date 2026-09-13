@@ -41,6 +41,9 @@ def test_fill_at_or_after_cutoff_is_inclusive():
     assert fill_at_or_after_cutoff(et(13, 0), "13:00", tz) is True
     assert fill_at_or_after_cutoff(et(13, 15), "13:00", tz) is True
     assert fill_at_or_after_cutoff(et(13, 0), None, tz) is False
+    assert fill_at_or_after_cutoff(et(11, 45), "12:00", tz) is False
+    assert fill_at_or_after_cutoff(et(12, 0), "12:00", tz) is True
+    assert fill_at_or_after_cutoff(et(12, 15), "12:00", tz) is True
     assert fill_at_or_after_cutoff(et(15, 0), "15:15", tz) is False
     assert fill_at_or_after_cutoff(et(15, 15), "15:15", tz) is True
     assert fill_at_or_after_cutoff(et(15, 30), "15:15", tz) is True

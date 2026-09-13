@@ -1,14 +1,10 @@
-# 9 EMA trend — 10-share 1.5/3.0 bracket book with session gates OFF.
-# Same entry/exit/size as ema9_trend_bracket.example.yaml so the overnight
-# (prior) book can be compared to the gated product on the same tape.
+# 9 EMA trend — 10-share 1.5/3.0 bracket book with SOXL on the 12:00 / 15:55
+# session gates. Same locked entry/exit as ema9_trend_bracket.example.yaml.
 #
-#   python -m dta_bot backtest --config config/ema9_trend_bracket_overnight.example.yaml \
-#     --compare-config config/ema9_trend_bracket_1300.example.yaml \
-#     --compare-config config/ema9_trend_bracket_1515.example.yaml \
-#     --compare-config config/ema9_trend_bracket.example.yaml --source yahoo \
-#     --combined-only --symbols AAPL,MSFT \
-#     --output artifacts/ema9_session_gates.json \
-#     --report artifacts/ema9_session_gates.md
+#   python -m dta_bot backtest --config config/ema9_trend_bracket_soxl.example.yaml \
+#     --source yahoo --breakout SOXL \
+#     --output artifacts/ema9_session_gates_soxl.json \
+#     --report artifacts/ema9_session_gates_soxl.md
 
 settings:
   paper: true
@@ -22,19 +18,20 @@ settings:
   lookback_bars: 80
   timeframe: 15m
   session_timezone: America/New_York
-  entry_cutoff: null
-  flatten_by: null
+  entry_cutoff: "12:00"
+  flatten_by: "15:55"
 
 universe:
   - AAPL
   - MSFT
+  - SOXL
 
 rules:
   - id: ema9_trend
     enabled: true
-    symbols: [AAPL, MSFT]
+    symbols: [AAPL, MSFT, SOXL]
     cooldown_minutes: 60
-    notes: "Same 15m EMA9 trend + 1.5/3.0 brackets as the gated book, overnight holds allowed."
+    notes: "Same 15m EMA9 trend + 1.5/3.0 brackets as the gated book, plus SOXL."
     when:
       all:
         - ema_cross:

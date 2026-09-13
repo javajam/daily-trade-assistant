@@ -1,9 +1,10 @@
 # 9 EMA trend — 10-share 1.5/3.0 bracket book with the prior 13:00 entry cutoff.
 # Same flatten_by 15:55 as the current product. Used only as a comparison
-# control against overnight holds and the 15:15 cutoff default.
+# control against overnight holds, the 15:15 cutoff, and the 12:00 default.
 #
 #   python -m dta_bot backtest --config config/ema9_trend_bracket_overnight.example.yaml \
 #     --compare-config config/ema9_trend_bracket_1300.example.yaml \
+#     --compare-config config/ema9_trend_bracket_1515.example.yaml \
 #     --compare-config config/ema9_trend_bracket.example.yaml --source yahoo \
 #     --combined-only --symbols AAPL,MSFT \
 #     --output artifacts/ema9_session_gates.json \

@@ -105,7 +105,7 @@ def test_assumptions_rules_mention_ma_cross():
     cfg = load_config("config/ema9_trend.example.yaml")
     ema_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, cfg)
     assert any("ema_invalid" in n and "close < EMA(9)" in n for n in ema_notes)
-    assert any("entry_cutoff=15:15" in n and "flatten_by=15:55" in n for n in ema_notes)
+    assert any("entry_cutoff=12:00" in n and "flatten_by=15:55" in n for n in ema_notes)
 
 
 def test_pattern_hits_count_ema_cross():
@@ -173,7 +173,7 @@ def test_run_rule_books_prefixes_and_soxl_breakout():
         breakout_symbols=["SOXL"],
     )
     labels = [block["label"] for block in runs]
-    gated = " (cutoff 15:15, flat 15:55)"
+    gated = " (cutoff 12:00, flat 15:55)"
     assert f"15m ema9_trend{gated}" in labels
     assert f"15m ema9_trend SOXL{gated}" in labels
     soxl = next(block for block in runs if block["label"] == f"15m ema9_trend SOXL{gated}")
