@@ -6,11 +6,14 @@ Locked v1 rules
   (default 9:30 America/New_York). Default 15m → 9:30–9:45 ET high/low.
 - After that candle is fully formed, evaluate ``signal_timeframe`` bars
   (default 5m).
-- Probe (default ``probe_mode: touch``): the signal bar must **touch** the
-  relevant OR extreme. Top (potential short): ``high >= or_high``.
-  Bottom (potential long): ``low <= or_low``. A close inside the old 5%
-  edge band is **not** enough. ``probe_mode: edge_band`` restores the
-  previous close-in-zone rule (``edge_pct`` of OR height, default 5%).
+- Probe (default ``probe_mode: touch_and_band``): the signal bar must
+  **touch** the relevant OR extreme **and** **close** inside the edge
+  band (``edge_pct`` of OR height, default 5%). Top (potential short):
+  ``high >= or_high`` and close in ``[or_high - band, or_high]``.
+  Bottom (potential long): ``low <= or_low`` and close in
+  ``[or_low, or_low + band]``. ``probe_mode: touch`` keeps the wick-only
+  rule (close-in-band not required). ``probe_mode: edge_band`` restores
+  the previous close-in-zone rule without requiring a touch.
 - Reversal = the **next** signal bar, opposite color:
   top probe + bearish close → short; bottom probe + bullish close → long.
 - Entry fills at the **open of the bar after the reversal**.
@@ -35,7 +38,7 @@ from dta_bot.timeframes import duration
 Zone = Literal["top", "bottom"]
 Side = Literal["buy", "sell"]
 StopMode = Literal["orb_extreme", "reversal_candle"]
-ProbeMode = Literal["touch", "edge_band"]
+ProbeMode = Literal["touch_and_band", "touch", "edge_band"]
 
 
 def _aware(dt: datetime) -> datetime:
@@ -154,15 +157,25 @@ class OpeningRange:
             return "bottom"
         return None
 
+    def classify_touch_and_band(self, bar: Bar, edge_pct: float) -> Optional[Zone]:
+        """Touch the OR extreme AND close inside that same edge band."""
+        touch = self.classify_touch(bar)
+        close = self.classify_close(bar.close, edge_pct)
+        if touch is None or close is None or touch != close:
+            return None
+        return touch
+
     def classify_probe(
         self,
         bar: Bar,
         *,
-        probe_mode: ProbeMode = "touch",
+        probe_mode: ProbeMode = "touch_and_band",
         edge_pct: float = 0.05,
     ) -> Optional[Zone]:
         """Classify a signal bar as a top/bottom probe under the configured mode."""
-        mode = probe_mode or "touch"
+        mode = probe_mode or "touch_and_band"
+        if mode == "touch_and_band":
+            return self.classify_touch_and_band(bar, edge_pct)
         if mode == "touch":
             return self.classify_touch(bar)
         if mode == "edge_band":
@@ -182,7 +195,7 @@ class OrbSetup:
     take: float
     entry_bar: Optional[Bar] = None
     stop_mode: StopMode = "orb_extreme"
-    probe_mode: ProbeMode = "touch"
+    probe_mode: ProbeMode = "touch_and_band"
 
     @property
     def session_date(self) -> date:
@@ -334,7 +347,7 @@ def _setup_from_pair(
     reversal: Bar,
     entry_bar: Optional[Bar],
     stop_mode: StopMode = "orb_extreme",
-    probe_mode: ProbeMode = "touch",
+    probe_mode: ProbeMode = "touch_and_band",
     edge_pct: float = 0.05,
 ) -> Optional[OrbSetup]:
     zone = opening_range.classify_probe(probe, probe_mode=probe_mode, edge_pct=edge_pct)
@@ -374,7 +387,7 @@ def find_setups(
     opening_range: OpeningRange,
     *,
     edge_pct: float = 0.05,
-    probe_mode: ProbeMode = "touch",
+    probe_mode: ProbeMode = "touch_and_band",
     session_timezone: str = "America/New_York",
     session_close: Optional[str] = "16:00",
     stop_mode: StopMode = "orb_extreme",
@@ -431,7 +444,7 @@ def find_session_setups(
     orb_timeframe: str = "15m",
     signal_timeframe: str = "5m",
     edge_pct: float = 0.05,
-    probe_mode: ProbeMode = "touch",
+    probe_mode: ProbeMode = "touch_and_band",
     stop_mode: StopMode = "orb_extreme",
 ) -> tuple[Optional[OpeningRange], list[OrbSetup]]:
     rng = resolve_opening_range(
@@ -468,7 +481,7 @@ def find_all_setups(
     orb_timeframe: str = "15m",
     signal_timeframe: str = "5m",
     edge_pct: float = 0.05,
-    probe_mode: ProbeMode = "touch",
+    probe_mode: ProbeMode = "touch_and_band",
     stop_mode: StopMode = "orb_extreme",
 ) -> list[OrbSetup]:
     dates = session_dates(orb_bars or signal_bars, session_timezone)
@@ -514,7 +527,7 @@ def no_setup_reason(
     edge_pct: float,
     session_timezone: str,
     session_close: Optional[str],
-    probe_mode: ProbeMode = "touch",
+    probe_mode: ProbeMode = "touch_and_band",
 ) -> str:
     if opening_range is None:
         return "opening range not formed (need first orb_timeframe bar at/after session open)"
@@ -542,6 +555,13 @@ def no_setup_reason(
             )
         top = opening_range.top_zone(edge_pct)
         bot = opening_range.bottom_zone(edge_pct)
+        if probe_mode == "touch_and_band":
+            return (
+                f"bar H={bar.high:.4f} L={bar.low:.4f} C={bar.close:.4f} did not both "
+                f"touch OR high {opening_range.high:.4f} / low {opening_range.low:.4f} "
+                f"and close inside the {edge_pct:.0%} edge band "
+                f"[{top[0]:.4f}–{top[1]:.4f}] / [{bot[0]:.4f}–{bot[1]:.4f}]"
+            )
         return (
             f"close {bar.close:.4f} outside edge zones "
             f"[{top[0]:.4f}–{top[1]:.4f}] / [{bot[0]:.4f}–{bot[1]:.4f}]"
@@ -551,6 +571,12 @@ def no_setup_reason(
         if probe_mode == "touch":
             return (
                 f"probe touched OR {z} (H={bar.high:.4f} L={bar.low:.4f}); "
+                "waiting for opposite-color reversal"
+            )
+        if probe_mode == "touch_and_band":
+            return (
+                f"probe touched OR {z} and closed in the edge band "
+                f"(H={bar.high:.4f} L={bar.low:.4f} C={bar.close:.4f}); "
                 "waiting for opposite-color reversal"
             )
         return f"probe in {z} zone (C={bar.close:.4f}); waiting for opposite-color reversal"

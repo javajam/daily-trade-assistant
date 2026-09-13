@@ -29,7 +29,7 @@ def _bar(minutes: int, o: float, h: float, l: float, c: float, v: float = 1_000_
 
 
 def aapl_top_fade_short() -> dict[str, list[Bar]]:
-    """15m OR 96–104 (mid 100). Touch of OR high → bearish reversal → short."""
+    """15m OR 96–104 (mid 100). Touch of OR high + close in 5% band → bearish reversal → short."""
     # 09:15 ET dummy so the OR picker must skip it.
     premkt = _bar(-15, 99.0, 99.4, 98.8, 99.1)
     orb = _bar(0, 100.0, 104.0, 96.0, 101.0, 4_000_000)
@@ -45,7 +45,7 @@ def aapl_top_fade_short() -> dict[str, list[Bar]]:
 
 
 def msft_bottom_fade_long() -> dict[str, list[Bar]]:
-    """15m OR 200–210 (mid 205). Touch of OR low → bullish reversal → long."""
+    """15m OR 200–210 (mid 205). Touch of OR low + close in 5% band → bullish reversal → long."""
     orb = _bar(0, 204.0, 210.0, 200.0, 205.0, 3_500_000)
     signal = [
         _bar(15, 205.0, 205.4, 204.6, 205.1),
@@ -64,7 +64,7 @@ def spy_no_trade() -> dict[str, list[Bar]]:
         _bar(15, 496.0, 496.8, 495.5, 496.2),
         _bar(20, 496.2, 498.4, 496.0, 498.0),  # no touch of 500 / 490
         _bar(25, 498.0, 498.6, 497.2, 497.4),
-        _bar(30, 499.60, 500.00, 499.40, 499.80),  # touches OR high
+        _bar(30, 499.60, 500.00, 499.40, 499.80),  # touches OR high and closes in band
         _bar(35, 499.70, 500.10, 499.50, 499.95),  # still bullish — not a reversal
     ]
     return {"15Min": [orb], "5Min": signal}
