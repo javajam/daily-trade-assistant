@@ -1,9 +1,10 @@
 # 9 EMA trend — same locked entry/exit as ema9_trend_risk.example.yaml
 # but the old fixed 10-share size (comparison book), with session gates.
 #
-# Session gates (America/New_York): no new fills at/after 13:00; force-flat at
+# Session gates (America/New_York): no new fills at/after 15:15; force-flat at
 # the 15:45 ET 15m bar close (flatten_by 15:55). Overnight control:
 # config/ema9_trend_bracket_overnight.example.yaml (same book, gates off).
+# 13:00 cutoff control: config/ema9_trend_bracket_1300.example.yaml.
 #
 #   python -m dta_bot backtest --config config/ema9_trend_bracket.example.yaml \
 #     --source yahoo --start 2026-08-01 --end 2026-08-31 --combined-only \
@@ -22,7 +23,7 @@ settings:
   lookback_bars: 80
   timeframe: 15m
   session_timezone: America/New_York
-  entry_cutoff: "13:00"
+  entry_cutoff: "15:15"
   flatten_by: "15:55"
 
 universe:

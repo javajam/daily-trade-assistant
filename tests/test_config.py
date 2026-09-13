@@ -52,7 +52,7 @@ def test_ema9_trend_config_loads():
     assert cfg.settings.timeframe == "15Min"
     assert cfg.universe == ["AAPL", "MSFT", "SOXL"]
     assert cfg.settings.session_timezone == "America/New_York"
-    assert cfg.settings.entry_cutoff == "13:00"
+    assert cfg.settings.entry_cutoff == "15:15"
     assert cfg.settings.flatten_by == "15:55"
 
 
@@ -68,7 +68,7 @@ def test_ema9_trend_risk_config_loads():
     assert rule.action.size.type == "risk_pct"
     assert rule.action.size.equity_risk == 0.01
     assert rule.action.size.stop_pct == 1.5
-    assert cfg.settings.entry_cutoff == "13:00"
+    assert cfg.settings.entry_cutoff == "15:15"
     assert cfg.settings.flatten_by == "15:55"
     assert cfg.all_symbol_timeframes() == {("AAPL", "15Min"), ("MSFT", "15Min")}
 
@@ -78,6 +78,15 @@ def test_ema9_trend_bracket_config_keeps_ten_shares():
     assert cfg.universe == ["AAPL", "MSFT"]
     assert cfg.rules[0].action.size and cfg.rules[0].action.size.type == "shares"
     assert cfg.rules[0].action.size.value == 10
+    assert cfg.rules[0].action.exit == "fixed_bracket"
+    assert cfg.settings.entry_cutoff == "15:15"
+    assert cfg.settings.flatten_by == "15:55"
+
+
+def test_ema9_trend_bracket_1300_keeps_prior_cutoff():
+    cfg = load_config("config/ema9_trend_bracket_1300.example.yaml")
+    assert cfg.universe == ["AAPL", "MSFT"]
+    assert cfg.rules[0].action.size and cfg.rules[0].action.size.value == 10
     assert cfg.rules[0].action.exit == "fixed_bracket"
     assert cfg.settings.entry_cutoff == "13:00"
     assert cfg.settings.flatten_by == "15:55"
@@ -99,7 +108,7 @@ def test_ema9_trend_5m_config_loads():
     assert cfg.rules[0].action.exit == "ema_invalid"
     assert cfg.rules[2].action.exit == "fixed_bracket"
     assert cfg.settings.timeframe == "5Min"
-    assert cfg.settings.entry_cutoff == "13:00"
+    assert cfg.settings.entry_cutoff == "15:15"
     assert cfg.settings.flatten_by == "15:55"
     assert cfg.all_symbol_timeframes() == {("AAPL", "5Min"), ("MSFT", "5Min"), ("SOXL", "5Min")}
     for rule in cfg.rules:
@@ -169,7 +178,7 @@ def test_cli_validate_timeframe_override(capsys):
     assert "tf=5Min" in out
     assert "cooldown=60m" in out
     assert "exit=ema_invalid" in out
-    assert "entry_cutoff=13:00" in out
+    assert "entry_cutoff=15:15" in out
     assert "flatten_by=15:55" in out
 
 
