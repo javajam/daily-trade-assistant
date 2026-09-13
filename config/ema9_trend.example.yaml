@@ -1,23 +1,15 @@
-# Refined EMA9 day-trade — long + mirrored short (paper / dry_run). Default product.
+# Refined EMA9 day-trade — long-only (paper / dry_run). Default product.
 #
-# Universe AAPL / MSFT (not TSLA/MU). One position per symbol (long or short,
-# not both). An opposite signal while that symbol is already in a trade is
-# skipped (skip_reason: opposite_signal_in_trade). Disable a side with
-# enabled: false on that rule.
+# Universe AAPL / MSFT (not TSLA/MU). EMA9 reclaim + SMA20 / RSI14 < 70,
+# lock-+1%, no take. Session gates: entry_cutoff 12:00, flatten_by 15:55.
+#
+# Shorts are parked. Re-enable with config/ema9_trend_short_optional.example.yaml
+# (or copy the ema9_trend_short rule from there and set enabled: true).
 #
 # Long (ema9_trend):
 #   close crosses above EMA(9) AND close > SMA(20) AND RSI(14) < 70
 #   Stop: initial fill × 0.99; first touch of fill × 1.01 locks stop there.
-#
-# Short (ema9_trend_short):
-#   close crosses below EMA(9) AND close < SMA(20). No RSI on shorts.
-#   Cover: EMA(9) crosses above SMA(20) → flatten at the next bar open
-#   (action.exit: ma_cross). Session flatten still applies.
-#   No lock_plus / percent stop on shorts (optional stop_loss_pct is off).
-#
-# Fill at the next bar open. No fixed take-profit.
-# Long exits = stop / lock_stop / session_flatten.
-# Short exits = ma_cross (bullish EMA/SMA pair-cross) / session_flatten.
+#   Fill at the next bar open. Exits = stop / lock_stop / session_flatten.
 #
 # Session gates (America/New_York) — toggle either to null / off:
 #   entry_cutoff: "12:00"   # skip fills at/after this clock; null = off
@@ -91,27 +83,3 @@ rules:
       stop_loss_pct: 1.0
       lock_trigger_pct: 1.0
       lock_stop_pct: 1.0
-  - id: ema9_trend_short
-    enabled: true
-    symbols: [AAPL, MSFT]
-    cooldown_minutes: 60
-    notes: "Noon short: 15m price crosses below EMA(9) while below SMA20 (no RSI). Cover when EMA(9) crosses above SMA(20) at the next open. 10 shares. No percent / lock_plus stop; session flatten still applies."
-    when:
-      all:
-        - ema_cross:
-            period: 9
-            timeframe: 15m
-            direction: bearish
-        - sma:
-            period: 20
-            timeframe: 15m
-            compare: below
-    action:
-      type: sell
-      size:
-        type: shares
-        value: 10
-      order: market
-      exit: ma_cross
-      exit_ema_period: 9
-      exit_sma_period: 20

@@ -262,22 +262,19 @@ def assumptions_orb(
 
 
 def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
-    modes = {
-        rule.action.exit
+    rules = [
+        rule
         for rule in (config.rules if config is not None else [])
-        if rule.action.type != "close"
-    }
+        if rule.enabled and rule.action.type != "close"
+    ]
+    modes = {rule.action.exit for rule in rules}
     periods = {
         rule.action.exit_ema_period
-        for rule in (config.rules if config is not None else [])
+        for rule in rules
         if rule.action.exit == "ema_invalid"
     }
     period = next(iter(periods), 9)
-    ma_rules = [
-        rule
-        for rule in (config.rules if config is not None else [])
-        if rule.action.type != "close" and rule.action.exit == "ma_cross"
-    ]
+    ma_rules = [rule for rule in rules if rule.action.exit == "ma_cross"]
     if modes == {"ma_cross"} and ma_rules:
         action = ma_rules[0].action
         return (
@@ -292,11 +289,7 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         )
     if "ma_cross" in modes and ma_rules:
         action = ma_rules[0].action
-        lock_rules = [
-            rule
-            for rule in (config.rules if config is not None else [])
-            if rule.action.type != "close" and rule.action.stop_mode == "lock_plus"
-        ]
+        lock_rules = [rule for rule in rules if rule.action.stop_mode == "lock_plus"]
         lock_txt = ""
         if lock_rules:
             lock_action = lock_rules[0].action
@@ -759,7 +752,7 @@ def compact_run(result: BacktestResult, hits: Optional[dict[str, int]] = None) -
 
 
 def entry_rule_ids(config: BotConfig) -> list[str]:
-    return [rule.id for rule in config.rules if rule.action.type != "close"]
+    return [rule.id for rule in config.rules if rule.enabled and rule.action.type != "close"]
 
 
 def rule_book_plan(
@@ -772,14 +765,15 @@ def rule_book_plan(
     if combined_only:
         return [(combined_book_label(config), None, COMBINED_NOTE)]
     plans: list[tuple[str, Optional[list[str]], Optional[str]]] = []
-    for rule in config.rules:
+    enabled = [rule for rule in config.rules if rule.enabled]
+    for rule in enabled:
         note = EXIT_ONLY_NOTE if rule.action.type == "close" else None
         plans.append((rule.id, [rule.id], note))
     entries = entry_rule_ids(config)
-    close_rules = [rule for rule in config.rules if rule.action.type == "close"]
+    close_rules = [rule for rule in enabled if rule.action.type == "close"]
     if include_entries_only and len(entries) >= 2 and close_rules:
         plans.append(("sample-entries", entries, ENTRIES_ONLY_NOTE))
-    if len(config.rules) > 1:
+    if len(enabled) > 1:
         long_short = entry_sides(config) == {"buy", "sell"} and not close_rules
         extra = LONG_SHORT_COMBINED_NOTE if long_short else COMBINED_NOTE
         label = combined_book_label(config) if long_short else "combined"

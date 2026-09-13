@@ -110,16 +110,21 @@ def test_assumptions_rules_mention_ma_cross():
     cfg = load_config("config/ema9_trend.example.yaml")
     ema_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, cfg)
     assert any("noon day-trade stack" in n and "EMA(9)" in n and "SMA(20)" in n for n in ema_notes)
-    assert any("Short:" in n and "no RSI filter" in n for n in ema_notes)
-    assert any("Short:" in n and "EMA(9) crosses above SMA(20)" in n for n in ema_notes)
+    assert not any("Short:" in n for n in ema_notes)
     assert not any("RSI(14) > 30" in n for n in ema_notes)
-    assert any("opposite_signal_in_trade" in n for n in ema_notes)
-    assert any("stop_mode: lock_plus" in n and "longs only" in n for n in ema_notes)
-    assert any("Shorts have no percent / lock_plus stop" in n for n in ema_notes)
-    assert any("ma_cross" in n and "EMA above SMA" in n for n in ema_notes)
+    assert any("stop_mode: lock_plus" in n for n in ema_notes)
     assert any("entry_cutoff=12:00" in n and "flatten_by=15:55" in n for n in ema_notes)
     assert not any("breakeven_after_bars: 1" in n for n in ema_notes)
-    assert session_gate_suffix(cfg) == " (cutoff 12:00, flat 15:55, short MA-cross, lock +1.0%)"
+    assert session_gate_suffix(cfg) == " (cutoff 12:00, flat 15:55, lock +1.0%)"
+    parked = load_config("config/ema9_trend_short_optional.example.yaml")
+    parked_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, parked)
+    assert any("Short:" in n and "no RSI filter" in n for n in parked_notes)
+    assert any("Short:" in n and "EMA(9) crosses above SMA(20)" in n for n in parked_notes)
+    assert any("opposite_signal_in_trade" in n for n in parked_notes)
+    assert any("stop_mode: lock_plus" in n and "longs only" in n for n in parked_notes)
+    assert any("Shorts have no percent / lock_plus stop" in n for n in parked_notes)
+    assert any("ma_cross" in n and "EMA above SMA" in n for n in parked_notes)
+    assert session_gate_suffix(parked) == " (cutoff 12:00, flat 15:55, short MA-cross, lock +1.0%)"
     pair = load_config("config/ema9_trend_pair.example.yaml")
     pair_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, pair)
     assert any("ma_cross" in n and "EMA(9)" in n and "SMA(20)" in n for n in pair_notes)
@@ -188,10 +193,13 @@ def test_pattern_hits_count_ema_cross():
 def test_ema9_rule_book_plan_isolates_each_entry():
     cfg = load_config("config/ema9_trend.example.yaml")
     labels = [label for label, _ids, _note in rule_book_plan(cfg)]
-    assert labels == ["ema9_trend", "ema9_trend_short", "AAPL+MSFT 10-share long+short"]
+    assert labels == ["ema9_trend"]
     five = load_config("config/ema9_trend_5m.example.yaml")
     assert [label for label, _ids, _note in rule_book_plan(five)] == labels
-    notes = {note for _label, _ids, note in rule_book_plan(cfg) if note}
+    parked = load_config("config/ema9_trend_short_optional.example.yaml")
+    parked_labels = [label for label, _ids, _note in rule_book_plan(parked)]
+    assert parked_labels == ["ema9_trend", "ema9_trend_short", "AAPL+MSFT 10-share long+short"]
+    notes = {note for _label, _ids, note in rule_book_plan(parked) if note}
     assert any("opposite_signal_in_trade" in (note or "") for note in notes)
 
 
@@ -204,8 +212,12 @@ def test_combined_only_labels_include_universe_and_size():
     assert universe_tag(tsla) == "TSLA+MU"
     assert sizing_tag(ten) == "10-share"
     assert sizing_tag(risk) == "1% risk"
-    assert combined_book_label(ten) == "AAPL+MSFT 10-share long+short"
-    assert combined_book_label(risk) == "AAPL+MSFT 1% risk long+short"
+    assert combined_book_label(ten) == "AAPL+MSFT 10-share"
+    assert combined_book_label(risk) == "AAPL+MSFT 1% risk"
+    parked = load_config("config/ema9_trend_short_optional.example.yaml")
+    parked_risk = load_config("config/ema9_trend_risk_short_optional.example.yaml")
+    assert combined_book_label(parked) == "AAPL+MSFT 10-share long+short"
+    assert combined_book_label(parked_risk) == "AAPL+MSFT 1% risk long+short"
     assert combined_book_label(tsla) == "TSLA+MU 10-share"
     assert combined_book_label(tsla_risk) == "TSLA+MU 1% risk"
     assert [label for label, _ids, _note in rule_book_plan(tsla, combined_only=True)] == [
