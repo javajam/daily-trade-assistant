@@ -24,11 +24,14 @@ Locked v1 rules
 - Entry fills at the **open of the bar after the reversal**.
 - Stop (default ``orb_extreme``): long → opening-range low; short → opening-range
   high. ``reversal_candle`` keeps the older stop at the reversal extreme.
-- Take profit (default ``first_profitable_close``): after entry, exit at the
+- Take profit (default ``one_r``): R is the absolute distance from entry
+  to stop (long stop = OR low, short stop = OR high under ``orb_extreme``).
+  Long TP = entry + R; short TP = entry − R. ``or_midpoint`` restores the
+  previous OR-midpoint target. ``first_profitable_close`` exits at the
   close of the first signal-timeframe bar that is profitable vs entry
-  (long: ``close > entry``; short: ``close < entry``). ``or_midpoint``
-  restores the previous OR-midpoint target. If stop and first-profit
-  (or midpoint) both trade on the same bar, the stop fills first.
+  (long: ``close > entry``; short: ``close < entry``). If stop and take
+  (1R, midpoint, or first-profit) both trade on the same bar, the stop
+  fills first.
 - Frequency (default): at most one entry per symbol per session, and only if
   that entry is before 10:30 America/New_York. No new entries at/after 10:30.
 """
@@ -48,7 +51,7 @@ Side = Literal["buy", "sell"]
 StopMode = Literal["orb_extreme", "reversal_candle"]
 ProbeMode = Literal["touch_and_band", "touch", "edge_band"]
 ReversalInRange = Literal["close", "body", "off"]
-TakeProfitMode = Literal["first_profitable_close", "or_midpoint"]
+TakeProfitMode = Literal["one_r", "or_midpoint", "first_profitable_close"]
 
 
 def _aware(dt: datetime) -> datetime:
@@ -228,6 +231,21 @@ def first_profitable_close(
     return close < entry_price
 
 
+def one_r_take(
+    *,
+    side: Side,
+    entry_price: float,
+    stop: float,
+) -> Optional[float]:
+    """1R target from entry: long entry+R, short entry−R, R = |entry − stop|."""
+    risk = abs(entry_price - stop)
+    if risk <= 0:
+        return None
+    if side == "buy":
+        return entry_price + risk
+    return entry_price - risk
+
+
 @dataclass(frozen=True)
 class OrbSetup:
     symbol: str
@@ -242,7 +260,7 @@ class OrbSetup:
     stop_mode: StopMode = "orb_extreme"
     probe_mode: ProbeMode = "touch_and_band"
     reversal_in_range: ReversalInRange = "close"
-    take_profit_mode: TakeProfitMode = "first_profitable_close"
+    take_profit_mode: TakeProfitMode = "one_r"
 
     @property
     def session_date(self) -> date:
@@ -261,6 +279,11 @@ class OrbSetup:
             stop_why = "OR low" if self.side == "buy" else "OR high"
         if self.take_profit_mode == "first_profitable_close":
             take_txt = "take=first profitable signal-bar close"
+        elif self.take_profit_mode == "one_r":
+            if self.take is not None:
+                take_txt = f"take={self.take:.4f} (1R)"
+            else:
+                take_txt = "take=1R (entry ± |entry−stop|)"
         elif self.take is not None:
             take_txt = f"take={self.take:.4f} (OR midpoint)"
         else:
@@ -403,7 +426,7 @@ def _setup_from_pair(
     probe_mode: ProbeMode = "touch_and_band",
     edge_pct: float = 0.05,
     reversal_in_range: ReversalInRange = "close",
-    take_profit_mode: TakeProfitMode = "first_profitable_close",
+    take_profit_mode: TakeProfitMode = "one_r",
 ) -> Optional[OrbSetup]:
     zone = opening_range.classify_probe(probe, probe_mode=probe_mode, edge_pct=edge_pct)
     if zone is None:
@@ -418,9 +441,17 @@ def _setup_from_pair(
         side = "buy"
     if not reversal_in_opening_range(reversal, opening_range, reversal_in_range):
         return None
+    stop = stop_price(
+        zone=zone,
+        opening_range=opening_range,
+        reversal=reversal,
+        stop_mode=stop_mode,
+    )
     take: Optional[float]
     if take_profit_mode == "or_midpoint":
         take = opening_range.midpoint
+    elif take_profit_mode == "one_r" and entry_bar is not None:
+        take = one_r_take(side=side, entry_price=entry_bar.open, stop=stop)
     else:
         take = None
     return OrbSetup(
@@ -430,12 +461,7 @@ def _setup_from_pair(
         side=side,
         probe=probe,
         reversal=reversal,
-        stop=stop_price(
-            zone=zone,
-            opening_range=opening_range,
-            reversal=reversal,
-            stop_mode=stop_mode,
-        ),
+        stop=stop,
         take=take,
         entry_bar=entry_bar,
         stop_mode=stop_mode,
@@ -456,7 +482,7 @@ def find_setups(
     session_close: Optional[str] = "16:00",
     stop_mode: StopMode = "orb_extreme",
     reversal_in_range: ReversalInRange = "close",
-    take_profit_mode: TakeProfitMode = "first_profitable_close",
+    take_profit_mode: TakeProfitMode = "one_r",
 ) -> list[OrbSetup]:
     """Walk probe → next-bar reversal on post-OR signal bars. Multiple setups allowed.
 
@@ -515,7 +541,7 @@ def find_session_setups(
     probe_mode: ProbeMode = "touch_and_band",
     stop_mode: StopMode = "orb_extreme",
     reversal_in_range: ReversalInRange = "close",
-    take_profit_mode: TakeProfitMode = "first_profitable_close",
+    take_profit_mode: TakeProfitMode = "one_r",
 ) -> tuple[Optional[OpeningRange], list[OrbSetup]]:
     rng = resolve_opening_range(
         orb_bars=orb_bars,
@@ -556,7 +582,7 @@ def find_all_setups(
     probe_mode: ProbeMode = "touch_and_band",
     stop_mode: StopMode = "orb_extreme",
     reversal_in_range: ReversalInRange = "close",
-    take_profit_mode: TakeProfitMode = "first_profitable_close",
+    take_profit_mode: TakeProfitMode = "one_r",
 ) -> list[OrbSetup]:
     dates = session_dates(orb_bars or signal_bars, session_timezone)
     found: list[OrbSetup] = []

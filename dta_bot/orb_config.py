@@ -32,10 +32,11 @@ class OrbSpec(BaseModel):
     # body = high and low both inside the OR (stricter fully-inside mode).
     # off = no in-range filter on the reversal candle.
     reversal_in_range: Literal["close", "body", "off"] = "close"
-    # first_profitable_close (default) = exit at the close of the first
-    # signal-timeframe bar that is strictly profitable vs entry.
+    # one_r (default) = 1R from entry (R = |entry − stop|; long entry+R, short entry−R).
     # or_midpoint = previous OR-midpoint take-profit.
-    take_profit_mode: Literal["first_profitable_close", "or_midpoint"] = "first_profitable_close"
+    # first_profitable_close = exit at the close of the first signal-timeframe
+    # bar that is strictly profitable vs entry.
+    take_profit_mode: Literal["one_r", "or_midpoint", "first_profitable_close"] = "one_r"
     # orb_extreme = long stop at OR low, short stop at OR high (default).
     # reversal_candle = previous stop at the reversal candle extreme.
     stop_mode: Literal["orb_extreme", "reversal_candle"] = "orb_extreme"
@@ -146,8 +147,15 @@ class OrbSpec(BaseModel):
     @field_validator("take_profit_mode", mode="before")
     @classmethod
     def _take_profit_mode(cls, v: Any) -> str:
-        key = str(v or "first_profitable_close").strip().lower().replace("-", "_")
+        key = str(v or "one_r").strip().lower().replace("-", "_")
         aliases = {
+            "one_r": "one_r",
+            "1r": "one_r",
+            "1_r": "one_r",
+            "oner": "one_r",
+            "r": "one_r",
+            "risk": "one_r",
+            "one_r_target": "one_r",
             "first_profitable_close": "first_profitable_close",
             "first_profit": "first_profitable_close",
             "first_close": "first_profitable_close",
@@ -158,7 +166,9 @@ class OrbSpec(BaseModel):
             "or_mid": "or_midpoint",
         }
         if key not in aliases:
-            raise ValueError("take_profit_mode must be 'first_profitable_close' or 'or_midpoint'")
+            raise ValueError(
+                "take_profit_mode must be 'one_r', 'or_midpoint', or 'first_profitable_close'"
+            )
         return aliases[key]
 
     @model_validator(mode="before")
@@ -178,6 +188,9 @@ class OrbSpec(BaseModel):
             "midpoint": "or_midpoint",
             "or_midpoint": "or_midpoint",
             "mid": "or_midpoint",
+            "one_r": "one_r",
+            "1r": "one_r",
+            "1_r": "one_r",
             "first_profitable_close": "first_profitable_close",
             "first_profit": "first_profitable_close",
         }

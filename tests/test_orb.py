@@ -12,6 +12,7 @@ from dta_bot.orb import (
     gate_setups,
     live_setup,
     next_signal_bar,
+    one_r_take,
     reversal_in_opening_range,
 )
 from dta_bot.orb_config import load_orb_config
@@ -41,7 +42,7 @@ def test_example_orb_config_is_paper_only():
     assert cfg.orb.session_timezone == "America/New_York"
     assert cfg.orb.on_open_position == "skip"
     assert cfg.orb.reversal_in_range == "close"
-    assert cfg.orb.take_profit_mode == "first_profitable_close"
+    assert cfg.orb.take_profit_mode == "one_r"
     assert cfg.orb.stop_mode == "orb_extreme"
     assert cfg.orb.entry_cutoff == "10:30"
     assert cfg.orb.max_trades_before_cutoff == 1
@@ -107,7 +108,7 @@ sizing: {type: shares, value: 1}
 """,
         encoding="utf-8",
     )
-    with pytest.raises(Exception, match="first_profitable_close"):
+    with pytest.raises(Exception, match="one_r"):
         load_orb_config(path)
 
 
@@ -276,8 +277,8 @@ def test_touch_plus_opposite_color_still_fires():
     assert setups[0].probe_mode == "touch"
     assert setups[0].probe.high >= rng.high
     assert setups[0].stop == 104.0
-    assert setups[0].take is None
-    assert setups[0].take_profit_mode == "first_profitable_close"
+    assert setups[0].take == pytest.approx(101.10)
+    assert setups[0].take_profit_mode == "one_r"
     hybrid = find_setups("AAPL", [mid, probe, reversal, entry], rng)
     assert len(hybrid) == 1
     assert hybrid[0].probe_mode == "touch_and_band"
@@ -337,13 +338,19 @@ def test_top_fade_short_probe_reversal_entry_stop_target():
     assert setup.entry_bar.timestamp == entry.timestamp
     assert setup.entry_bar.open == 102.55
     assert setup.stop == 104.0  # opening-range high (orb_extreme)
-    assert setup.take is None  # first_profitable_close has no price target
-    assert setup.take_profit_mode == "first_profitable_close"
+    # R = |102.55 − 104| = 1.45; short TP = 102.55 − 1.45 = 101.10
+    assert setup.take == pytest.approx(101.10)
+    assert setup.take_profit_mode == "one_r"
     assert setup.reversal_in_range == "close"
     mid_tp = find_setups(
         "AAPL", [mid, probe, reversal, entry], rng, take_profit_mode="or_midpoint"
     )
     assert mid_tp[0].take == 100.0
+    first_tp = find_setups(
+        "AAPL", [mid, probe, reversal, entry], rng, take_profit_mode="first_profitable_close"
+    )
+    assert first_tp[0].take is None
+    assert first_tp[0].take_profit_mode == "first_profitable_close"
     assert next_signal_bar([mid, probe, reversal, entry], reversal.timestamp) == entry
 
 
@@ -359,7 +366,9 @@ def test_bottom_fade_long_probe_reversal_entry_stop_target():
     assert setup.zone == "bottom"
     assert setup.side == "buy"
     assert setup.stop == 200.0  # opening-range low (orb_extreme)
-    assert setup.take is None
+    # R = |201.50 − 200| = 1.50; long TP = 201.50 + 1.50 = 203.00
+    assert setup.take == pytest.approx(203.00)
+    assert setup.take_profit_mode == "one_r"
     assert setup.entry_bar.open == 201.50
 
 
@@ -407,16 +416,17 @@ def test_demo_fixture_helpers_match_locked_math():
     setups = find_setups("AAPL", aapl["5Min"], rng)
     assert setups[0].side == "sell"
     assert setups[0].stop == 104.0
-    assert setups[0].take is None
+    assert setups[0].take == pytest.approx(101.10)
     assert setups[0].entry_bar.open == 102.55
     assert setups[0].stop_mode == "orb_extreme"
+    assert setups[0].take_profit_mode == "one_r"
 
     msft = msft_bottom_fade_long()
     rng = build_opening_range(msft["15Min"], date(2026, 9, 11), orb_timeframe="15m")
     setups = find_setups("MSFT", msft["5Min"], rng)
     assert setups[0].side == "buy"
     assert setups[0].stop == 200.0
-    assert setups[0].take is None
+    assert setups[0].take == pytest.approx(203.00)
 
     spy = spy_no_trade()
     rng = build_opening_range(spy["15Min"], date(2026, 9, 11), orb_timeframe="15m")
@@ -596,3 +606,34 @@ def test_first_profitable_close_helper():
     assert not first_profitable_close(side="buy", entry_price=100.0, close=100.0)
     assert first_profitable_close(side="sell", entry_price=100.0, close=99.99)
     assert not first_profitable_close(side="sell", entry_price=100.0, close=100.0)
+
+
+def test_one_r_take_helper():
+    assert one_r_take(side="buy", entry_price=201.50, stop=200.0) == pytest.approx(203.00)
+    assert one_r_take(side="sell", entry_price=102.55, stop=104.0) == pytest.approx(101.10)
+    assert one_r_take(side="buy", entry_price=100.0, stop=100.0) is None
+
+
+def test_one_r_alias_and_omitted_default(tmp_path):
+    path = tmp_path / "one.yaml"
+    path.write_text(
+        """
+strategy: orb_reversal
+universe: [AAPL]
+orb: {take_profit_mode: 1r}
+sizing: {type: shares, value: 1}
+""",
+        encoding="utf-8",
+    )
+    assert load_orb_config(path).orb.take_profit_mode == "one_r"
+    omitted = tmp_path / "omit.yaml"
+    omitted.write_text(
+        """
+strategy: orb_reversal
+universe: [AAPL]
+orb: {}
+sizing: {type: shares, value: 1}
+""",
+        encoding="utf-8",
+    )
+    assert load_orb_config(omitted).orb.take_profit_mode == "one_r"
