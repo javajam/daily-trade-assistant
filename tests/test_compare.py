@@ -6,7 +6,9 @@ from dta_bot.compare import (
     assumptions_orb,
     assumptions_rules,
     combined_book_effect,
+    combined_book_label,
     format_comparison_md,
+    format_monthly_side_by_side,
     format_side_by_side_table,
     pattern_hits_from_result,
     rank_books,
@@ -14,6 +16,8 @@ from dta_bot.compare import (
     run_rule_books,
     sample_size_caveat,
     session_gate_suffix,
+    sizing_tag,
+    universe_tag,
 )
 from dta_bot.config import load_config
 from dta_bot.orb_config import load_orb_config
@@ -181,6 +185,78 @@ def test_ema9_rule_book_plan_isolates_each_entry():
     assert labels == ["ema9_trend"]
     five = load_config("config/ema9_trend_5m.example.yaml")
     assert [label for label, _ids, _note in rule_book_plan(five)] == labels
+
+
+def test_combined_only_labels_include_universe_and_size():
+    ten = load_config("config/ema9_trend.example.yaml")
+    risk = load_config("config/ema9_trend_risk.example.yaml")
+    tsla = load_config("config/ema9_trend_tsla_mu.example.yaml")
+    tsla_risk = load_config("config/ema9_trend_risk_tsla_mu.example.yaml")
+    assert universe_tag(ten) == "AAPL+MSFT"
+    assert universe_tag(tsla) == "TSLA+MU"
+    assert sizing_tag(ten) == "10-share"
+    assert sizing_tag(risk) == "1% risk"
+    assert combined_book_label(ten) == "AAPL+MSFT 10-share"
+    assert combined_book_label(risk) == "AAPL+MSFT 1% risk"
+    assert combined_book_label(tsla) == "TSLA+MU 10-share"
+    assert combined_book_label(tsla_risk) == "TSLA+MU 1% risk"
+    assert [label for label, _ids, _note in rule_book_plan(tsla, combined_only=True)] == [
+        "TSLA+MU 10-share"
+    ]
+    gated = " (cutoff 12:00, flat 15:55, lock +1.0%)"
+    runs = run_rule_books(
+        tsla,
+        {},
+        starting_equity=100_000,
+        commission=0.0,
+        slippage_pct=0.0,
+        data_source="fixture",
+        assumptions=["x"],
+        label_prefix="15m",
+        combined_only=True,
+    )
+    assert [block["label"] for block in runs] == [f"15m TSLA+MU 10-share{gated}"]
+
+
+def test_format_monthly_side_by_side_lists_each_month():
+    left = {
+        "label": "TSLA+MU 10-share",
+        "period_stats": {
+            "months": [
+                {
+                    "year": 2026,
+                    "calendar_month": 7,
+                    "pnl": 10.0,
+                    "trades": 2,
+                    "win_rate_pct": 50.0,
+                },
+                {
+                    "year": 2026,
+                    "calendar_month": 8,
+                    "pnl": -5.0,
+                    "trades": 1,
+                    "win_rate_pct": 0.0,
+                },
+            ]
+        },
+    }
+    right = {
+        "label": "AAPL+MSFT 10-share",
+        "period_stats": {
+            "months": [
+                {
+                    "year": 2026,
+                    "calendar_month": 8,
+                    "pnl": 20.0,
+                    "trades": 3,
+                    "win_rate_pct": 66.67,
+                }
+            ]
+        },
+    }
+    table = "\n".join(format_monthly_side_by_side([left, right]))
+    assert "| 2026-07 | $10.00 (2t, 50.00%) | — |" in table
+    assert "| 2026-08 | $-5.00 (1t, 0.00%) | $20.00 (3t, 66.67%) |" in table
 
 
 def test_run_rule_books_prefixes_and_soxl_breakout():

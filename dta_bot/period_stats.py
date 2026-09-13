@@ -61,6 +61,16 @@ def _week_label(year: int, week: int, days: list[date]) -> str:
     return f"{year}-W{week:02d} ({first.isoformat()} → {last.isoformat()})"
 
 
+def _month_key(d: date) -> tuple[int, int]:
+    return (d.year, d.month)
+
+
+def _month_label(year: int, month: int, days: list[date]) -> str:
+    first = min(days)
+    last = max(days)
+    return f"{year:04d}-{month:02d} ({first.isoformat()} → {last.isoformat()})"
+
+
 def equity_eod_by_date(equity_curve: Iterable[tuple[datetime, float]]) -> dict[date, float]:
     eod: dict[date, float] = {}
     for ts, eq in equity_curve:
@@ -149,6 +159,35 @@ def build_period_stats(
             }
         )
 
+    month_groups: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
+    for row in daily:
+        d = date.fromisoformat(row["date"])
+        month_groups[_month_key(d)].append(row)
+
+    months: list[dict[str, Any]] = []
+    for (year, month), rows in sorted(month_groups.items()):
+        days = [date.fromisoformat(r["date"]) for r in rows]
+        trades_n = sum(r["trades"] for r in rows)
+        wins_n = sum(r["wins"] for r in rows)
+        losses_n = sum(r["losses"] for r in rows)
+        pnl = sum(r["pnl"] for r in rows)
+        closed = wins_n + losses_n
+        months.append(
+            {
+                "month": _month_label(year, month, days),
+                "year": year,
+                "calendar_month": month,
+                "trades": trades_n,
+                "wins": wins_n,
+                "losses": losses_n,
+                "win_rate_pct": (wins_n / closed * 100.0) if closed else None,
+                "pnl": pnl,
+                "pnl_pct": (pnl / starting_equity * 100.0) if starting_equity else 0.0,
+                "equity": rows[-1]["equity_eod"],
+                "session_days": len(rows),
+            }
+        )
+
     total_pnl = sum(t.pnl for t in trades)
     wins = [t for t in trades if t.pnl > 0]
     losses = [t for t in trades if t.pnl < 0]
@@ -184,7 +223,7 @@ def build_period_stats(
         ),
         "session_days": len(daily),
     }
-    return {"daily": daily, "weekly": weekly, "monthly": monthly}
+    return {"daily": daily, "weekly": weekly, "months": months, "monthly": monthly}
 
 
 def format_period_stats_md(stats: dict[str, Any]) -> list[str]:
@@ -212,6 +251,30 @@ def format_period_stats_md(stats: dict[str, Any]) -> list[str]:
         if worst:
             lines.append(
                 f"- Worst day (realized): {worst.get('date')} {_fmt_money(worst.get('pnl'))} ({worst.get('trades')} trades)"
+            )
+        lines.append("")
+
+    months = stats.get("months") or []
+    if months:
+        lines.extend(
+            [
+                "### By calendar month",
+                "",
+                "| Month | Sessions | Trades | Win rate | P&L $ | P&L % | Equity EOM |",
+                "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+            ]
+        )
+        for row in months:
+            lines.append(
+                "| {month} | {days} | {trades} | {win} | {pnl} | {pct} | {eq} |".format(
+                    month=row["month"],
+                    days=row.get("session_days"),
+                    trades=row["trades"],
+                    win=_fmt_opt_pct(row.get("win_rate_pct")),
+                    pnl=_fmt_money(row.get("pnl")),
+                    pct=_fmt_opt_pct(row.get("pnl_pct")),
+                    eq=_fmt_money(row.get("equity")),
+                )
             )
         lines.append("")
 

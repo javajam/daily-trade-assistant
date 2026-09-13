@@ -74,3 +74,47 @@ def test_daily_weekly_monthly_from_closed_trades():
     assert monthly["best_day"]["date"] == "2026-08-03"
     assert monthly["worst_day"]["date"] == "2026-08-10"
     assert monthly["win_rate_pct"] == 50.0
+    months = stats["months"]
+    assert len(months) == 1
+    assert months[0]["year"] == 2026
+    assert months[0]["calendar_month"] == 8
+    assert months[0]["trades"] == 4
+    assert months[0]["pnl"] == 200.0
+    assert months[0]["session_days"] == 3
+
+
+def test_period_stats_splits_calendar_months():
+    trades = [
+        _trade(28, 80.0, "AAPL"),
+        Trade(
+            rule_id="ema9_trend",
+            symbol="TSLA",
+            qty=10,
+            side="buy",
+            entry_time=datetime(2026, 9, 2, 14, 0, tzinfo=timezone.utc),
+            entry_price=200.0,
+            exit_time=datetime(2026, 9, 2, 18, 0, tzinfo=timezone.utc),
+            exit_price=210.0,
+            pnl=-40.0,
+            pnl_pct=-2.0,
+            exit_reason="stop",
+        ),
+    ]
+    curve = [
+        (_ts(28, 20, 0), 100_080.0),
+        (datetime(2026, 9, 2, 20, 0, tzinfo=timezone.utc), 100_040.0),
+    ]
+    stats = build_period_stats(
+        trades=trades,
+        equity_curve=curve,
+        starting_equity=100_000.0,
+        ending_equity=100_040.0,
+    )
+    months = {row["calendar_month"]: row for row in stats["months"]}
+    assert set(months) == {8, 9}
+    assert months[8]["trades"] == 1
+    assert months[8]["pnl"] == 80.0
+    assert months[9]["trades"] == 1
+    assert months[9]["pnl"] == -40.0
+    assert stats["monthly"]["trades"] == 2
+    assert stats["monthly"]["total_pnl"] == 40.0

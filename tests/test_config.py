@@ -149,6 +149,40 @@ def test_ema9_trend_bracket_1515_keeps_prior_cutoff():
     assert cfg.settings.flatten_by == "15:55"
 
 
+def test_ema9_trend_tsla_mu_configs_load():
+    ten = load_config("config/ema9_trend_tsla_mu.example.yaml")
+    assert ten.universe == ["TSLA", "MU"]
+    assert [r.id for r in ten.rules] == ["ema9_trend"]
+    rule = ten.rules[0]
+    assert rule.symbols == ["TSLA", "MU"]
+    assert rule.action.size and rule.action.size.type == "shares"
+    assert rule.action.size.value == 10
+    assert rule.action.stop_mode == "lock_plus"
+    assert rule.action.stop_loss_pct == 1.0
+    assert rule.action.take_profit_pct is None
+    assert has_noon_stack(rule.when)
+    rsi = find_rsi_condition(rule.when)
+    assert rsi is not None and rsi.below == 70
+    assert ten.settings.entry_cutoff == "12:00"
+    assert ten.settings.flatten_by == "15:55"
+    assert ten.settings.timeframe == "15Min"
+    assert ten.all_symbol_timeframes() == {("TSLA", "15Min"), ("MU", "15Min")}
+
+    risk = load_config("config/ema9_trend_risk_tsla_mu.example.yaml")
+    assert risk.universe == ["TSLA", "MU"]
+    rrule = risk.rules[0]
+    assert rrule.action.size is not None
+    assert rrule.action.size.type == "risk_pct"
+    assert rrule.action.size.equity_risk == 0.01
+    assert rrule.action.size.stop_pct == 1.0
+    assert rrule.action.stop_mode == "lock_plus"
+    assert rrule.action.take_profit_pct is None
+    assert has_noon_stack(rrule.when)
+    assert risk.settings.entry_cutoff == "12:00"
+    assert risk.settings.flatten_by == "15:55"
+    assert risk.all_symbol_timeframes() == {("TSLA", "15Min"), ("MU", "15Min")}
+
+
 def test_ema9_trend_bracket_soxl_includes_soxl():
     cfg = load_config("config/ema9_trend_bracket_soxl.example.yaml")
     assert cfg.universe == ["AAPL", "MSFT", "SOXL"]
