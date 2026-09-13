@@ -175,7 +175,7 @@ def test_run_rule_books_prefixes_and_soxl_breakout():
         breakout_symbols=["SOXL"],
     )
     labels = [block["label"] for block in runs]
-    gated = " (cutoff 12:00, flat 15:55)"
+    gated = " (cutoff 12:00, flat 15:55, MA-cross)"
     assert f"15m ema9_trend{gated}" in labels
     assert f"15m ema9_trend SOXL{gated}" in labels
     soxl = next(block for block in runs if block["label"] == f"15m ema9_trend SOXL{gated}")

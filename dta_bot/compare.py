@@ -376,6 +376,13 @@ def session_gate_suffix(config: BotConfig) -> str:
     )
     if be:
         bits.append(f"BE {be}")
+    exits = {
+        r.action.exit
+        for r in config.rules
+        if r.enabled and r.action.type != "close"
+    }
+    if exits == {"ma_cross"}:
+        bits.append("MA-cross")
     return " (" + ", ".join(bits) + ")"
 
 
