@@ -32,11 +32,15 @@ class OrbSpec(BaseModel):
     # body = high and low both inside the OR (stricter fully-inside mode).
     # off = no in-range filter on the reversal candle.
     reversal_in_range: Literal["close", "body", "off"] = "close"
-    # or_midpoint (default) = (or_high + or_low) / 2 take-profit.
+    # ema_cross (default) = exit at the first post-entry signal-bar close on
+    # the other side of EMA(ema_period): long close < ema, short close > ema.
+    # or_midpoint = (or_high + or_low) / 2 take-profit.
     # one_r = 1R from entry (R = |entry − stop|; long entry+R, short entry−R).
     # first_profitable_close = exit at the close of the first signal-timeframe
     # bar that is strictly profitable vs entry.
-    take_profit_mode: Literal["one_r", "or_midpoint", "first_profitable_close"] = "or_midpoint"
+    take_profit_mode: Literal[
+        "ema_cross", "one_r", "or_midpoint", "first_profitable_close"
+    ] = "ema_cross"
     # EMA filter on the reversal candle (signal timeframe). Default on:
     # long close > EMA(period), short close < EMA(period).
     ema_filter: bool = True
@@ -201,8 +205,14 @@ class OrbSpec(BaseModel):
     @field_validator("take_profit_mode", mode="before")
     @classmethod
     def _take_profit_mode(cls, v: Any) -> str:
-        key = str(v or "or_midpoint").strip().lower().replace("-", "_")
+        key = str(v or "ema_cross").strip().lower().replace("-", "_")
         aliases = {
+            "ema_cross": "ema_cross",
+            "ema": "ema_cross",
+            "ema9": "ema_cross",
+            "cross": "ema_cross",
+            "ema_exit": "ema_cross",
+            "close_vs_ema": "ema_cross",
             "one_r": "one_r",
             "1r": "one_r",
             "1_r": "one_r",
@@ -221,7 +231,8 @@ class OrbSpec(BaseModel):
         }
         if key not in aliases:
             raise ValueError(
-                "take_profit_mode must be 'one_r', 'or_midpoint', or 'first_profitable_close'"
+                "take_profit_mode must be 'ema_cross', 'one_r', 'or_midpoint', "
+                "or 'first_profitable_close'"
             )
         return aliases[key]
 
@@ -247,6 +258,8 @@ class OrbSpec(BaseModel):
             "1_r": "one_r",
             "first_profitable_close": "first_profitable_close",
             "first_profit": "first_profitable_close",
+            "ema_cross": "ema_cross",
+            "ema": "ema_cross",
         }
         mapped = aliases.get(key)
         if mapped:

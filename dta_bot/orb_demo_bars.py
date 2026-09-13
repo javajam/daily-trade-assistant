@@ -54,6 +54,8 @@ def aapl_top_fade_short() -> dict[str, list[Bar]]:
         _bar(25, 103.70, 103.90, 102.50, 102.60),
         _bar(30, 102.55, 102.70, 102.40, 102.45),
         _bar(35, 102.40, 102.50, 99.80, 100.10),
+        # 10:10: close back above EMA9 so the default ema_cross short can take.
+        _bar(40, 100.20, 103.20, 100.10, 103.00),
     ]
     return {"15Min": [premkt, orb], "5Min": signal}
 
@@ -69,6 +71,8 @@ def msft_bottom_fade_long() -> dict[str, list[Bar]]:
         _bar(25, 200.40, 201.50, 200.20, 201.40),
         _bar(30, 201.50, 201.80, 201.30, 201.60),
         _bar(35, 201.60, 205.20, 201.40, 204.80),
+        # 10:10: close back below EMA9 so the default ema_cross long can take.
+        _bar(40, 204.50, 204.70, 201.00, 201.20),
     ]
     return {"15Min": [orb], "5Min": signal}
 

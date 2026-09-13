@@ -9,6 +9,7 @@ from dta_bot.orb import (
     build_opening_range,
     ema_through,
     find_setups,
+    ema_cross_exit,
     first_profitable_close,
     gate_setups,
     live_setup,
@@ -57,7 +58,7 @@ def test_example_orb_config_is_paper_only():
     assert cfg.orb.session_timezone == "America/New_York"
     assert cfg.orb.on_open_position == "skip"
     assert cfg.orb.reversal_in_range == "close"
-    assert cfg.orb.take_profit_mode == "or_midpoint"
+    assert cfg.orb.take_profit_mode == "ema_cross"
     assert cfg.orb.ema_filter is True
     assert cfg.orb.ema_period == 9
     assert cfg.orb.ema_require_open is False
@@ -127,7 +128,7 @@ sizing: {type: shares, value: 1}
 """,
         encoding="utf-8",
     )
-    with pytest.raises(Exception, match="one_r"):
+    with pytest.raises(Exception, match="ema_cross"):
         load_orb_config(path)
 
 
@@ -298,8 +299,8 @@ def test_touch_plus_opposite_color_still_fires():
     assert setups[0].probe_mode == "touch"
     assert setups[0].probe.high >= rng.high
     assert setups[0].stop == 104.0
-    assert setups[0].take == pytest.approx(100.0)
-    assert setups[0].take_profit_mode == "or_midpoint"
+    assert setups[0].take is None
+    assert setups[0].take_profit_mode == "ema_cross"
     hybrid = _find("AAPL", [mid, probe, reversal, entry], rng)
     assert len(hybrid) == 1
     assert hybrid[0].probe_mode == "touch_and_band"
@@ -360,9 +361,13 @@ def test_top_fade_short_probe_reversal_entry_stop_target():
     assert setup.entry_bar.timestamp == entry.timestamp
     assert setup.entry_bar.open == 102.55
     assert setup.stop == 104.0  # opening-range high (orb_extreme)
-    assert setup.take == pytest.approx(100.0)
-    assert setup.take_profit_mode == "or_midpoint"
+    assert setup.take is None
+    assert setup.take_profit_mode == "ema_cross"
     assert setup.reversal_in_range == "close"
+    mid_tp = _find(
+        "AAPL", [mid, probe, reversal, entry], rng, take_profit_mode="or_midpoint"
+    )
+    assert mid_tp[0].take == pytest.approx(100.0)
     one_r = _find(
         "AAPL", [mid, probe, reversal, entry], rng, take_profit_mode="one_r"
     )
@@ -389,8 +394,8 @@ def test_bottom_fade_long_probe_reversal_entry_stop_target():
     assert setup.zone == "bottom"
     assert setup.side == "buy"
     assert setup.stop == 200.0  # opening-range low (orb_extreme)
-    assert setup.take == pytest.approx(205.0)
-    assert setup.take_profit_mode == "or_midpoint"
+    assert setup.take is None
+    assert setup.take_profit_mode == "ema_cross"
     assert setup.entry_bar.open == 201.50
     one_r = _find(
         "MSFT",
@@ -446,10 +451,10 @@ def test_demo_fixture_helpers_match_locked_math():
     setups = find_setups("AAPL", aapl["5Min"], rng)
     assert setups[0].side == "sell"
     assert setups[0].stop == 104.0
-    assert setups[0].take == pytest.approx(100.0)
+    assert setups[0].take is None
     assert setups[0].entry_bar.open == 102.55
     assert setups[0].stop_mode == "orb_extreme"
-    assert setups[0].take_profit_mode == "or_midpoint"
+    assert setups[0].take_profit_mode == "ema_cross"
     assert setups[0].ema_filter is True
     assert setups[0].ema_value is not None
     assert setups[0].reversal.close < setups[0].ema_value
@@ -459,7 +464,7 @@ def test_demo_fixture_helpers_match_locked_math():
     setups = find_setups("MSFT", msft["5Min"], rng)
     assert setups[0].side == "buy"
     assert setups[0].stop == 200.0
-    assert setups[0].take == pytest.approx(205.0)
+    assert setups[0].take is None
     assert setups[0].ema_value is not None
     assert setups[0].reversal.close > setups[0].ema_value
 
@@ -713,6 +718,14 @@ sizing: {type: shares, value: 1}
     assert cfg.orb.take_profit_mode == "or_midpoint"
 
 
+def test_ema_cross_exit_helper():
+    assert ema_cross_exit(side="buy", close=100.0, ema_value=100.01)
+    assert not ema_cross_exit(side="buy", close=100.0, ema_value=100.0)
+    assert ema_cross_exit(side="sell", close=100.01, ema_value=100.0)
+    assert not ema_cross_exit(side="sell", close=100.0, ema_value=100.0)
+    assert not ema_cross_exit(side="buy", close=99.0, ema_value=None)
+
+
 def test_first_profitable_close_helper():
     assert first_profitable_close(side="buy", entry_price=100.0, close=100.01)
     assert not first_profitable_close(side="buy", entry_price=100.0, close=100.0)
@@ -748,9 +761,20 @@ sizing: {type: shares, value: 1}
 """,
         encoding="utf-8",
     )
-    assert load_orb_config(omitted).orb.take_profit_mode == "or_midpoint"
+    assert load_orb_config(omitted).orb.take_profit_mode == "ema_cross"
     assert load_orb_config(omitted).orb.ema_filter is True
     assert load_orb_config(omitted).orb.ema_period == 9
+    alias = tmp_path / "ema.yaml"
+    alias.write_text(
+        """
+strategy: orb_reversal
+universe: [AAPL]
+orb: {take_profit_mode: ema9}
+sizing: {type: shares, value: 1}
+""",
+        encoding="utf-8",
+    )
+    assert load_orb_config(alias).orb.take_profit_mode == "ema_cross"
 
 
 def test_reversal_clears_ema_long_and_short():

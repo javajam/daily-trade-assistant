@@ -14,6 +14,8 @@ from dta_bot.orb import (
     OpeningRange,
     OrbSetup,
     bar_session_date,
+    ema_cross_exit,
+    ema_through,
     find_all_setups,
     find_session_setups,
     first_profitable_close,
@@ -275,6 +277,7 @@ def _order_take_price(
     if mode == "or_midpoint":
         return setup.take
     if mode != "one_r":
+        # ema_cross / first_profitable_close are close-based; no resting TP price.
         return None
     if setup.take is not None:
         return setup.take
@@ -335,6 +338,32 @@ def last_reversal_ts(state: BotState, symbol: str) -> Optional[datetime]:
         if key.startswith(prefix):
             times.append(parse_ts(key[len(prefix) :]))
     return max(times) if times else None
+
+
+def ema_cross_flatten_bar(
+    position: Position,
+    signal_bars: list[Bar],
+    *,
+    after: Optional[datetime],
+    period: int = 9,
+) -> Optional[Bar]:
+    """Latest closed signal bar after entry that has crossed to the other side of EMA.
+
+    ``after`` is the reversal timestamp (entry is the next bar). Long exits when
+    ``close < ema``; short when ``close > ema``. If we cannot prove the bar
+    closed after entry or EMA is unavailable, do not flatten — stop still protects.
+    """
+    if after is None or not signal_bars:
+        return None
+    later = [b for b in signal_bars if _aware_ts(b.timestamp) > _aware_ts(after)]
+    if not later:
+        return None
+    last = max(later, key=lambda b: _aware_ts(b.timestamp))
+    side = "buy" if str(position.side).lower() in {"buy", "long"} else "sell"
+    ema_value = ema_through(signal_bars, last, period)
+    if ema_cross_exit(side=side, close=last.close, ema_value=ema_value):
+        return last
+    return None
 
 
 def first_profit_flatten_bar(

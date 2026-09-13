@@ -46,7 +46,7 @@ def test_assumptions_orb_document_new_defaults():
     cfg = load_orb_config("config/orb_reversal.example.yaml")
     notes = assumptions_orb("commission=$0.00/fill, slippage=0.0%", 100_000.0, cfg)
     assert any("opening-range extreme" in n for n in notes)
-    assert any("or_midpoint" in n and "OR midpoint" in n for n in notes)
+    assert any("ema_cross" in n and "close < EMA" in n for n in notes)
     assert any("EMA" in n and "ema_filter: true" in n for n in notes)
     assert any("or_low <= close <= or_high" in n for n in notes)
     assert any("touch_and_band" in n and "high >= OR high" in n and "edge band" in n for n in notes)
@@ -64,6 +64,11 @@ def test_assumptions_orb_document_new_defaults():
     old_notes = assumptions_orb("commission=$0.00/fill, slippage=0.0%", 100_000.0, old)
     assert any("reversal candle extreme" in n for n in old_notes)
     assert any("no clock cutoff" in n for n in old_notes)
+    mid = cfg.model_copy(
+        update={"orb": cfg.orb.model_copy(update={"take_profit_mode": "or_midpoint", "reversal_in_range": "off"})}
+    )
+    mid_notes = assumptions_orb("commission=$0.00/fill, slippage=0.0%", 100_000.0, mid)
+    assert any("or_midpoint" in n and "OR midpoint" in n for n in mid_notes)
     one_r = cfg.model_copy(
         update={"orb": cfg.orb.model_copy(update={"take_profit_mode": "one_r", "reversal_in_range": "off"})}
     )

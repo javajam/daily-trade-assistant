@@ -31,14 +31,17 @@
 #      long  → opening-range low  (bottom of the range)
 #      short → opening-range high (top of the range)
 #    Previous behavior is stop_mode: reversal_candle (reversal low/high).
-# 8. Take profit (take_profit_mode: or_midpoint, default):
-#      (or_high + or_low) / 2. one_r is 1R from entry
+# 8. Take profit (take_profit_mode: ema_cross, default):
+#      exit at the close of the first signal-timeframe bar after
+#      entry whose close is on the other side of the same EMA used
+#      by the entry filter. Long: close < ema; short: close > ema.
+#      or_midpoint is (or_high + or_low) / 2. one_r is 1R from entry
 #      (R = |entry − stop|; long TP = entry + R; short TP = entry − R).
 #      first_profitable_close exits at the close of the first
 #      signal-timeframe bar that is strictly profitable vs entry
 #      (long: close > entry; short: close < entry). If stop and take
-#      (1R, midpoint, or first-profit) both trade on the same bar,
-#      the stop fills first.
+#      (EMA-cross, 1R, midpoint, or first-profit) both trade on the
+#      same bar, the stop fills first.
 # 9. High-vol gate (min_or_height_pct: 0.01, default = 1%):
 #      trade only when (or_high - or_low) / or_open >= min_or_height_pct.
 #      Denominator is the OR candle's open; if that print is missing,
@@ -89,7 +92,7 @@ orb:
   edge_pct: 0.05                   # used by touch_and_band / edge_band; fraction of OR height (0.05 = 5%)
   on_open_position: skip           # skip | replace
   reversal_in_range: close         # close | body | off  (body = high+low inside OR)
-  take_profit_mode: or_midpoint    # or_midpoint | one_r | first_profitable_close
+  take_profit_mode: ema_cross      # ema_cross | or_midpoint | one_r | first_profitable_close
   ema_filter: true                 # reversal close vs EMA(ema_period) on signal TF
   ema_period: 9
   ema_require_open: false          # also require open on the same side of the EMA

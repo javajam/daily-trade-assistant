@@ -27,6 +27,8 @@ from dta_bot.engine import BarMap
 from dta_bot.models import Account
 from dta_bot.orb import (
     OrbSetup,
+    ema_cross_exit,
+    ema_through,
     find_all_setups,
     first_profitable_close,
     gate_setups,
@@ -236,8 +238,8 @@ def run_orb_backtest(
 
         # 2) Stop / take on the bar that just completed (after any fill at its open).
         #    Stop is always checked first. one_r / or_midpoint use a price target
-        #    on the lot. first_profitable_close then exits at this bar's close if
-        #    it is strictly profitable vs entry. Same-bar stop + take → stop wins.
+        #    on the lot. ema_cross / first_profitable_close then exit at this
+        #    bar's close. Same-bar stop + take → stop wins.
         for symbol, tf, bar in closing:
             last_price[symbol] = bar.close
             survivors: list[OpenLot] = []
@@ -250,6 +252,12 @@ def run_orb_backtest(
                     if first_profitable_close(
                         side=lot.side, entry_price=lot.entry_price, close=bar.close
                     ):
+                        hit = ("take", bar.close)
+                if hit is None and config.orb.take_profit_mode == "ema_cross":
+                    ema_val = ema_through(
+                        series_map.get((symbol, tf), []), bar, config.orb.ema_period
+                    )
+                    if ema_cross_exit(side=lot.side, close=bar.close, ema_value=ema_val):
                         hit = ("take", bar.close)
                 if hit is None:
                     survivors.append(lot)

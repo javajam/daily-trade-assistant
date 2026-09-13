@@ -233,7 +233,7 @@ A second YAML strategy (`strategy: orb_reversal`) fades failed probes of the ope
 5. **EMA filter** — default `orb.ema_filter: true`, `orb.ema_period: 9`. Compute EMA(period) on **signal-timeframe** closes through the reversal bar (inclusive). Long: reversal `close > ema9`; short: `close < ema9`. Set `ema_require_open: true` to also require the reversal open on the same side of the EMA (default is close only). If EMA cannot be computed (fewer than `ema_period` closes), skip the entry. Set `ema_filter: false` to disable.
 6. **Entry** — fill at the **open of the bar after the reversal**.
 7. **Stop** — default `orb.stop_mode: orb_extreme`: long → opening-range low; short → opening-range high. Set `reversal_candle` to restore the previous stop at the reversal candle extreme.
-8. **Take profit** — default `orb.take_profit_mode: or_midpoint`: `(or_high + or_low) / 2`. Set `one_r` for a 1R target (R = |entry − stop|; long TP = entry + R; short TP = entry − R). Set `first_profitable_close` to exit at the close of the first signal-timeframe bar that is strictly profitable vs entry (long: `close > entry`; short: `close < entry`). If stop and take (1R, midpoint, or first-profit) both trade on the same bar, the stop fills first.
+8. **Take profit** — default `orb.take_profit_mode: ema_cross`: exit at the close of the first signal-timeframe bar after entry whose close is on the other side of the same EMA used by the entry filter (long: `close < ema9`; short: `close > ema9`). Set `or_midpoint` for `(or_high + or_low) / 2`. Set `one_r` for a 1R target (R = |entry − stop|; long TP = entry + R; short TP = entry − R). Set `first_profitable_close` to exit at the close of the first signal-timeframe bar that is strictly profitable vs entry (long: `close > entry`; short: `close < entry`). If stop and take (EMA-cross, 1R, midpoint, or first-profit) both trade on the same bar, the stop fills first.
 9. **High-vol gate** — default `orb.min_or_height_pct: 0.01` (1%). Trade only when `(or_high − or_low) / or_open >= 1%`. Denominator is the **OR candle open**; if that print is missing, fall back to the **OR midpoint**. Below the threshold, skip the symbol for that session (no entries). Set `0` / `null` to disable.
 10. **Frequency** — default is **at most one entry per symbol per session, and only if that entry is before 10:30 America/New_York** (`entry_cutoff: "10:30"`, `max_trades_before_cutoff: 1`, `allow_entries_after_cutoff: false`). No new entries at/after 10:30. Still **one open position per symbol**; a new signal is **skipped** while that symbol is still in a trade (`orb.on_open_position: skip`). Set `replace` to close/replace. Set `allow_entries_after_cutoff: true` to also take post-cutoff signals, or `entry_cutoff: null` to drop the clock gate.
 11. **Universe** — YAML list (example: AAPL, MSFT, SPY, SOXL). A morning screener will populate this later; edit the list by hand for now.
@@ -261,7 +261,7 @@ orb:
   edge_pct: 0.05              # used by touch_and_band / edge_band; fraction of OR height (not "5")
   on_open_position: skip      # skip | replace
   reversal_in_range: close    # close | body | off
-  take_profit_mode: or_midpoint  # or_midpoint | one_r | first_profitable_close
+  take_profit_mode: ema_cross    # ema_cross | or_midpoint | one_r | first_profitable_close
   ema_filter: true            # reversal close vs EMA(ema_period) on signal TF
   ema_period: 9
   ema_require_open: false     # also require open on the same side of the EMA
@@ -284,7 +284,7 @@ python -m dta_bot evaluate --config config/orb_reversal.example.yaml --fixture c
 python -m dta_bot backtest --config config/orb_reversal.example.yaml --fixture config/orb_sample_bars.json
 ```
 
-The sample tape is one RTH Friday: **AAPL** top-edge hybrid probe fade short (touch OR high and close in the 5% band; reversal close inside the OR and below EMA9; stop = opening-range high 104; take = OR midpoint 100), **MSFT** bottom-edge hybrid probe fade long (touch OR low and close in the 5% band; reversal close inside the OR and above EMA9; stop = opening-range low 200; take = OR midpoint 205), **SPY** no trade (no qualifying probe, then a same-color “reversal”). Both fixture entries are before 10:30 ET, so they pass the default morning gate.
+The sample tape is one RTH Friday: **AAPL** top-edge hybrid probe fade short (touch OR high and close in the 5% band; reversal close inside the OR and below EMA9; stop = opening-range high 104; take = first post-entry 5m close above EMA9), **MSFT** bottom-edge hybrid probe fade long (touch OR low and close in the 5% band; reversal close inside the OR and above EMA9; stop = opening-range low 200; take = first post-entry 5m close below EMA9), **SPY** no trade (no qualifying probe, then a same-color “reversal”). Both fixture entries are before 10:30 ET, so they pass the default morning gate.
 
 Yahoo (no Alpaca keys) or Alpaca paper data:
 

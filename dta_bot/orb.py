@@ -31,13 +31,16 @@ Locked v1 rules
 - Entry fills at the **open of the bar after the reversal**.
 - Stop (default ``orb_extreme``): long → opening-range low; short → opening-range
   high. ``reversal_candle`` keeps the older stop at the reversal extreme.
-- Take profit (default ``or_midpoint``): ``(or_high + or_low) / 2``.
+- Take profit (default ``ema_cross``): exit at the close of the first
+  signal-timeframe bar after entry whose close is on the other side of
+  the same EMA used by the entry filter. Long: ``close < ema``; short:
+  ``close > ema``. ``or_midpoint`` is ``(or_high + or_low) / 2``.
   ``one_r`` is 1R from entry (R = |entry − stop|; long TP = entry + R;
   short TP = entry − R). ``first_profitable_close`` exits at the close
   of the first signal-timeframe bar that is profitable vs entry
   (long: ``close > entry``; short: ``close < entry``). If stop and take
-  (1R, midpoint, or first-profit) both trade on the same bar, the stop
-  fills first.
+  (EMA-cross, 1R, midpoint, or first-profit) both trade on the same bar,
+  the stop fills first.
 - High-vol gate (default ``min_or_height_pct`` 0.01 = 1%): trade only when
   ``(or_high - or_low) / or_open >= min_or_height_pct``. Denominator is the
   OR candle's open; if that print is missing, fall back to the OR midpoint.
@@ -63,7 +66,7 @@ Side = Literal["buy", "sell"]
 StopMode = Literal["orb_extreme", "reversal_candle"]
 ProbeMode = Literal["touch_and_band", "touch", "edge_band"]
 ReversalInRange = Literal["close", "body", "off"]
-TakeProfitMode = Literal["one_r", "or_midpoint", "first_profitable_close"]
+TakeProfitMode = Literal["ema_cross", "one_r", "or_midpoint", "first_profitable_close"]
 
 
 def _aware(dt: datetime) -> datetime:
@@ -267,6 +270,23 @@ def first_profitable_close(
     return close < entry_price
 
 
+def ema_cross_exit(
+    *,
+    side: Side,
+    close: float,
+    ema_value: Optional[float],
+) -> bool:
+    """True when a post-entry close has crossed to the other side of the EMA.
+
+    Long: ``close < ema``. Short: ``close > ema``. A missing EMA does not exit.
+    """
+    if ema_value is None:
+        return False
+    if side == "buy":
+        return close < ema_value
+    return close > ema_value
+
+
 def one_r_take(
     *,
     side: Side,
@@ -337,7 +357,7 @@ class OrbSetup:
     stop_mode: StopMode = "orb_extreme"
     probe_mode: ProbeMode = "touch_and_band"
     reversal_in_range: ReversalInRange = "close"
-    take_profit_mode: TakeProfitMode = "or_midpoint"
+    take_profit_mode: TakeProfitMode = "ema_cross"
     ema_filter: bool = True
     ema_period: int = 9
     ema_require_open: bool = False
@@ -358,7 +378,12 @@ class OrbSetup:
             stop_why = "reversal candle extreme"
         else:
             stop_why = "OR low" if self.side == "buy" else "OR high"
-        if self.take_profit_mode == "first_profitable_close":
+        if self.take_profit_mode == "ema_cross":
+            take_txt = (
+                f"take=first post-entry close "
+                f"{'below' if self.side == 'buy' else 'above'} EMA{self.ema_period}"
+            )
+        elif self.take_profit_mode == "first_profitable_close":
             take_txt = "take=first profitable signal-bar close"
         elif self.take_profit_mode == "one_r":
             if self.take is not None:
@@ -520,7 +545,7 @@ def _setup_from_pair(
     probe_mode: ProbeMode = "touch_and_band",
     edge_pct: float = 0.05,
     reversal_in_range: ReversalInRange = "close",
-    take_profit_mode: TakeProfitMode = "or_midpoint",
+    take_profit_mode: TakeProfitMode = "ema_cross",
     ema_filter: bool = True,
     ema_period: int = 9,
     ema_require_open: bool = False,
@@ -591,7 +616,7 @@ def find_setups(
     session_close: Optional[str] = "16:00",
     stop_mode: StopMode = "orb_extreme",
     reversal_in_range: ReversalInRange = "close",
-    take_profit_mode: TakeProfitMode = "or_midpoint",
+    take_profit_mode: TakeProfitMode = "ema_cross",
     ema_filter: bool = True,
     ema_period: int = 9,
     ema_require_open: bool = False,
@@ -659,7 +684,7 @@ def find_session_setups(
     probe_mode: ProbeMode = "touch_and_band",
     stop_mode: StopMode = "orb_extreme",
     reversal_in_range: ReversalInRange = "close",
-    take_profit_mode: TakeProfitMode = "or_midpoint",
+    take_profit_mode: TakeProfitMode = "ema_cross",
     ema_filter: bool = True,
     ema_period: int = 9,
     ema_require_open: bool = False,
@@ -706,7 +731,7 @@ def find_all_setups(
     probe_mode: ProbeMode = "touch_and_band",
     stop_mode: StopMode = "orb_extreme",
     reversal_in_range: ReversalInRange = "close",
-    take_profit_mode: TakeProfitMode = "or_midpoint",
+    take_profit_mode: TakeProfitMode = "ema_cross",
     ema_filter: bool = True,
     ema_period: int = 9,
     ema_require_open: bool = False,
