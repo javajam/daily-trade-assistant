@@ -404,6 +404,75 @@ def _normalize_cross_direction(raw: Any, default: str = "bullish") -> str:
     return direction
 
 
+_PAIR_CROSS_KEYS = ("ema_sma_cross", "ma_pair_cross", "ema_cross_sma")
+_RSI_LEAF_KEYS = ("rsi", "rsi_below", "rsi_above")
+
+
+def find_rsi_condition(cond: AnyCondition) -> Optional[RsiCond]:
+    """First RSI leaf in a condition tree, if any."""
+    if isinstance(cond, RsiCond):
+        return cond
+    if isinstance(cond, GroupCond):
+        for child in cond.conditions:
+            found = find_rsi_condition(child)
+            if found is not None:
+                return found
+    return None
+
+
+def has_pair_cross(cond: AnyCondition) -> bool:
+    if isinstance(cond, MaPairCrossCond):
+        return True
+    if isinstance(cond, GroupCond):
+        return any(has_pair_cross(child) for child in cond.conditions)
+    return False
+
+
+def rsi_filter_label(config: BotConfig) -> Optional[str]:
+    """Short book-label tag such as ``RSI14 < 70`` (pair-cross books only)."""
+    for rule in config.rules:
+        if not rule.enabled or rule.action.type == "close":
+            continue
+        if not has_pair_cross(rule.when):
+            continue
+        rsi_cond = find_rsi_condition(rule.when)
+        if rsi_cond is None:
+            continue
+        parts: list[str] = []
+        if rsi_cond.below is not None:
+            parts.append(f"< {rsi_cond.below:g}")
+        if rsi_cond.above is not None:
+            parts.append(f"> {rsi_cond.above:g}")
+        if not parts:
+            continue
+        return f"RSI{rsi_cond.period} {' '.join(parts)}"
+    return None
+
+
+def _lift_nested_rsi(raw: dict[str, Any]) -> dict[str, Any]:
+    """Treat ``ema_sma_cross: { ..., rsi: { period, below } }`` as a sibling rsi toggle."""
+    out = dict(raw)
+    for key in _PAIR_CROSS_KEYS:
+        block = out.get(key)
+        if not isinstance(block, dict) or "rsi" not in block:
+            continue
+        if "rsi" not in out:
+            out["rsi"] = block["rsi"]
+        out[key] = {k: v for k, v in block.items() if k != "rsi"}
+        break
+    return out
+
+
+def _pair_cross_timeframe(raw: dict[str, Any]) -> Optional[str]:
+    for key in _PAIR_CROSS_KEYS:
+        block = raw.get(key)
+        if isinstance(block, dict) and block.get("timeframe"):
+            return str(block["timeframe"])
+    if raw.get("timeframe"):
+        return str(raw["timeframe"])
+    return None
+
+
 def _parse_ma_pair_cross(raw: dict[str, Any], default_timeframe: Optional[str] = None) -> MaPairCrossCond:
     block = (
         raw.get("ema_sma_cross")
@@ -413,7 +482,7 @@ def _parse_ma_pair_cross(raw: dict[str, Any], default_timeframe: Optional[str] =
     )
     if not isinstance(block, dict):
         block = {}
-    skip = {"ema_sma_cross", "ma_pair_cross", "ema_cross_sma"}
+    skip = {*_PAIR_CROSS_KEYS, *_RSI_LEAF_KEYS}
     merged = {**block, **{k: v for k, v in raw.items() if k not in skip}}
     direction = _normalize_cross_direction(merged.get("direction") or merged.get("compare"))
     return MaPairCrossCond(
@@ -533,6 +602,26 @@ def parse_condition(raw: Any, default_timeframe: Optional[str] = None) -> AnyCon
         return GroupCond(
             kind="any",
             conditions=[parse_condition(c, default_timeframe=default_timeframe) for c in raw["any"]],
+        )
+    raw = _lift_nested_rsi(raw)
+    has_pair_cross = any(key in raw for key in _PAIR_CROSS_KEYS)
+    has_rsi = any(key in raw for key in _RSI_LEAF_KEYS)
+    if has_pair_cross and has_rsi:
+        # Sibling toggle: ema_sma_cross + rsi: { period: 14, below: 70 } → AND.
+        cross_raw = {k: v for k, v in raw.items() if k not in _RSI_LEAF_KEYS}
+        rsi_raw = {k: v for k, v in raw.items() if k in _RSI_LEAF_KEYS}
+        pair_tf = _pair_cross_timeframe(cross_raw)
+        if "rsi" in rsi_raw and isinstance(rsi_raw["rsi"], dict):
+            rsi_block = dict(rsi_raw["rsi"])
+            if not rsi_block.get("timeframe") and pair_tf:
+                rsi_block["timeframe"] = pair_tf
+            rsi_raw = {**rsi_raw, "rsi": rsi_block}
+        return GroupCond(
+            kind="all",
+            conditions=[
+                _parse_ma_pair_cross(cross_raw, default_timeframe=default_timeframe),
+                _parse_leaf(rsi_raw, default_timeframe=pair_tf or default_timeframe),
+            ],
         )
     return _parse_leaf(raw, default_timeframe=default_timeframe)
 

@@ -45,6 +45,7 @@ rules:
         sma_period: 20
         timeframe: 5m
         direction: bullish
+      # rsi: { period: 14, below: 70 }   # optional; omit = no RSI filter
     action:
       type: buy
       size:

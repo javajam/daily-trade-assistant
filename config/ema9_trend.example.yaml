@@ -5,6 +5,11 @@
 #
 #   Entry: EMA(9) crosses over SMA(20) on the signal timeframe
 #          (prev EMA9 <= prev SMA20 and curr EMA9 > curr SMA20).
+#          Optional RSI toggle (off by default): only take that cross
+#          when RSI(14) on the signal bar is below 70 —
+#            rsi: { period: 14, below: 70 }
+#          as a sibling of ema_sma_cross (or nested under it).
+#          Filtered book: config/ema9_trend_bracket_rsi.example.yaml
 #   Exit:  EMA(9) crosses under SMA(20); flatten at the *next bar open*
 #          (same fill as entries). Same-bar 1.5% stop still wins.
 #   Stop:  fixed 1.5% initial stop only. Break-even is off (omit /
@@ -57,6 +62,7 @@ rules:
         sma_period: 20
         timeframe: 15m
         direction: bullish
+      # rsi: { period: 14, below: 70 }   # optional; omit = no RSI filter
     action:
       type: buy
       size:

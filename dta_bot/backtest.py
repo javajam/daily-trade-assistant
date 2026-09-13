@@ -1114,6 +1114,8 @@ def format_report_md(payload: dict[str, Any]) -> str:
             or n.startswith("Break-even")
             or n.startswith("MA-cross exit")
             or n.startswith("Exit P&L")
+            or n.startswith("RSI filter")
+            or n.startswith("No RSI")
             or "entry_cutoff" in n
             or "session_flatten" in n
             or "armed break-even" in n

@@ -15,7 +15,13 @@ from dta_bot.backtest import (
     restrict_config,
     run_backtest,
 )
-from dta_bot.config import BotConfig, restrict_universe, timeframe_label
+from dta_bot.config import (
+    BotConfig,
+    find_rsi_condition,
+    restrict_universe,
+    rsi_filter_label,
+    timeframe_label,
+)
 from dta_bot.history import YAHOO_INTERVAL
 from dta_bot.orb_backtest import run_orb_backtest
 from dta_bot.orb_config import OrbBotConfig
@@ -334,6 +340,48 @@ def _breakeven_assumption(config: Optional[BotConfig]) -> Optional[str]:
     )
 
 
+def _rsi_filter_assumption(config: Optional[BotConfig]) -> Optional[str]:
+    if config is None:
+        return None
+    exits = {
+        rule.action.exit
+        for rule in config.rules
+        if rule.enabled and rule.action.type != "close"
+    }
+    label = rsi_filter_label(config)
+    if label:
+        rsi_cond = next(
+            (
+                found
+                for rule in config.rules
+                if rule.enabled and rule.action.type != "close"
+                for found in [find_rsi_condition(rule.when)]
+                if found is not None
+            ),
+            None,
+        )
+        period = rsi_cond.period if rsi_cond is not None else 14
+        below = rsi_cond.below if rsi_cond is not None and rsi_cond.below is not None else 70
+        noon = (
+            " (same threshold as the prior noon price-cross book)"
+            if below == 70
+            else " (tighter than the prior noon book's RSI14 < 70)"
+        )
+        return (
+            f"RSI filter on ({label}): only take the EMA/SMA pair-cross entry when "
+            f"RSI({period}) on the signal timeframe is below {below:g}{noon}. "
+            "YAML toggle is a sibling of ema_sma_cross: `rsi: { period: 14, below: 70 }`. "
+            "Omit the rsi key to disable."
+        )
+    if exits == {"ma_cross"}:
+        return (
+            "No RSI entry filter. Add a sibling of ema_sma_cross to require RSI on the "
+            "signal bar: `rsi: { period: 14, below: 70 }` (same threshold as the prior "
+            "noon price-cross book). Nested `ema_sma_cross.rsi` is also accepted."
+        )
+    return None
+
+
 def _session_gate_assumption(config: Optional[BotConfig]) -> Optional[str]:
     if config is None:
         return None
@@ -359,8 +407,9 @@ def _session_gate_assumption(config: Optional[BotConfig]) -> Optional[str]:
 def session_gate_suffix(config: BotConfig) -> str:
     """Book-label tag so gated and overnight books stay distinct."""
     s = config.settings
+    rsi_tag = rsi_filter_label(config)
     if not s.entry_cutoff and not s.flatten_by:
-        return ""
+        return f" ({rsi_tag})" if rsi_tag else ""
     bits: list[str] = []
     if s.entry_cutoff:
         bits.append(f"cutoff {s.entry_cutoff}")
@@ -383,6 +432,8 @@ def session_gate_suffix(config: BotConfig) -> str:
     }
     if exits == {"ma_cross"}:
         bits.append("MA-cross")
+    if rsi_tag:
+        bits.append(rsi_tag)
     return " (" + ", ".join(bits) + ")"
 
 
@@ -408,6 +459,9 @@ def assumptions_rules(
         f"Starting equity ${starting_equity:,.2f}. Size types: shares, percent_equity, or risk_pct "
         "(shares = floor((equity_risk * equity) / ((stop_pct/100) * price))).",
     ]
+    rsi_note = _rsi_filter_assumption(config)
+    if rsi_note:
+        notes.insert(-3, rsi_note)
     gate = _session_gate_assumption(config)
     if gate:
         notes.insert(-3, gate)
@@ -687,6 +741,21 @@ def combined_book_effect(runs: list[dict[str, Any]]) -> Optional[str]:
     )
 
 
+def _signal_mix(report: dict[str, Any]) -> str:
+    n = int(report.get("signals") or 0)
+    by_symbol = report.get("signals_by_symbol") or {}
+    if not by_symbol:
+        return str(n)
+    detail = ", ".join(f"{sym} {count}" for sym, count in sorted(by_symbol.items()))
+    return f"{n} ({detail})"
+
+
+def _skip_mix(report: dict[str, Any]) -> str:
+    reasons = report.get("skip_reasons") or {}
+    parts = [f"{key} {count}" for key, count in sorted(reasons.items()) if count]
+    return ", ".join(parts) if parts else "—"
+
+
 def exit_mix(report: dict[str, Any]) -> str:
     reasons = report.get("exit_reasons") or {}
     take = int(reasons.get("take") or 0)
@@ -740,6 +809,8 @@ def format_side_by_side_table(columns: list[tuple[str, dict[str, Any]]]) -> list
         return " | ".join(fmt(report) for _name, report in reports)
 
     rows = [
+        ("Signals", lambda r: _signal_mix(r)),
+        ("Skips", lambda r: _skip_mix(r)),
         ("Trades", lambda r: str(int(r.get("trades") or 0))),
         ("Win rate", lambda r: _fmt_pct(r.get("win_rate_pct"), 2)),
         ("P&L", lambda r: _fmt_money(r.get("total_pnl"))),

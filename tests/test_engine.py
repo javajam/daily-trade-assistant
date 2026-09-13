@@ -196,6 +196,54 @@ def test_ema_sma_cross_bearish_fires():
     assert "ema_sma_cross matched (bearish)" in ev.reasons[0]
 
 
+def test_ema_sma_cross_rsi_sibling_rejects_when_rsi_is_100():
+    # Flat-then-up pair-cross has no down closes → Wilder RSI is 100.
+    bars = _flat_pair()
+    cond = parse_condition(
+        {
+            "ema_sma_cross": {
+                "ema_period": 9,
+                "sma_period": 20,
+                "timeframe": "15m",
+                "direction": "bullish",
+            },
+            "rsi": {"period": 14, "below": 70},
+        }
+    )
+    ev = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): bars}, BotState())
+    assert not ev.matched
+    assert "ema_sma_cross matched (bullish)" in ev.reasons[0]
+    assert "RSI14" in ev.reasons[0]
+    assert "< 70" in ev.reasons[0]
+
+
+def test_ema_sma_cross_rsi_sibling_allows_when_below_70():
+    # Decline, flatten, then bounce: RSI stays mid/low while EMA9 crosses SMA20.
+    closes: list[float] = [20.0 - i * 0.3 for i in range(14)]
+    closes += [closes[-1]] * 10
+    closes.append(closes[-1] + 3.0)
+    bars = [
+        bar(i, c - 0.05, max(c - 0.05, c) + 0.05, min(c - 0.05, c) - 0.05, c)
+        for i, c in enumerate(closes)
+    ]
+    cond = parse_condition(
+        {
+            "ema_sma_cross": {
+                "ema_period": 9,
+                "sma_period": 20,
+                "timeframe": "15m",
+                "direction": "bullish",
+            },
+            "rsi": {"period": 14, "below": 70},
+        }
+    )
+    ev = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): bars}, BotState())
+    assert ev.matched
+    assert "ema_sma_cross matched (bullish)" in ev.reasons[0]
+    assert "RSI14" in ev.reasons[0]
+    assert "< 70.0 → True" in ev.reasons[0]
+
+
 def test_ema_cross_and_trend_filter():
     # Gentle saw keeps RSI mid-range; last two bars dip under EMA9 then cross back.
     closes: list[float] = []

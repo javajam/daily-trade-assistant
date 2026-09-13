@@ -12,6 +12,7 @@ from dta_bot.broker import build_broker, resolve_api_keys, resolve_trading_url
 from dta_bot.config import (
     BotConfig,
     condition_timeframes,
+    find_rsi_condition,
     load_config,
     restrict_universe,
     timeframe_label,
@@ -214,10 +215,19 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 f" ema_period={rule.action.exit_ema_period}"
                 f" sma_period={rule.action.exit_sma_period}"
             )
+        rsi_txt = ""
+        rsi_cond = find_rsi_condition(rule.when)
+        if rsi_cond is not None:
+            bits: list[str] = []
+            if rsi_cond.below is not None:
+                bits.append(f"< {rsi_cond.below:g}")
+            if rsi_cond.above is not None:
+                bits.append(f"> {rsi_cond.above:g}")
+            rsi_txt = f" rsi=RSI{rsi_cond.period} {' '.join(bits)}" if bits else f" rsi=RSI{rsi_cond.period}"
         print(
             f"    - {rule.id}: enabled={rule.enabled} symbols={syms} "
             f"action={rule.action.type} exit={rule.action.exit} "
-            f"cooldown={rule.cooldown_minutes}m tf={tfs}{size_txt}{be_txt}{ma_txt}"
+            f"cooldown={rule.cooldown_minutes}m tf={tfs}{size_txt}{be_txt}{ma_txt}{rsi_txt}"
         )
     return 0
 

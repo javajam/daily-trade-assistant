@@ -765,6 +765,36 @@ def test_ema_sma_cross_down_exits_at_next_open():
     assert any("Exit P&L" in n and "ma_cross" in n for n in result.report.notes)
 
 
+def test_ema_sma_cross_rsi_filter_blocks_high_rsi_entry():
+    warmup = _pair_cross_warmup()
+    fill = Bar(bar(21, 100.5, 100.8, 100.4, 100.5).timestamp, 100.5, 100.8, 100.4, 100.5, 1000)
+    rule = _buy_rule(
+        id="ema9",
+        when=parse_condition(
+            {
+                "ema_sma_cross": {
+                    "ema_period": 9,
+                    "sma_period": 20,
+                    "timeframe": "15m",
+                    "direction": "bullish",
+                },
+                "rsi": {"period": 14, "below": 70},
+            }
+        ),
+        action=ActionSpec(
+            type="buy",
+            size=SizeSpec(type="shares", value=10),
+            exit="ma_cross",
+            exit_ema_period=9,
+            exit_sma_period=20,
+            stop_loss_pct=1.5,
+        ),
+    )
+    result = run_backtest(_cfg(rule), {("AAPL", "15Min"): warmup + [fill]})
+    assert result.report.signals == 0
+    assert result.report.trades == 0
+
+
 def test_ema_sma_cross_stop_beats_cross_under_on_same_bar():
     warmup = _pair_cross_warmup()
     fill = Bar(bar(21, 100.5, 100.7, 100.4, 100.5).timestamp, 100.5, 100.7, 100.4, 100.5, 1000)

@@ -110,6 +110,15 @@ def test_assumptions_rules_mention_ma_cross():
     old = load_config("config/ema9_trend_bracket_nobe.example.yaml")
     old_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, old)
     assert any("fixed_bracket" in n for n in old_notes)
+    assert any("No RSI entry filter" in n for n in ema_notes)
+    rsi_cfg = load_config("config/ema9_trend_bracket_rsi.example.yaml")
+    rsi_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, rsi_cfg)
+    assert any("RSI filter on (RSI14 < 70)" in n for n in rsi_notes)
+    assert any("rsi: { period: 14, below: 70 }" in n for n in rsi_notes)
+    assert any("same threshold as the prior noon price-cross book" in n for n in rsi_notes)
+    sixty = load_config("config/ema9_trend_bracket_rsi60.example.yaml")
+    sixty_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, sixty)
+    assert any("RSI filter on (RSI14 < 60)" in n and "tighter than the prior noon" in n for n in sixty_notes)
 
 
 def test_pattern_hits_count_ema_cross():
@@ -178,6 +187,19 @@ def test_run_rule_books_prefixes_and_soxl_breakout():
     gated = " (cutoff 12:00, flat 15:55, MA-cross)"
     assert f"15m ema9_trend{gated}" in labels
     assert f"15m ema9_trend SOXL{gated}" in labels
+    rsi_cfg = load_config("config/ema9_trend_bracket_rsi.example.yaml")
+    rsi_runs = run_rule_books(
+        rsi_cfg,
+        {},
+        starting_equity=100_000,
+        commission=0.0,
+        slippage_pct=0.0,
+        data_source="fixture",
+        assumptions=["x"],
+        label_prefix="15m",
+    )
+    rsi_labels = [block["label"] for block in rsi_runs]
+    assert "15m ema9_trend (cutoff 12:00, flat 15:55, MA-cross, RSI14 < 70)" in rsi_labels
     soxl = next(block for block in runs if block["label"] == f"15m ema9_trend SOXL{gated}")
     assert soxl["report"]["trades"] == 0
     assert any("Isolated SOXL" in n for n in soxl["report"]["notes"])
@@ -210,6 +232,8 @@ def test_format_side_by_side_table_lists_requested_metrics():
         [("15m ema9_trend", left), ("5m ema9_trend", right)]
     )
     text = "\n".join(lines)
+    assert "| Signals |" in text
+    assert "| Skips |" in text
     assert "| Trades | 44 | 10 |" in text
     assert "| Win rate | 50.00% | 40.00% |" in text
     assert "| P&L | $1,404.89 | $100.00 |" in text
