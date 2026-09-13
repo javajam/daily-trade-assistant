@@ -1,5 +1,6 @@
 from dta_bot.cli import main
 from dta_bot.compare import (
+    assumptions_orb,
     combined_book_effect,
     format_comparison_md,
     rank_books,
@@ -7,6 +8,7 @@ from dta_bot.compare import (
     sample_size_caveat,
 )
 from dta_bot.config import load_config
+from dta_bot.orb_config import load_orb_config
 
 
 def _run(label: str, pnl_pct: float, trades: int, *, exit_only: bool = False, days: int = 60):
@@ -38,6 +40,19 @@ def _run(label: str, pnl_pct: float, trades: int, *, exit_only: bool = False, da
             "trades_by_symbol": {},
         },
     }
+
+
+def test_assumptions_orb_document_new_defaults():
+    cfg = load_orb_config("config/orb_reversal.example.yaml")
+    notes = assumptions_orb("commission=$0.00/fill, slippage=0.0%", 100_000.0, cfg)
+    assert any("opening-range extreme" in n for n in notes)
+    assert any("10:30" in n and "America/New_York" in n for n in notes)
+    old = cfg.model_copy(
+        update={"orb": cfg.orb.model_copy(update={"stop_mode": "reversal_candle", "entry_cutoff": None})}
+    )
+    old_notes = assumptions_orb("commission=$0.00/fill, slippage=0.0%", 100_000.0, old)
+    assert any("reversal candle extreme" in n for n in old_notes)
+    assert any("no clock cutoff" in n for n in old_notes)
 
 
 def test_rule_book_plan_includes_entries_and_combined():

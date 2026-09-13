@@ -65,15 +65,58 @@ YAHOO_CAP_NOTE = (
 )
 
 
-def assumptions_orb(friction: str, starting_equity: float) -> list[str]:
+def _orb_stop_assumption(config: Optional[OrbBotConfig]) -> str:
+    mode = config.orb.stop_mode if config is not None else "orb_extreme"
+    if mode == "reversal_candle":
+        return (
+            "Stop is the reversal candle extreme; take-profit is the OR midpoint "
+            "(v1; A/B tested later)."
+        )
+    return (
+        "Stop is the opening-range extreme (long → OR low, short → OR high); "
+        "take-profit remains the OR midpoint (v1; A/B tested later). "
+        "Set orb.stop_mode: reversal_candle to restore the previous candle-extreme stop."
+    )
+
+
+def _orb_frequency_assumption(config: Optional[OrbBotConfig]) -> str:
+    spec = config.orb if config is not None else None
+    cutoff = spec.entry_cutoff if spec is not None else "10:30"
+    max_n = spec.max_trades_before_cutoff if spec is not None else 1
+    allow_after = spec.allow_entries_after_cutoff if spec is not None else False
+    tz = spec.session_timezone if spec is not None else "America/New_York"
+    if not cutoff:
+        return (
+            "Multiple trades are allowed (no clock cutoff). One open position per symbol; "
+            "new signals skip while in a position unless on_open_position=replace."
+        )
+    noun = "entry" if max_n == 1 else "entries"
+    if allow_after:
+        return (
+            f"At most {max_n} {noun} per symbol per session with entry time before "
+            f"{cutoff} {tz}; additional entries at/after the cutoff are allowed. "
+            "One open position per symbol unless on_open_position=replace."
+        )
+    return (
+        f"At most {max_n} {noun} per symbol per session, and only if that entry is "
+        f"before {cutoff} {tz} (no new entries at/after the cutoff). "
+        "One open position per symbol unless on_open_position=replace."
+    )
+
+
+def assumptions_orb(
+    friction: str,
+    starting_equity: float,
+    config: Optional[OrbBotConfig] = None,
+) -> list[str]:
     return [
         "Opening range is the first orb_timeframe bar at/after 9:30 America/New_York (configurable).",
         "After the OR candle is complete, probe/reversal evaluation uses the signal timeframe.",
         "Probe = signal-bar close inside the 5% (configurable) edge band under the OR high or above the OR low.",
         "Reversal = the next signal bar, opposite color (top+bearish → short, bottom+bullish → long).",
         "Entry fills at the open of the bar after the reversal candle.",
-        "Stop is the reversal candle extreme; take-profit is the OR midpoint (v1; A/B tested later).",
-        "Multiple trades are allowed (no daily cap). One open position per symbol; new signals skip while in a position unless on_open_position=replace.",
+        _orb_stop_assumption(config),
+        _orb_frequency_assumption(config),
         "If stop and take both trade in the fill bar, the stop is assumed to fill first.",
         "A gap through stop/take fills at that bar's open.",
         "Open lots still on the last bar are flattened at the last close (exit reason eod).",

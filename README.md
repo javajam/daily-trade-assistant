@@ -232,9 +232,9 @@ A second YAML strategy (`strategy: orb_reversal`) fades failed probes of the ope
 4. **Probe** — a signal bar whose **close** is inside the top or bottom zone.
 5. **Reversal** — the **next** signal bar, opposite color: top + bearish → **short**; bottom + bullish → **long**. Same-color or doji = no trade.
 6. **Entry** — fill at the **open of the bar after the reversal**.
-7. **Stop** — long: reversal low; short: reversal high.
+7. **Stop** — default `orb.stop_mode: orb_extreme`: long → opening-range low; short → opening-range high. Set `reversal_candle` to restore the previous stop at the reversal candle extreme. Take-profit stays the OR midpoint either way.
 8. **Take profit** — OR midpoint `(or_high + or_low) / 2`. Exit style will be A/B tested later.
-9. **Frequency** — multiple trades allowed, **no daily cap**. Default is **one open position per symbol**; a new signal is **skipped** while that symbol is still in a trade (`orb.on_open_position: skip`). Set `replace` to close/replace.
+9. **Frequency** — default is **at most one entry per symbol per session, and only if that entry is before 10:30 America/New_York** (`entry_cutoff: "10:30"`, `max_trades_before_cutoff: 1`, `allow_entries_after_cutoff: false`). No new entries at/after 10:30. Still **one open position per symbol**; a new signal is **skipped** while that symbol is still in a trade (`orb.on_open_position: skip`). Set `replace` to close/replace. Set `allow_entries_after_cutoff: true` to also take post-cutoff signals, or `entry_cutoff: null` to drop the clock gate.
 10. **Universe** — YAML list (example: AAPL, MSFT, SPY). A morning screener will populate this later; edit the list by hand for now.
 
 Paper-only defaults: `settings.paper: true`, `allow_live: false`, `dry_run: true`. Live trading still requires the same triple gate as the rules bot.
@@ -258,6 +258,10 @@ orb:
   edge_pct: 0.05              # fraction of OR height (not "5")
   on_open_position: skip      # skip | replace
   take_profit: midpoint       # v1
+  stop_mode: orb_extreme      # orb_extreme | reversal_candle
+  entry_cutoff: "10:30"       # America/New_York; null disables the clock gate
+  max_trades_before_cutoff: 1 # per symbol per session
+  allow_entries_after_cutoff: false
 
 sizing:
   type: shares                # or percent_equity
@@ -272,7 +276,7 @@ python -m dta_bot evaluate --config config/orb_reversal.example.yaml --fixture c
 python -m dta_bot backtest --config config/orb_reversal.example.yaml --fixture config/orb_sample_bars.json
 ```
 
-The sample tape is one RTH Friday: **AAPL** top-zone fade short (stop = reversal high, take = OR mid 100), **MSFT** bottom-zone fade long (take = mid 205), **SPY** no trade (closes outside the band, then a same-color “reversal”).
+The sample tape is one RTH Friday: **AAPL** top-zone fade short (stop = opening-range high 104, take = OR mid 100), **MSFT** bottom-zone fade long (stop = opening-range low 200, take = mid 205), **SPY** no trade (closes outside the band, then a same-color “reversal”). Both fixture entries are before 10:30 ET, so they pass the default morning gate.
 
 Yahoo (no Alpaca keys) or Alpaca paper data:
 

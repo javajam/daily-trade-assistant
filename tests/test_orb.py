@@ -8,6 +8,7 @@ from dta_bot.orb import (
     aggregate_opening_range,
     build_opening_range,
     find_setups,
+    gate_setups,
     live_setup,
     next_signal_bar,
 )
@@ -37,6 +38,10 @@ def test_example_orb_config_is_paper_only():
     assert cfg.orb.session_timezone == "America/New_York"
     assert cfg.orb.on_open_position == "skip"
     assert cfg.orb.take_profit == "midpoint"
+    assert cfg.orb.stop_mode == "orb_extreme"
+    assert cfg.orb.entry_cutoff == "10:30"
+    assert cfg.orb.max_trades_before_cutoff == 1
+    assert cfg.orb.allow_entries_after_cutoff is False
     pairs = cfg.all_symbol_timeframes()
     assert ("AAPL", "15Min") in pairs
     assert ("AAPL", "5Min") in pairs
@@ -54,6 +59,21 @@ sizing: {type: shares, value: 1}
         encoding="utf-8",
     )
     with pytest.raises(Exception, match="0.05"):
+        load_orb_config(path)
+
+
+def test_stop_mode_must_be_known(tmp_path):
+    path = tmp_path / "bad.yaml"
+    path.write_text(
+        """
+strategy: orb_reversal
+universe: [AAPL]
+orb: {stop_mode: wick}
+sizing: {type: shares, value: 1}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="orb_extreme"):
         load_orb_config(path)
 
 
@@ -132,7 +152,7 @@ def test_top_fade_short_probe_reversal_entry_stop_target():
     assert setup.entry_bar is not None
     assert setup.entry_bar.timestamp == entry.timestamp
     assert setup.entry_bar.open == 102.55
-    assert setup.stop == 103.90  # reversal high
+    assert setup.stop == 104.0  # opening-range high (orb_extreme)
     assert setup.take == 100.0  # OR midpoint
     assert next_signal_bar([mid, probe, reversal, entry], reversal.timestamp) == entry
 
@@ -148,7 +168,7 @@ def test_bottom_fade_long_probe_reversal_entry_stop_target():
     setup = setups[0]
     assert setup.zone == "bottom"
     assert setup.side == "buy"
-    assert setup.stop == 200.20  # reversal low
+    assert setup.stop == 200.0  # opening-range low (orb_extreme)
     assert setup.take == 205.0
     assert setup.entry_bar.open == 201.50
 
@@ -196,20 +216,91 @@ def test_demo_fixture_helpers_match_locked_math():
     rng = build_opening_range(aapl["15Min"], date(2026, 9, 11), orb_timeframe="15m")
     setups = find_setups("AAPL", aapl["5Min"], rng)
     assert setups[0].side == "sell"
-    assert setups[0].stop == 103.9
+    assert setups[0].stop == 104.0
     assert setups[0].take == 100.0
     assert setups[0].entry_bar.open == 102.55
+    assert setups[0].stop_mode == "orb_extreme"
 
     msft = msft_bottom_fade_long()
     rng = build_opening_range(msft["15Min"], date(2026, 9, 11), orb_timeframe="15m")
     setups = find_setups("MSFT", msft["5Min"], rng)
     assert setups[0].side == "buy"
-    assert setups[0].stop == 200.2
+    assert setups[0].stop == 200.0
     assert setups[0].take == 205.0
 
     spy = spy_no_trade()
     rng = build_opening_range(spy["15Min"], date(2026, 9, 11), orb_timeframe="15m")
     assert find_setups("SPY", spy["5Min"], rng) == []
+
+
+def test_reversal_candle_stop_uses_candle_extreme():
+    rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    probe = _b(20, 103.20, 103.85, 103.10, 103.80)
+    reversal = _b(25, 103.70, 103.90, 102.50, 102.60)
+    entry = _b(30, 102.55, 102.70, 102.40, 102.45)
+    setups = find_setups(
+        "AAPL",
+        [_b(15, 101.0, 101.4, 100.6, 100.8), probe, reversal, entry],
+        rng,
+        stop_mode="reversal_candle",
+    )
+    assert setups[0].stop == 103.90
+    assert setups[0].stop_mode == "reversal_candle"
+
+
+def test_gate_keeps_first_pre_cutoff_entry_only():
+    rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    # First fade enters 10:00; second would enter 10:20 — both before 10:30.
+    signal = [
+        _b(15, 101, 101.4, 100.6, 100.8),
+        _b(20, 103.20, 103.85, 103.10, 103.80),
+        _b(25, 103.70, 103.90, 102.50, 102.60),
+        _b(30, 102.55, 102.70, 102.40, 102.50),  # 10:00 entry
+        _b(35, 102.50, 102.60, 102.30, 102.40),
+        _b(40, 103.30, 103.80, 103.20, 103.70),
+        _b(45, 103.60, 103.85, 102.80, 102.90),
+        _b(50, 102.85, 102.95, 102.70, 102.80),  # 10:20 would-be entry
+    ]
+    setups = find_setups("AAPL", signal, rng)
+    assert len(setups) == 2
+    gated = gate_setups(setups)
+    assert gated[0][1] is None
+    assert gated[1][1] == "max_trades_before_cutoff"
+
+
+def test_gate_rejects_entry_at_or_after_1030():
+    rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    # Reversal 10:25 → entry bar 10:30 ET (exactly the cutoff).
+    signal = [
+        _b(15, 101, 101.4, 100.6, 100.8),
+        _b(50, 103.20, 103.85, 103.10, 103.80),  # 10:20 probe
+        _b(55, 103.70, 103.90, 102.50, 102.60),  # 10:25 reversal
+        _b(60, 102.55, 102.70, 102.40, 102.50),  # 10:30 entry
+    ]
+    setups = find_setups("AAPL", signal, rng)
+    assert len(setups) == 1
+    assert setups[0].entry_bar is not None
+    assert setups[0].entry_bar.timestamp.astimezone(ET).hour == 10
+    assert setups[0].entry_bar.timestamp.astimezone(ET).minute == 30
+    gated = gate_setups(setups)
+    assert gated[0][1] == "entry_cutoff"
+
+
+def test_gate_allows_post_cutoff_when_configured():
+    rng = build_opening_range([_b(0, 100, 104, 96, 101)], date(2026, 9, 11), orb_timeframe="15m")
+    assert rng is not None
+    signal = [
+        _b(15, 101, 101.4, 100.6, 100.8),
+        _b(50, 103.20, 103.85, 103.10, 103.80),
+        _b(55, 103.70, 103.90, 102.50, 102.60),
+        _b(60, 102.55, 102.70, 102.40, 102.50),
+    ]
+    setups = find_setups("AAPL", signal, rng)
+    gated = gate_setups(setups, allow_entries_after_cutoff=True)
+    assert gated[0][1] is None
 
 
 def test_conftest_bar_helper_still_aligned_to_rth():
