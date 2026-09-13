@@ -46,7 +46,11 @@ def test_assumptions_orb_document_new_defaults():
     cfg = load_orb_config("config/orb_reversal.example.yaml")
     notes = assumptions_orb("commission=$0.00/fill, slippage=0.0%", 100_000.0, cfg)
     assert any("opening-range extreme" in n for n in notes)
+    assert any("touch" in n and "high >= OR high" in n for n in notes)
     assert any("10:30" in n and "America/New_York" in n for n in notes)
+    band = cfg.model_copy(update={"orb": cfg.orb.model_copy(update={"probe_mode": "edge_band"})})
+    band_notes = assumptions_orb("commission=$0.00/fill, slippage=0.0%", 100_000.0, band)
+    assert any("edge_band" in n and "5%" in n for n in band_notes)
     old = cfg.model_copy(
         update={"orb": cfg.orb.model_copy(update={"stop_mode": "reversal_candle", "entry_cutoff": None})}
     )

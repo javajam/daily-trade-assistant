@@ -130,7 +130,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
     if isinstance(cfg, OrbBotConfig):
         print(
             f"  orb_timeframe={cfg.orb.orb_timeframe} signal_timeframe={cfg.orb.signal_timeframe} "
-            f"edge_pct={cfg.orb.edge_pct} session={cfg.orb.session_open} {cfg.orb.session_timezone}"
+            f"probe_mode={cfg.orb.probe_mode} edge_pct={cfg.orb.edge_pct} "
+            f"session={cfg.orb.session_open} {cfg.orb.session_timezone}"
         )
         print(
             f"  on_open_position={cfg.orb.on_open_position} take_profit={cfg.orb.take_profit} "
@@ -166,7 +167,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     if isinstance(cfg, OrbBotConfig):
         print(
             f"orb:             {cfg.orb.orb_timeframe} OR → {cfg.orb.signal_timeframe} signals, "
-            f"edge_pct={cfg.orb.edge_pct}, on_open_position={cfg.orb.on_open_position}"
+            f"probe_mode={cfg.orb.probe_mode}, edge_pct={cfg.orb.edge_pct}, "
+            f"on_open_position={cfg.orb.on_open_position}"
         )
     return 0
 

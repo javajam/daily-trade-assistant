@@ -20,6 +20,9 @@ class OrbSpec(BaseModel):
     session_timezone: str = "America/New_York"
     orb_timeframe: str = "15m"
     signal_timeframe: str = "5m"
+    # touch (default) = probe wick must reach the OR extreme.
+    # edge_band = old close-inside-edge-pct-of-OR-height rule.
+    probe_mode: Literal["touch", "edge_band"] = "touch"
     edge_pct: float = Field(default=0.05, gt=0)
     # One open position per symbol (no blind pyramiding).
     # skip = ignore new entries until flat (default).
@@ -70,6 +73,24 @@ class OrbSpec(BaseModel):
         ZoneInfo(name)  # raises if unknown
         return name
 
+    @field_validator("probe_mode", mode="before")
+    @classmethod
+    def _probe_mode(cls, v: Any) -> str:
+        key = str(v or "touch").strip().lower().replace("-", "_")
+        aliases = {
+            "touch": "touch",
+            "wick": "touch",
+            "extreme": "touch",
+            "or_touch": "touch",
+            "edge_band": "edge_band",
+            "band": "edge_band",
+            "close": "edge_band",
+            "close_in_band": "edge_band",
+        }
+        if key not in aliases:
+            raise ValueError("probe_mode must be 'touch' or 'edge_band'")
+        return aliases[key]
+
     @field_validator("edge_pct")
     @classmethod
     def _edge(cls, v: float) -> float:
@@ -114,6 +135,13 @@ class OrbSpec(BaseModel):
             "allow_entries_after_cutoff": self.allow_entries_after_cutoff,
             "session_timezone": self.session_timezone,
             "signal_timeframe": self.signal_timeframe,
+        }
+
+    def detector_kwargs(self) -> dict[str, Any]:
+        return {
+            "edge_pct": self.edge_pct,
+            "probe_mode": self.probe_mode,
+            "stop_mode": self.stop_mode,
         }
 
 

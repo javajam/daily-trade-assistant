@@ -68,6 +68,7 @@ def _eval_from_setup(
             "stop": setup.stop,
             "take": setup.take,
             "stop_mode": setup.stop_mode,
+            "probe_mode": setup.probe_mode,
             "probe": setup.probe.summary(),
             "reversal": setup.reversal.summary(),
             "entry_open": setup.entry_bar.open if setup.entry_bar is not None else None,
@@ -89,6 +90,7 @@ def _eval_miss(
         edge_pct=config.orb.edge_pct,
         session_timezone=config.orb.session_timezone,
         session_close=config.orb.session_close,
+        probe_mode=config.orb.probe_mode,
     )
     extra: dict = {"strategy": RULE_ID}
     if opening_range is not None:
@@ -119,8 +121,7 @@ def setups_for_symbol(config: OrbBotConfig, symbol: str, bars_by_key: BarMap) ->
         session_close=config.orb.session_close,
         orb_timeframe=config.orb.orb_timeframe,
         signal_timeframe=config.orb.signal_timeframe,
-        edge_pct=config.orb.edge_pct,
-        stop_mode=config.orb.stop_mode,
+        **config.orb.detector_kwargs(),
     )
 
 
@@ -153,8 +154,7 @@ def evaluate_orb_symbol(
                 session_close=config.orb.session_close,
                 orb_timeframe=orb_tf,
                 signal_timeframe=sig_tf,
-                edge_pct=config.orb.edge_pct,
-                stop_mode=config.orb.stop_mode,
+                **config.orb.detector_kwargs(),
             )
             return [_eval_miss(symbol, rng, signal_bars, config)]
         results: list[EvalResult] = []
@@ -207,8 +207,7 @@ def evaluate_orb_symbol(
         session_close=config.orb.session_close,
         orb_timeframe=orb_tf,
         signal_timeframe=sig_tf,
-        edge_pct=config.orb.edge_pct,
-        stop_mode=config.orb.stop_mode,
+        **config.orb.detector_kwargs(),
     )
     hit = live_setup(setups, signal_bars)
     if hit is None:

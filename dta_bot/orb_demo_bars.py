@@ -29,14 +29,14 @@ def _bar(minutes: int, o: float, h: float, l: float, c: float, v: float = 1_000_
 
 
 def aapl_top_fade_short() -> dict[str, list[Bar]]:
-    """15m OR 96–104 (mid 100, 5% band 0.40). Probe top → bearish reversal → short."""
+    """15m OR 96–104 (mid 100). Touch of OR high → bearish reversal → short."""
     # 09:15 ET dummy so the OR picker must skip it.
     premkt = _bar(-15, 99.0, 99.4, 98.8, 99.1)
     orb = _bar(0, 100.0, 104.0, 96.0, 101.0, 4_000_000)
-    # 09:45 mid-range, 09:50 top probe, 09:55 bearish reversal, 10:00 entry, 10:05 take at 100.
+    # 09:45 mid-range, 09:50 top touch, 09:55 bearish reversal, 10:00 entry, 10:05 take at 100.
     signal = [
         _bar(15, 101.0, 101.4, 100.6, 100.8),
-        _bar(20, 103.20, 103.85, 103.10, 103.80),
+        _bar(20, 103.20, 104.00, 103.10, 103.80),
         _bar(25, 103.70, 103.90, 102.50, 102.60),
         _bar(30, 102.55, 102.70, 102.40, 102.45),
         _bar(35, 102.40, 102.50, 99.80, 100.10),
@@ -45,11 +45,11 @@ def aapl_top_fade_short() -> dict[str, list[Bar]]:
 
 
 def msft_bottom_fade_long() -> dict[str, list[Bar]]:
-    """15m OR 200–210 (mid 205, 5% band 0.50). Probe bottom → bullish reversal → long."""
+    """15m OR 200–210 (mid 205). Touch of OR low → bullish reversal → long."""
     orb = _bar(0, 204.0, 210.0, 200.0, 205.0, 3_500_000)
     signal = [
         _bar(15, 205.0, 205.4, 204.6, 205.1),
-        _bar(20, 200.80, 200.90, 200.10, 200.30),
+        _bar(20, 200.80, 200.90, 200.00, 200.30),
         _bar(25, 200.40, 201.50, 200.20, 201.40),
         _bar(30, 201.50, 201.80, 201.30, 201.60),
         _bar(35, 201.60, 205.20, 201.40, 204.80),
@@ -58,13 +58,13 @@ def msft_bottom_fade_long() -> dict[str, list[Bar]]:
 
 
 def spy_no_trade() -> dict[str, list[Bar]]:
-    """Closes stay mid-range, then a top-zone probe with a same-color follow-through."""
+    """Closes stay mid-range, then a top-edge touch with a same-color follow-through."""
     orb = _bar(0, 494.0, 500.0, 490.0, 496.0, 8_000_000)
     signal = [
         _bar(15, 496.0, 496.8, 495.5, 496.2),
-        _bar(20, 496.2, 498.4, 496.0, 498.0),  # outside the 0.50 band under 500
+        _bar(20, 496.2, 498.4, 496.0, 498.0),  # no touch of 500 / 490
         _bar(25, 498.0, 498.6, 497.2, 497.4),
-        _bar(30, 499.60, 499.90, 499.40, 499.80),  # probe top
+        _bar(30, 499.60, 500.00, 499.40, 499.80),  # touches OR high
         _bar(35, 499.70, 500.10, 499.50, 499.95),  # still bullish — not a reversal
     ]
     return {"15Min": [orb], "5Min": signal}
