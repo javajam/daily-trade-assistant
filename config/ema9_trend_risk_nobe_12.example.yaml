@@ -1,0 +1,63 @@
+# Prior noon day-trade book — old entry, 1% equity-risk, 1.0/2.0 brackets.
+#
+# Same locked stack as config/ema9_trend_risk_nobe.example.yaml except
+# stop 1.0% / take 2.0%. risk_pct.stop_pct is 1.0 so size matches the
+# actual stop (tighter stop → more shares for the same 1% equity risk).
+#
+# Control (1.5/3.0): config/ema9_trend_risk_nobe.example.yaml
+#
+#   python -m dta_bot backtest --config config/ema9_trend_risk_nobe.example.yaml \
+#     --compare-config config/ema9_trend_risk_nobe_12.example.yaml --source yahoo \
+#     --start 2026-08-01 --end 2026-08-31 --combined-only --symbols AAPL,MSFT \
+#     --output artifacts/ema9_aug2026_risk_brackets.json \
+#     --report artifacts/ema9_aug2026_risk_brackets.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"
+  flatten_by: "15:55"
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Prior noon book: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 1% equity risk at a 1.0% stop; 2.0% take. No break-even."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: risk_pct
+        equity_risk: 0.01
+        stop_pct: 1.0
+      order: market
+      exit: fixed_bracket
+      stop_loss_pct: 1.0
+      take_profit_pct: 2.0

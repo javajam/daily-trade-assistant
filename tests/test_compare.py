@@ -13,6 +13,7 @@ from dta_bot.compare import (
     rule_book_plan,
     run_rule_books,
     sample_size_caveat,
+    session_gate_suffix,
 )
 from dta_bot.config import load_config
 from dta_bot.orb_config import load_orb_config
@@ -110,6 +111,13 @@ def test_assumptions_rules_mention_ma_cross():
     old = load_config("config/ema9_trend_bracket_nobe.example.yaml")
     old_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, old)
     assert any("fixed_bracket" in n for n in old_notes)
+    assert session_gate_suffix(old) == " (cutoff 12:00, flat 15:55, 1.5/3.0)"
+    tight = load_config("config/ema9_trend_bracket_nobe_12.example.yaml")
+    assert session_gate_suffix(tight) == " (cutoff 12:00, flat 15:55, 1.0/2.0)"
+    risk = load_config("config/ema9_trend_risk_nobe.example.yaml")
+    assert session_gate_suffix(risk) == " (cutoff 12:00, flat 15:55, 1.5/3.0)"
+    risk12 = load_config("config/ema9_trend_risk_nobe_12.example.yaml")
+    assert session_gate_suffix(risk12) == " (cutoff 12:00, flat 15:55, 1.0/2.0)"
     assert any("No RSI entry filter" in n for n in ema_notes)
     rsi_cfg = load_config("config/ema9_trend_bracket_rsi.example.yaml")
     rsi_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, rsi_cfg)
@@ -200,6 +208,33 @@ def test_run_rule_books_prefixes_and_soxl_breakout():
     )
     rsi_labels = [block["label"] for block in rsi_runs]
     assert "15m ema9_trend (cutoff 12:00, flat 15:55, MA-cross, RSI14 < 70)" in rsi_labels
+    nobe = load_config("config/ema9_trend_bracket_nobe.example.yaml")
+    nobe_runs = run_rule_books(
+        nobe,
+        {},
+        starting_equity=100_000,
+        commission=0.0,
+        slippage_pct=0.0,
+        data_source="fixture",
+        assumptions=["x"],
+        label_prefix="15m",
+    )
+    nobe_labels = [block["label"] for block in nobe_runs]
+    assert "15m ema9_trend (cutoff 12:00, flat 15:55, 1.5/3.0)" in nobe_labels
+    nobe12 = load_config("config/ema9_trend_bracket_nobe_12.example.yaml")
+    nobe12_runs = run_rule_books(
+        nobe12,
+        {},
+        starting_equity=100_000,
+        commission=0.0,
+        slippage_pct=0.0,
+        data_source="fixture",
+        assumptions=["x"],
+        label_prefix="15m",
+    )
+    assert "15m ema9_trend (cutoff 12:00, flat 15:55, 1.0/2.0)" in [
+        block["label"] for block in nobe12_runs
+    ]
     soxl = next(block for block in runs if block["label"] == f"15m ema9_trend SOXL{gated}")
     assert soxl["report"]["trades"] == 0
     assert any("Isolated SOXL" in n for n in soxl["report"]["notes"])

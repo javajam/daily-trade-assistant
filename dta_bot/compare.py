@@ -404,12 +404,33 @@ def _session_gate_assumption(config: Optional[BotConfig]) -> Optional[str]:
     )
 
 
+def _fixed_bracket_tag(config: BotConfig) -> Optional[str]:
+    """Stop/take tag so 1.5/3.0 and 1.0/2.0 books stay distinct."""
+    rules = [
+        r
+        for r in config.rules
+        if r.enabled and r.action.type != "close" and r.action.exit == "fixed_bracket"
+    ]
+    if not rules:
+        return None
+    action = rules[0].action
+    stop = action.stop_loss_pct
+    take = action.take_profit_pct
+    if stop is None:
+        return None
+    if take is None:
+        return f"stop {stop:.1f}%"
+    return f"{stop:.1f}/{take:.1f}"
+
+
 def session_gate_suffix(config: BotConfig) -> str:
     """Book-label tag so gated and overnight books stay distinct."""
     s = config.settings
     rsi_tag = rsi_filter_label(config)
+    bracket = _fixed_bracket_tag(config)
     if not s.entry_cutoff and not s.flatten_by:
-        return f" ({rsi_tag})" if rsi_tag else ""
+        extras = [bit for bit in (bracket, rsi_tag) if bit]
+        return f" ({', '.join(extras)})" if extras else ""
     bits: list[str] = []
     if s.entry_cutoff:
         bits.append(f"cutoff {s.entry_cutoff}")
@@ -432,6 +453,8 @@ def session_gate_suffix(config: BotConfig) -> str:
     }
     if exits == {"ma_cross"}:
         bits.append("MA-cross")
+    if bracket:
+        bits.append(bracket)
     if rsi_tag:
         bits.append(rsi_tag)
     return " (" + ", ".join(bits) + ")"

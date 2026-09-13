@@ -1,15 +1,11 @@
-# Prior noon day-trade book — old entry, preserved for comparison.
+# Prior noon day-trade book — old entry, 1.0/2.0 brackets.
 #
-# This is *not* the current product. It keeps the previous 12:00 / 15:55
-# 10-share book: price crosses EMA(9) while close > SMA(20) and RSI14 < 70,
-# 1.5/3.0 fixed brackets, no break-even. Use it only to replay the old
-# noon day-trade numbers against the new EMA(9)/SMA(20) pair-cross book.
+# Same locked stack as config/ema9_trend_bracket_nobe.example.yaml except
+# stop 1.0% / take 2.0% (still no break-even). Entry is the older
+# price×EMA(9) cross (NOT the EMA9/SMA20 pair-cross product):
+#   close crosses above EMA(9) AND close > SMA(20) AND RSI14 < 70
 #
-# Current product: config/ema9_trend_bracket.example.yaml
-# Tight 1.0/2.0 sibling (same old entry, no BE):
-#   config/ema9_trend_bracket_nobe_12.example.yaml
-# August 1% risk restore (same old entry, 1.5/3.0, no BE):
-#   config/ema9_trend_risk_nobe.example.yaml
+# Control (1.5/3.0): config/ema9_trend_bracket_nobe.example.yaml
 #
 #   python -m dta_bot backtest --config config/ema9_trend_bracket_nobe.example.yaml \
 #     --compare-config config/ema9_trend_bracket_nobe_12.example.yaml --source yahoo \
@@ -41,7 +37,7 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "Prior noon book: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 10 shares, 1.5/3.0 brackets, no break-even."
+    notes: "Prior noon book: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 10 shares, 1.0/2.0 brackets, no break-even."
     when:
       all:
         - ema_cross:
@@ -63,5 +59,5 @@ rules:
         value: 10
       order: market
       exit: fixed_bracket
-      stop_loss_pct: 1.5
-      take_profit_pct: 3.0
+      stop_loss_pct: 1.0
+      take_profit_pct: 2.0
