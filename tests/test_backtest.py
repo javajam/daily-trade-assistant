@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from dta_bot.backtest import run_backtest, summarize
+from dta_bot.backtest import OpenLot, _mark_to_market, run_backtest, summarize
 from dta_bot.config import ActionSpec, BotConfig, RuleSpec, Settings, SizeSpec, parse_condition
 from dta_bot.models import Bar
 from tests.conftest import bar
@@ -209,3 +209,35 @@ def test_summarize_handles_empty_book():
     assert report.win_rate_pct is None
     assert report.avg_win is None
     assert report.max_drawdown == 0
+
+
+def _lot(side: str, entry: float, qty: float = 10) -> OpenLot:
+    ts = datetime(2026, 9, 11, 14, 0, tzinfo=timezone.utc)
+    return OpenLot(
+        rule_id="orb_reversal",
+        symbol="AAPL",
+        qty=qty,
+        side=side,
+        entry_time=ts,
+        entry_price=entry,
+        stop=None,
+        take=None,
+        signal_time=ts,
+        tf="5Min",
+    )
+
+
+def test_short_mark_to_market_does_not_double_count_proceeds():
+    # Short 10 @ 300: cash already includes +3000 proceeds.
+    cash = 100_000.0 + 10 * 300.0
+    lot = _lot("sell", 300.0)
+    assert _mark_to_market(cash, [lot], {"AAPL": 300.0}) == 100_000.0
+    assert _mark_to_market(cash, [lot], {"AAPL": 310.0}) == 99_900.0
+    assert _mark_to_market(cash, [lot], {"AAPL": 290.0}) == 100_100.0
+
+
+def test_long_mark_to_market_still_adds_inventory():
+    cash = 100_000.0 - 10 * 300.0
+    lot = _lot("buy", 300.0)
+    assert _mark_to_market(cash, [lot], {"AAPL": 300.0}) == 100_000.0
+    assert _mark_to_market(cash, [lot], {"AAPL": 310.0}) == 100_100.0

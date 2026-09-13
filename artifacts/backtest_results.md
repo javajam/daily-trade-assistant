@@ -1,6 +1,6 @@
 # Rule backtest results
 
-- Generated (UTC): 2026-09-13T12:18:28.419959Z
+- Generated (UTC): 2026-09-13T13:17:23.707204Z
 - Starting equity: $100,000.00
 - Commission / slippage: commission=$0.00/fill, slippage=0.0%
 - Data: Yahoo Finance v8 chart (unadjusted regular-session OHLC)
@@ -56,6 +56,23 @@
 - Ending equity: $100,000.00
 - Exit reasons: {}
 - Exit-only rule: isolated book has no entries, so P&L is $0. Signal count is how often the pattern would have fired; the combined book uses those fires to flatten longs from the entry rules.
+
+## sample-entries
+
+- Period: 2024-09-12T13:30:00Z → 2026-09-11T19:45:00Z
+- Bars used: {'AAPL:15Min': 1560, 'MSFT:15Min': 1560, 'SPY:1Hour': 3477}
+- Data source: Yahoo Finance v8 chart (unadjusted regular-session OHLC)
+- Signals: 128  (by symbol: {'SPY': 34, 'AAPL': 50, 'MSFT': 44})
+- Pattern hits in those signals: {'hammer': 34, 'bullish_engulfing': 94}
+- Trades: 63  (by symbol: {'SPY': 24, 'MSFT': 19, 'AAPL': 20})
+- Wins / losses / scratch: 27 / 36 / 0
+- Win rate: 42.86%
+- Total P&L: $810.57 (0.811% of starting equity)
+- Avg win: $89.70
+- Avg loss: $-44.76
+- Max drawdown: $498.00 (0.49%)
+- Ending equity: $100,810.57
+- Exit reasons: {'take': 25, 'stop': 36, 'eod': 2}
 
 ## combined
 

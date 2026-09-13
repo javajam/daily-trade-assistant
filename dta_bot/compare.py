@@ -50,6 +50,12 @@ MULTI_ENGINE_NOTE = (
     "combined) books, not a single multi-strategy portfolio."
 )
 
+SHORT_MTM_NOTE = (
+    "Short mark-to-market subtracts qty × mark from cash that already includes "
+    "short proceeds. The previous 2×entry − mark formula double-counted proceeds "
+    "and invented a drawdown when shorts flattened; closed-trade P&L was already correct."
+)
+
 YAHOO_CAP_NOTE = (
     "Yahoo Finance v8 regular-session bars (includePrePost=false, unadjusted OHLC). "
     "Retention caps in this downloader: 1m=7d, 5m/15m/30m=60d, 1h=2y. "
@@ -71,6 +77,7 @@ def assumptions_orb(friction: str, starting_equity: float) -> list[str]:
         "If stop and take both trade in the fill bar, the stop is assumed to fill first.",
         "A gap through stop/take fills at that bar's open.",
         "Open lots still on the last bar are flattened at the last close (exit reason eod).",
+        SHORT_MTM_NOTE,
         "Regular-session Yahoo bars when the source is Yahoo (includePrePost=false), unadjusted OHLC.",
         friction,
         f"Starting equity ${starting_equity:,.2f}.",
@@ -311,6 +318,28 @@ def _fmt_pct(value: Optional[float], digits: int = 3) -> str:
     return f"{value:.{digits}f}%"
 
 
+def combined_book_effect(runs: list[dict[str, Any]]) -> Optional[str]:
+    by_label = {block.get("label"): block for block in runs}
+    entries = by_label.get("sample-entries")
+    combined = by_label.get("combined")
+    exit_only = by_label.get("evening-star-or-engulfing-exit")
+    if not entries or not combined:
+        return None
+    e = entries["report"]
+    c = combined["report"]
+    fires = (exit_only or {}).get("report", {}).get("signals")
+    close_exits = (c.get("exit_reasons") or {}).get("close_signal", 0)
+    delta = c["total_pnl"] - e["total_pnl"]
+    fire_txt = f"{fires} isolated fires" if fires is not None else "n/a isolated fires"
+    return (
+        f"sample-entries (B+C) P&L ${e['total_pnl']:,.2f} on {e['trades']} trades vs "
+        f"combined (B+C+D) P&L ${c['total_pnl']:,.2f} on {c['trades']} trades "
+        f"({delta:+,.2f} from adding D). Exit-only isolated book: {fire_txt}, $0 P&L. "
+        f"Combined book flattened {close_exits} lots on close_signal. "
+        "More combined trades than the entries book because flattening frees the symbol for a later entry."
+    )
+
+
 def format_comparison_table(rows: list[dict[str, Any]]) -> list[str]:
     lines = [
         "| Rank | Book | Trades | Win rate | P&L $ | P&L % | Max DD | Avg win | Avg loss | Period | Caveat |",
@@ -360,6 +389,9 @@ def format_comparison_md(payload: dict[str, Any]) -> str:
     rows = payload.get("comparison") or rank_books(payload.get("runs") or [])
     lines.extend(format_comparison_table(rows))
     lines.extend(["", MULTI_ENGINE_NOTE, ""])
+    effect = combined_book_effect(payload.get("runs") or [])
+    if effect:
+        lines.extend(["## Combined-book effect of the exit-only rule", "", effect, ""])
 
     window_notes = payload.get("window_notes") or []
     if window_notes:

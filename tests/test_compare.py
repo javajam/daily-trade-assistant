@@ -1,5 +1,6 @@
 from dta_bot.cli import main
 from dta_bot.compare import (
+    combined_book_effect,
     format_comparison_md,
     rank_books,
     rule_book_plan,
@@ -84,6 +85,24 @@ def test_sample_size_caveat_flags_long_window():
     caveat = sample_size_caveat(report)
     assert "small sample (24 trades)" in caveat
     assert "longer window" in caveat
+
+
+def test_combined_book_effect_states_delta():
+    runs = [
+        _run("sample-entries", 0.811, 63),
+        _run("combined", 0.447, 110),
+        _run("evening-star-or-engulfing-exit", 0.0, 0, exit_only=True),
+    ]
+    runs[0]["report"]["total_pnl"] = 810.57
+    runs[1]["report"]["total_pnl"] = 447.01
+    runs[1]["report"]["exit_reasons"] = {"close_signal": 81, "stop": 16, "take": 13}
+    runs[2]["report"]["signals"] = 560
+    text = combined_book_effect(runs)
+    assert text is not None
+    assert "$810.57" in text
+    assert "$447.01" in text
+    assert "560 isolated fires" in text
+    assert "81 lots" in text
 
 
 def test_format_comparison_md_contains_table_and_engine_note():
