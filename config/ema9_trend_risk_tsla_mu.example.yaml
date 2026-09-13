@@ -1,19 +1,17 @@
-# Refined EMA9 day-trade — 1% equity-risk book (paper / dry_run).
+# Refined EMA9 day-trade — 1% equity-risk book, universe TSLA / MU.
 #
-# Same noon stack + lock-+1% as config/ema9_trend.example.yaml.
+# Same noon stack + lock-+1% as config/ema9_trend_tsla_mu.example.yaml.
 # Size: risk ~1% of current equity at the 1.0% initial fill stop
 #   shares = floor( (0.01 * equity) / (0.01 * entry_price) )
 # No fixed take-profit. Session gates on (toggle to null / off).
-# Optional stop siblings: config/ema9_trend_risk_nobe_fixed1.example.yaml
-# and config/ema9_trend_risk_nobe_trail1.example.yaml.
-# TSLA / MU 1% sibling: config/ema9_trend_risk_tsla_mu.example.yaml
-# Prior pair-cross 1% book: config/ema9_trend_risk_pair.example.yaml
+# 10-share sibling: config/ema9_trend_tsla_mu.example.yaml
+# AAPL/MSFT 1% book: config/ema9_trend_risk.example.yaml
 #
-#   python -m dta_bot validate --config config/ema9_trend_risk.example.yaml
-#   python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml \
-#     --source yahoo --start 2026-08-01 --end 2026-08-31 --combined-only \
-#     --output artifacts/ema9_aug2026_risk.json \
-#     --report artifacts/ema9_aug2026_risk.md
+#   python -m dta_bot validate --config config/ema9_trend_risk_tsla_mu.example.yaml
+#   python -m dta_bot backtest --config config/ema9_trend_risk_tsla_mu.example.yaml \
+#     --source yahoo --combined-only \
+#     --output artifacts/ema9_tsla_mu_15m.json \
+#     --report artifacts/ema9_tsla_mu_15m.md
 
 settings:
   paper: true
@@ -31,15 +29,15 @@ settings:
   flatten_by: "15:55"     # null / off disables
 
 universe:
-  - AAPL
-  - MSFT
+  - TSLA
+  - MU
 
 rules:
   - id: ema9_trend
     enabled: true
-    symbols: [AAPL, MSFT]
+    symbols: [TSLA, MU]
     cooldown_minutes: 60
-    notes: "Noon book: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 1% equity risk at a 1.0% fill stop; lock to +1% on first touch of entry×1.01; no take."
+    notes: "Noon book on TSLA/MU: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 1% equity risk at a 1.0% fill stop; lock to +1% on first touch of entry×1.01; no take."
     when:
       all:
         - ema_cross:

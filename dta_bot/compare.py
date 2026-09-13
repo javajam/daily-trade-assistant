@@ -525,6 +525,34 @@ def _fixed_bracket_tag(config: BotConfig) -> Optional[str]:
     return f"{stop:.1f}/{take:.1f}"
 
 
+def universe_tag(config: BotConfig) -> str:
+    """AAPL+MSFT / TSLA+MU so combined books with the same gates stay distinct."""
+    return "+".join(config.universe) if config.universe else ""
+
+
+def sizing_tag(config: BotConfig) -> str:
+    """10-share vs 1% risk so same-universe books do not share a label."""
+    for rule in config.rules:
+        if not rule.enabled or rule.action.type == "close":
+            continue
+        size = rule.action.size
+        if size is None:
+            continue
+        if size.type == "risk_pct" and size.equity_risk is not None:
+            return f"{size.equity_risk * 100:g}% risk"
+        if size.type == "shares" and size.value is not None:
+            value = size.value
+            return f"{int(value) if float(value).is_integer() else value}-share"
+        if size.type == "percent_equity" and size.value is not None:
+            return f"{size.value:g}% equity"
+    return ""
+
+
+def combined_book_label(config: BotConfig) -> str:
+    bits = [bit for bit in (universe_tag(config), sizing_tag(config)) if bit]
+    return " ".join(bits) if bits else "combined"
+
+
 def session_gate_suffix(config: BotConfig) -> str:
     """Book-label tag so gated and overnight books stay distinct."""
     s = config.settings
@@ -648,7 +676,7 @@ def rule_book_plan(
 ) -> list[tuple[str, Optional[list[str]], Optional[str]]]:
     """Return (label, rule_ids or None for all rules, extra_note)."""
     if combined_only:
-        return [("combined", None, COMBINED_NOTE)]
+        return [(combined_book_label(config), None, COMBINED_NOTE)]
     plans: list[tuple[str, Optional[list[str]], Optional[str]]] = []
     for rule in config.rules:
         note = EXIT_ONLY_NOTE if rule.action.type == "close" else None
@@ -931,6 +959,54 @@ def exit_mix(report: dict[str, Any]) -> str:
     return ", ".join(parts)
 
 
+def format_monthly_side_by_side(runs: list[dict[str, Any]]) -> list[str]:
+    """One row per calendar month across compared books (realized P&L)."""
+    columns: list[tuple[str, list[dict[str, Any]]]] = []
+    keys: list[str] = []
+    seen: set[str] = set()
+    for block in runs:
+        months = (block.get("period_stats") or {}).get("months") or []
+        if not months:
+            continue
+        label = str(block.get("label") or (block.get("report") or {}).get("rule_id") or "book")
+        columns.append((label, months))
+        for row in months:
+            key = f"{row.get('year')}-{int(row.get('calendar_month') or 0):02d}"
+            if key not in seen:
+                seen.add(key)
+                keys.append(key)
+    if not columns or not keys:
+        return []
+    lines = [
+        "| Month | " + " | ".join(name for name, _ in columns) + " |",
+        "| --- | " + " | ".join(["---:" for _ in columns]) + " |",
+    ]
+    by_col = []
+    for _name, months in columns:
+        by_col.append(
+            {
+                f"{row.get('year')}-{int(row.get('calendar_month') or 0):02d}": row
+                for row in months
+            }
+        )
+    for key in keys:
+        cells = []
+        for lookup in by_col:
+            row = lookup.get(key)
+            if row is None:
+                cells.append("—")
+                continue
+            cells.append(
+                "{pnl} ({trades}t, {win})".format(
+                    pnl=_fmt_money(row.get("pnl")),
+                    trades=row.get("trades") or 0,
+                    win=_fmt_pct(row.get("win_rate_pct"), 2),
+                )
+            )
+        lines.append(f"| {key} | " + " | ".join(cells) + " |")
+    return lines
+
+
 def format_side_by_side_table(columns: list[tuple[str, dict[str, Any]]]) -> list[str]:
     """Side-by-side trades, win rate, P&L, max DD, avg win/loss, takes vs stops."""
     reports = [(name, (block.get("report") or block)) for name, block in columns]
@@ -1020,6 +1096,12 @@ def format_comparison_md(payload: dict[str, Any]) -> str:
         lines.extend(["## Data windows and Yahoo limits", ""])
         for note in window_notes:
             lines.append(f"- {note}" if not note.startswith("  ") else f"- `{note.strip()}`")
+        lines.append("")
+
+    month_table = format_monthly_side_by_side(payload.get("runs") or [])
+    if month_table:
+        lines.extend(["## Monthly breakdown (realized P&L)", ""])
+        lines.extend(month_table)
         lines.append("")
 
     per_book = format_report_md(
