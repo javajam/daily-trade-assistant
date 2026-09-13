@@ -214,6 +214,8 @@ python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yaho
 
 Copy to `config/ema9_trend.yaml` (gitignored) and disable the ablation/control rules if you only want to paper the 9 EMA book.
 
+On the Yahoo 15m window 2026-06-17 → 2026-09-11 (AAPL/MSFT, 1560 bars each), isolated books were: **ema9_trend 44 trades, 50.00%, $1,404.89**; ablation `ema9_cross_raw` 53 trades, 49.06%, $1,236.03; **engulfing-with-trend 39 trades, 43.59%, $697.90** (reproduced the prior control). Writeup: `artifacts/ema9_vs_engulfing.md`.
+
 ### CLI
 
 ```bash
