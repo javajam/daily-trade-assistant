@@ -202,9 +202,12 @@ def test_combined_only_labels_include_universe_and_size():
     tsla_risk = load_config("config/ema9_trend_risk_tsla_mu.example.yaml")
     spy = load_config("config/ema9_trend_spy_qqq.example.yaml")
     spy_risk = load_config("config/ema9_trend_risk_spy_qqq.example.yaml")
+    nvda = load_config("config/ema9_trend_nvda_amd.example.yaml")
+    nvda_risk = load_config("config/ema9_trend_risk_nvda_amd.example.yaml")
     assert universe_tag(ten) == "AAPL+MSFT"
     assert universe_tag(tsla) == "TSLA+MU"
     assert universe_tag(spy) == "SPY+QQQ"
+    assert universe_tag(nvda) == "NVDA+AMD"
     assert sizing_tag(ten) == "10-share"
     assert sizing_tag(risk) == "1% risk"
     assert combined_book_label(ten) == "AAPL+MSFT 10-share long+short"
@@ -213,6 +216,8 @@ def test_combined_only_labels_include_universe_and_size():
     assert combined_book_label(tsla_risk) == "TSLA+MU 1% risk"
     assert combined_book_label(spy) == "SPY+QQQ 10-share"
     assert combined_book_label(spy_risk) == "SPY+QQQ 1% risk"
+    assert combined_book_label(nvda) == "NVDA+AMD 10-share"
+    assert combined_book_label(nvda_risk) == "NVDA+AMD 1% risk"
     assert [label for label, _ids, _note in rule_book_plan(tsla, combined_only=True)] == [
         "TSLA+MU 10-share"
     ]

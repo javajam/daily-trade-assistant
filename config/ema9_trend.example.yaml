@@ -28,6 +28,7 @@
 #   trail 1% from peak:  config/ema9_trend_bracket_nobe_trail1.example.yaml
 # TSLA / MU 10-share sibling: config/ema9_trend_tsla_mu.example.yaml
 # SPY / QQQ long-only 10-share sibling: config/ema9_trend_spy_qqq.example.yaml
+# NVDA / AMD long-only 10-share sibling: config/ema9_trend_nvda_amd.example.yaml
 # Prior pair-cross product: config/ema9_trend_pair.example.yaml
 #
 # Bar size is settings.timeframe (or --timeframe). Default 15m. Same book on 5m:
