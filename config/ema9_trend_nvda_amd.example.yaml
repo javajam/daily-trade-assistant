@@ -1,7 +1,8 @@
-# Refined EMA9 day-trade — 10-share book, universe SPY / QQQ (long-only).
+# Refined EMA9 day-trade — 10-share book, universe NVDA / AMD (long-only).
 #
 # Shorts are parked (not included). Same noon stack + lock-+1% as the
-# AAPL / MSFT long book (config/ema9_trend_bracket.example.yaml).
+# AAPL / MSFT long book (config/ema9_trend_bracket.example.yaml) and
+# SPY / QQQ long book (config/ema9_trend_spy_qqq.example.yaml).
 # Entry:
 #
 #   close crosses above EMA(9) AND close > SMA(20) AND RSI(14) < 70
@@ -10,15 +11,15 @@
 # Session gates: entry_cutoff 12:00 ET, flatten_by 15:55 ET.
 # Stop: lock_plus — initial fill×0.99; first touch of fill×1.01 locks
 # the stop to fill×1.01 (live next bar). No take-profit.
-# 1% equity-risk sibling: config/ema9_trend_risk_spy_qqq.example.yaml
-# NVDA / AMD long-only 10-share sibling: config/ema9_trend_nvda_amd.example.yaml
+# 1% equity-risk sibling: config/ema9_trend_risk_nvda_amd.example.yaml
 #
-#   python -m dta_bot validate --config config/ema9_trend_spy_qqq.example.yaml
-#   python -m dta_bot backtest --config config/ema9_trend_spy_qqq.example.yaml \
+#   python -m dta_bot validate --config config/ema9_trend_nvda_amd.example.yaml
+#   python -m dta_bot backtest --config config/ema9_trend_nvda_amd.example.yaml \
 #     --compare-config config/ema9_trend_bracket.example.yaml \
+#     --compare-config config/ema9_trend_spy_qqq.example.yaml \
 #     --source yahoo --combined-only \
-#     --output artifacts/ema9_spy_qqq_15m.json \
-#     --report artifacts/ema9_spy_qqq_15m.md
+#     --output artifacts/ema9_nvda_amd_15m.json \
+#     --report artifacts/ema9_nvda_amd_15m.md
 
 settings:
   paper: true
@@ -36,15 +37,15 @@ settings:
   flatten_by: "15:55"     # null / off disables
 
 universe:
-  - SPY
-  - QQQ
+  - NVDA
+  - AMD
 
 rules:
   - id: ema9_trend
     enabled: true
-    symbols: [SPY, QQQ]
+    symbols: [NVDA, AMD]
     cooldown_minutes: 60
-    notes: "Noon long-only on SPY/QQQ: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 10 shares, lock stop to +1% on first touch of entry×1.01, no take. Shorts parked."
+    notes: "Noon long-only on NVDA/AMD: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 10 shares, lock stop to +1% on first touch of entry×1.01, no take. Shorts parked."
     when:
       all:
         - ema_cross:

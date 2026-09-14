@@ -226,7 +226,7 @@ rules:
 
 ### Refined EMA9 day-trade (sample strategy)
 
-`config/ema9_trend.example.yaml` is the **noon day-trade** book on **AAPL / MSFT** (not TSLA/MU or SPY/QQQ). Default stop management is **lock-+1%**. Both sides are enabled in YAML (`ema9_trend` long + `ema9_trend_short`). One position per symbol — long or short, not both. An opposite signal while that symbol is already in a trade is skipped (`opposite_signal_in_trade`). Disable a side with `enabled: false`. SOXL is optional (`config/ema9_trend_bracket_soxl.example.yaml`, `config/ema9_trend_risk_soxl.example.yaml`). Long-only SPY/QQQ (shorts parked): `config/ema9_trend_spy_qqq.example.yaml` / `config/ema9_trend_risk_spy_qqq.example.yaml`.
+`config/ema9_trend.example.yaml` is the **noon day-trade** book on **AAPL / MSFT** (not TSLA/MU, SPY/QQQ, or NVDA/AMD). Default stop management is **lock-+1%**. Both sides are enabled in YAML (`ema9_trend` long + `ema9_trend_short`). One position per symbol — long or short, not both. An opposite signal while that symbol is already in a trade is skipped (`opposite_signal_in_trade`). Disable a side with `enabled: false`. SOXL is optional (`config/ema9_trend_bracket_soxl.example.yaml`, `config/ema9_trend_risk_soxl.example.yaml`). Long-only SPY/QQQ (shorts parked): `config/ema9_trend_spy_qqq.example.yaml` / `config/ema9_trend_risk_spy_qqq.example.yaml`. Long-only NVDA/AMD (shorts parked): `config/ema9_trend_nvda_amd.example.yaml` / `config/ema9_trend_risk_nvda_amd.example.yaml`.
 
 1. **Long entry** — price crosses **above EMA(9)** AND close **> SMA(20)** AND **RSI(14) < 70** on the signal timeframe (default 15m). Fill at the **next bar open**.
 2. **Short entry** — price crosses **below EMA(9)** AND close **< SMA(20)**. **No RSI** on shorts. Same fill (next bar open).
@@ -282,6 +282,21 @@ python -m dta_bot backtest --config config/ema9_trend_risk_spy_qqq.example.yaml 
   --compare-config config/ema9_trend_risk_nobe_lock1.example.yaml \
   --start 2026-08-01 --end 2026-08-31 --combined-only \
   --output artifacts/ema9_aug2026_risk_spy_qqq.json --report artifacts/ema9_aug2026_risk_spy_qqq.md
+```
+
+Long-only NVDA/AMD (shorts parked), same noon stack, compared to AAPL+MSFT and SPY+QQQ on the same tape:
+
+```bash
+python -m dta_bot validate --config config/ema9_trend_nvda_amd.example.yaml
+python -m dta_bot backtest --config config/ema9_trend_nvda_amd.example.yaml --source yahoo \
+  --compare-config config/ema9_trend_bracket.example.yaml \
+  --compare-config config/ema9_trend_spy_qqq.example.yaml --combined-only \
+  --output artifacts/ema9_nvda_amd_15m.json --report artifacts/ema9_nvda_amd_15m.md
+python -m dta_bot backtest --config config/ema9_trend_risk_nvda_amd.example.yaml --source yahoo \
+  --compare-config config/ema9_trend_risk_nobe_lock1.example.yaml \
+  --compare-config config/ema9_trend_risk_spy_qqq.example.yaml \
+  --start 2026-08-01 --end 2026-08-31 --combined-only \
+  --output artifacts/ema9_aug2026_risk_nvda_amd.json --report artifacts/ema9_aug2026_risk_nvda_amd.md
 ```
 
 Current product on the Yahoo window 2026-06-17 → 2026-09-11 (15m, AAPL/MSFT, 12:00 / 15:55, $100k start): **A long-only 51 trades, 60.78%, $301.49**, max DD $130.76 (reproduced; RSI<70 + lock-+1% unchanged); **B cover-only short** (no RSI, no stop, MA-cross cover) **44 trades, 43.18%, $-66.41**, max DD $348.72; **C long+cover-only short 74 trades, 54.05%, $37.26**, max DD $296.58 (42 `opposite_signal_in_trade` skips; combined long 37t $177.86 / short 37t $-140.60). **Prior short-only** (RSI>30, lock_plus, no MA-cross cover) was **41 trades, 53.66%, $96.19**. Writeup: `artifacts/ema9_long_short_15m.md`. Same tape, **SPY+QQQ long-only** (shorts parked): 10-share **58 trades, 46.55%, $-334.30**, max DD $669.37 (43 `session_flatten` / 9 stop / 6 `lock_stop`; 6 armed). August 2026 1% equity-risk (`stop_pct` 1.0) **12 trades, 33.33%, $-515.42**, max DD $1,674.93 (11 `session_flatten` / 1 `lock_stop`; 8 `insufficient_cash`). AAPL+MSFT lock-+1% on the same windows **reproduced** (10-share $301.49; August 1% **15 trades, 73.33%, $5,489.78**). Writeup: `artifacts/ema9_spy_qqq_15m.md`. Prior long-only noon price-cross + lock-+1% 10-share: **51 trades, 60.78%, $301.49**, max DD $130.76 (20 `lock_stop` / 13 stop / 18 `session_flatten`; 20 armed). Same rules on **5m: 91 trades, 51.65%, $238.31**, max DD $264.56 (28 `lock_stop` / 20 stop / 43 `session_flatten`; 29 armed). Writeup: `artifacts/ema9_lock_5m_vs_15m.md`. Prior **EMA(9)/SMA(20) pair-cross 10-share (no RSI) 44 trades, 54.55%, $349.33**, max DD $131.87. Exit P&L: **ma_cross 28 ($-84.50)**, **session_flatten 14 ($451.13)**, stop 2 ($-17.29). Same tape **with RSI14 < 70: 39 trades, 51.28%, $214.23**, max DD $142.76 (5 July signals dropped, net +$135.10). **RSI14 < 60: 21 trades, 33.33%, $31.18**. Prior noon price-cross book (old entry, 1.5/3.0, no BE) **reproduced** on the same tape: **50 trades, 62.00%, $453.00**, max DD $207.70, 41 of 50 `session_flatten`. Same old entry, tighter **1.0/2.0** brackets: **51 trades, 56.86%, $462.18**, max DD $149.36 (8 takes / 13 stops / 30 session_flatten). Same old entry, **SMA20 signal-bar stop + 2% take**: **51 trades, 39.22%, $270.16**, max DD $138.22 (6 takes / 28 stops / 17 session_flatten; 3 fills skipped when next open ≤ SMA20). **SMA20 stop, no % take**: **51 trades, 39.22%, $284.39**, max DD $141.52 (28 stops / 23 session_flatten). Same old entry, **no % take**, stop from the *fill*: **fixed 1% (`entry_pct`) 51 trades, 56.86%, $364.05**, max DD $186.89 (14 stops / 37 session_flatten); **lock to +1% (`lock_plus`) 51 trades, 60.78%, $301.49**, max DD $130.76 (20 lock_stop / 13 stop / 18 session_flatten; 20 armed); **trail 1% (`trail`) 51 trades, 54.90%, $253.40**, max DD $117.41 (37 trail_stop / 14 session_flatten; 49 ratcheted). Writeups: `artifacts/ema9_ma_cross.md`, `artifacts/ema9_ma_cross_rsi.md`, `artifacts/ema9_brackets_12_vs_153.md`, `artifacts/ema9_sma20_stop.md`, `artifacts/ema9_stop_manage.md`.

@@ -1,20 +1,21 @@
-# Refined EMA9 day-trade — 1% equity-risk book, universe SPY / QQQ (long-only).
+# Refined EMA9 day-trade — 1% equity-risk book, universe NVDA / AMD (long-only).
 #
 # Shorts are parked (not included). Same noon stack + lock-+1% as
-# config/ema9_trend_spy_qqq.example.yaml.
+# config/ema9_trend_nvda_amd.example.yaml.
 # Size: risk ~1% of current equity at the 1.0% initial fill stop
 #   shares = floor( (0.01 * equity) / (0.01 * entry_price) )
 # No fixed take-profit. Session gates on (toggle to null / off).
-# 10-share sibling: config/ema9_trend_spy_qqq.example.yaml
+# 10-share sibling: config/ema9_trend_nvda_amd.example.yaml
 # AAPL/MSFT long-only 1% book: config/ema9_trend_risk_nobe_lock1.example.yaml
-# NVDA / AMD long-only 1% sibling: config/ema9_trend_risk_nvda_amd.example.yaml
+# SPY/QQQ long-only 1% book: config/ema9_trend_risk_spy_qqq.example.yaml
 #
-#   python -m dta_bot validate --config config/ema9_trend_risk_spy_qqq.example.yaml
-#   python -m dta_bot backtest --config config/ema9_trend_risk_spy_qqq.example.yaml \
+#   python -m dta_bot validate --config config/ema9_trend_risk_nvda_amd.example.yaml
+#   python -m dta_bot backtest --config config/ema9_trend_risk_nvda_amd.example.yaml \
 #     --compare-config config/ema9_trend_risk_nobe_lock1.example.yaml \
+#     --compare-config config/ema9_trend_risk_spy_qqq.example.yaml \
 #     --source yahoo --start 2026-08-01 --end 2026-08-31 --combined-only \
-#     --output artifacts/ema9_aug2026_risk_spy_qqq.json \
-#     --report artifacts/ema9_aug2026_risk_spy_qqq.md
+#     --output artifacts/ema9_aug2026_risk_nvda_amd.json \
+#     --report artifacts/ema9_aug2026_risk_nvda_amd.md
 
 settings:
   paper: true
@@ -32,15 +33,15 @@ settings:
   flatten_by: "15:55"     # null / off disables
 
 universe:
-  - SPY
-  - QQQ
+  - NVDA
+  - AMD
 
 rules:
   - id: ema9_trend
     enabled: true
-    symbols: [SPY, QQQ]
+    symbols: [NVDA, AMD]
     cooldown_minutes: 60
-    notes: "Noon long-only on SPY/QQQ: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 1% equity risk at a 1.0% fill stop; lock to +1% on first touch of entry×1.01; no take. Shorts parked."
+    notes: "Noon long-only on NVDA/AMD: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 1% equity risk at a 1.0% fill stop; lock to +1% on first touch of entry×1.01; no take. Shorts parked."
     when:
       all:
         - ema_cross:
