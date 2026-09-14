@@ -100,3 +100,5 @@ August 1% risk is a small sample. Lock-+1% is **$4,430.37 ahead**. The new book 
 On this Yahoo 15m AAPL+MSFT tape, **lower-high + volume does not beat lock-+1%**. The volume filter drops about a third of the EMA9-cross signals (154 → 101 full window; 58 → 43 in August). The lower-high exit then closes every filled lot at the first completed down-high, so nothing reaches `session_flatten` and the August lock-stop runners disappear. Lock-+1% remains ahead on trade count, win rate, and P&L on both the 10-share full window and the August 1% risk book.
 
 Full engine dumps: `artifacts/ema9_lh_vol.json`, `artifacts/ema9_aug2026_risk_lh_vol.json` (August narrative also in `artifacts/ema9_aug2026_risk_lh_vol.md`).
+
+Volume-only isolation (same lock-+1% exit, add `volume>prev`): `artifacts/ema9_lock1_vol.md`. Volume alone does not beat lock-+1%.
