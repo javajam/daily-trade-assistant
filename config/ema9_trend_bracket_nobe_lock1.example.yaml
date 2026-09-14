@@ -20,6 +20,9 @@
 # Lower-high + vol>prev sibling (no lock-+1%): 
 #   config/ema9_trend_bracket_nobe_lh_vol.example.yaml
 #   writeup: artifacts/ema9_lh_vol.md
+# Lock-+1% + vol>prev only (same exit): 
+#   config/ema9_trend_bracket_nobe_lock1_vol.example.yaml
+#   writeup: artifacts/ema9_lock1_vol.md
 
 settings:
   paper: true
