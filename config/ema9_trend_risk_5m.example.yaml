@@ -1,16 +1,14 @@
 # Refined EMA9 day-trade — 1% equity-risk on 5-minute bars.
 #
-# Same noon long (1% risk, lock-+1%) + cover-only 10-share short as
-# config/ema9_trend_risk.example.yaml.
+# Same noon long-only MA-cross as config/ema9_trend_risk.example.yaml.
+# 1% equity risk sized off a 1.0% reference R (no live percent stop).
 # every indicator on 5m. flatten_by 15:55 ET maps to the 15:50 ET 5m bar close.
 # Cooldown stays 60 wall-clock minutes.
 #
 #   python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml \
 #     --compare-config config/ema9_trend_risk_5m.example.yaml \
 #     --source yahoo --start 2026-08-01 --end 2026-08-31 --combined-only \
-#     --symbols AAPL,MSFT \
-#     --output artifacts/ema9_aug2026_risk_lock_5m_vs_15m.json \
-#     --report artifacts/ema9_aug2026_risk_lock_5m_vs_15m.md
+#     --symbols AAPL,MSFT
 #
 # Equivalent: --config config/ema9_trend_risk.example.yaml --timeframe 5m
 
@@ -38,7 +36,7 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "Noon long: 5m price crosses above EMA(9) while above SMA20 and RSI < 70. 1% equity risk at a 1.0% fill stop; lock to +1% on first touch of entry×1.01; no take."
+    notes: "Noon book risk: 5m price crosses above EMA(9) while above SMA20 and RSI < 70. 1% equity risk sized off a 1.0% reference R (no live percent stop); EMA9×below SMA20 exit at that bar's close."
     when:
       all:
         - ema_cross:
@@ -60,32 +58,6 @@ rules:
         equity_risk: 0.01
         stop_pct: 1.0
       order: market
-      exit: fixed_bracket
-      stop_mode: lock_plus
-      stop_loss_pct: 1.0
-      lock_trigger_pct: 1.0
-      lock_stop_pct: 1.0
-  - id: ema9_trend_short
-    enabled: true
-    symbols: [AAPL, MSFT]
-    cooldown_minutes: 60
-    notes: "Noon short: 5m price crosses below EMA(9) while below SMA20 (no RSI). Cover when EMA(9) crosses above SMA(20) at the next open. 10 shares (no stop R, so not 1% risk-sized). No percent / lock_plus stop."
-    when:
-      all:
-        - ema_cross:
-            period: 9
-            timeframe: 5m
-            direction: bearish
-        - sma:
-            period: 20
-            timeframe: 5m
-            compare: below
-    action:
-      type: sell
-      size:
-        type: shares
-        value: 10
-      order: market
-      exit: ma_cross
+      exit: ma_cross_close
       exit_ema_period: 9
       exit_sma_period: 20

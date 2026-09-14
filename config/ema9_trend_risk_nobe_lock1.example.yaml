@@ -1,6 +1,10 @@
-# Same as the default 1% risk product (config/ema9_trend_risk.example.yaml).
+# Prior 1% risk default / comparison — lock-+1% (not the locked day-trade book).
 #
-# Named sibling of the 10-share lock-+1% default. Same entry / session / lock.
+# Default 1% risk product is now MA-cross at close:
+#   config/ema9_trend_risk.example.yaml
+# Writeup: artifacts/ema9_macross_adopted.md
+#
+# Named sibling of the 10-share lock-+1% comparison. Same entry / session / lock.
 # Size: risk 1% of current equity at the 1.0% initial stop (stop_pct matches).
 # No take-profit.
 #

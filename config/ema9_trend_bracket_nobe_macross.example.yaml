@@ -1,5 +1,6 @@
 # Noon EMA9 long-only AAPL+MSFT: EMA9×below SMA20 exit at that bar's close.
 #
+# Same as the default product (config/ema9_trend.example.yaml).
 # Same entry as lock-+1% (price×EMA9 + SMA20 + RSI14<70, cutoff 12:00).
 # No volume filter. No half-take. No pyramid. No lock-+1% / percent stop.
 # Primary exit: after entry, on each completed 15m bar, leave when EMA(9)
@@ -8,9 +9,11 @@
 # lower_high). Session flatten 15:55 still applies (15:45 ET bar close on
 # 15m). If the cross bar is also the flatten bar, ma_cross at that close
 # wins over session_flatten.
+# Writeup: artifacts/ema9_macross_adopted.md
 #
-# Named sibling of the 10-share lock-+1% default:
-#   lock +1%: config/ema9_trend_bracket_nobe_lock1.example.yaml
+# Named copy of the 10-share MA-cross default:
+#   default: config/ema9_trend.example.yaml
+#   lock +1% comparison: config/ema9_trend_bracket_nobe_lock1.example.yaml
 #   this book: MA-cross at close (no lock / no % stop)
 #
 #   python -m dta_bot backtest --config config/ema9_trend_bracket_nobe_lock1.example.yaml \

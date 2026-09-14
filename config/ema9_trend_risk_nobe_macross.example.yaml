@@ -1,12 +1,14 @@
-# Same as the 10-share MA-cross-at-close book, 1% equity-risk sizing.
+# Same as the default 1% risk product (config/ema9_trend_risk.example.yaml).
 #
 # No live percent stop (exit is ma_cross at that bar's close / session_flatten).
 # Share count uses a reference R of 1% of entry price so sizing stays
 # comparable to the lock-+1% 1% risk book:
 #   shares = floor((0.01 * equity) / (0.01 * price)).
+# Writeup: artifacts/ema9_macross_adopted.md
 #
-# Named sibling of the 1% risk lock-+1% book:
-#   lock +1%: config/ema9_trend_risk_nobe_lock1.example.yaml
+# Named copy of the 1% risk MA-cross default:
+#   default: config/ema9_trend_risk.example.yaml
+#   lock +1% comparison: config/ema9_trend_risk_nobe_lock1.example.yaml
 #   this book: MA-cross at close (no lock / no live % stop)
 #
 #   python -m dta_bot backtest --config config/ema9_trend_risk_nobe_lock1.example.yaml \

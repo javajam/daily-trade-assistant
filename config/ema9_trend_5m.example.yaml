@@ -1,4 +1,5 @@
-# Refined EMA9 day-trade on 5-minute bars — same long + short as ema9_trend.example.yaml.
+# Refined EMA9 day-trade on 5-minute bars — same long-only MA-cross as
+# ema9_trend.example.yaml.
 #
 # Identical except settings.timeframe / every condition is 5m. Cooldown stays
 # 60 wall-clock minutes. Yahoo 5m history is capped at ~60 days.
@@ -9,9 +10,7 @@
 #   python -m dta_bot validate --config config/ema9_trend_5m.example.yaml
 #   python -m dta_bot backtest --config config/ema9_trend.example.yaml \
 #     --compare-config config/ema9_trend_5m.example.yaml --source yahoo \
-#     --combined-only --symbols AAPL,MSFT \
-#     --output artifacts/ema9_lock_5m_vs_15m.json \
-#     --report artifacts/ema9_lock_5m_vs_15m.md
+#     --combined-only --symbols AAPL,MSFT
 #
 # Equivalent: --config config/ema9_trend.example.yaml --timeframe 5m
 
@@ -39,7 +38,7 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "Noon long: 5m price crosses above EMA(9) while above SMA20 and RSI < 70. 10 shares, lock stop to +1% on first touch of entry×1.01, no take."
+    notes: "Noon book: 5m price crosses above EMA(9) while above SMA20 and RSI < 70. 10 shares, EMA9×below SMA20 exit at that bar's close, no percent stop."
     when:
       all:
         - ema_cross:
@@ -60,32 +59,6 @@ rules:
         type: shares
         value: 10
       order: market
-      exit: fixed_bracket
-      stop_mode: lock_plus
-      stop_loss_pct: 1.0
-      lock_trigger_pct: 1.0
-      lock_stop_pct: 1.0
-  - id: ema9_trend_short
-    enabled: true
-    symbols: [AAPL, MSFT]
-    cooldown_minutes: 60
-    notes: "Noon short: 5m price crosses below EMA(9) while below SMA20 (no RSI). Cover when EMA(9) crosses above SMA(20) at the next open. 10 shares. No percent / lock_plus stop; session flatten still applies."
-    when:
-      all:
-        - ema_cross:
-            period: 9
-            timeframe: 5m
-            direction: bearish
-        - sma:
-            period: 20
-            timeframe: 5m
-            compare: below
-    action:
-      type: sell
-      size:
-        type: shares
-        value: 10
-      order: market
-      exit: ma_cross
+      exit: ma_cross_close
       exit_ema_period: 9
       exit_sma_period: 20
