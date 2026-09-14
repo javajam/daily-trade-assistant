@@ -26,6 +26,9 @@
 # Lock-+1% + pyramid + 2% fill take:
 #   config/ema9_trend_bracket_nobe_lock1_pyramid2.example.yaml
 #   writeup: artifacts/ema9_lock1_pyramid2.md
+# Lock-+1% + add at +0.5% (no take):
+#   config/ema9_trend_bracket_nobe_lock1_add05.example.yaml
+#   writeup: artifacts/ema9_lock1_add05.md
 
 settings:
   paper: true

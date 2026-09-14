@@ -224,6 +224,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 stop_txt += f" lock_stop_pct={lock:g}"
             if rule.action.pyramid_on_lock:
                 stop_txt += " pyramid_on_lock"
+            if rule.action.pyramid_add_pct is not None:
+                stop_txt += f" pyramid_add_pct={rule.action.pyramid_add_pct:g}"
             if rule.action.take_profit_pct is not None:
                 stop_txt += f" take_profit_pct={rule.action.take_profit_pct:g}"
             if rule.action.take_anchor == "entry":

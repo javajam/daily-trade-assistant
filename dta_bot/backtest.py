@@ -152,6 +152,7 @@ class OpenLot:
     lock_armed: bool = False
     trail_ratcheted: bool = False
     pyramid_on_lock: bool = False
+    pyramid_add_pct: Optional[float] = None
     pyramid_added: bool = False
     pyramid_add_skipped: bool = False
     base_qty: float = 0.0
@@ -188,6 +189,7 @@ class PendingOrder:
     breakeven_valid: str = "above_ema"
     breakeven_ema_period: int = 9
     pyramid_on_lock: bool = False
+    pyramid_add_pct: Optional[float] = None
     take_anchor: str = "signal"
     take_profit_pct: Optional[float] = None
 
@@ -385,6 +387,7 @@ def _stop_manage_fields(action: ActionSpec) -> dict[str, Any]:
         "lock_stop_pct": action.resolved_lock_stop_pct(),
         "trail_pct": action.resolved_trail_pct(),
         "pyramid_on_lock": action.pyramid_on_lock,
+        "pyramid_add_pct": action.pyramid_add_pct,
         "take_anchor": action.take_anchor,
         "take_profit_pct": action.take_profit_pct,
     }
@@ -438,14 +441,36 @@ def _maybe_arm_lock(lot: OpenLot, bar: Bar) -> bool:
     return True
 
 
-def _pyramid_add_price(lot: OpenLot, bar: Bar) -> Optional[float]:
-    """Fill the lock-arm add at the same gap-through convention as stops.
+def _pyramid_add_trigger_pct(lot: OpenLot) -> Optional[float]:
+    """Percent from original fill that arms the intra-lot add.
 
-    Trigger = original fill × (1 ± lock_trigger_pct/100). If the bar opens
-    through the trigger, the add fills at the open; otherwise at the trigger
+    Explicit ``pyramid_add_pct`` (e.g. 0.5) wins. ``pyramid_on_lock`` falls
+    back to the lock trigger so the add and lock share a print.
+    """
+    if lot.pyramid_add_pct is not None:
+        return lot.pyramid_add_pct
+    if lot.pyramid_on_lock:
+        return lot.lock_trigger_pct
+    return None
+
+
+def _pyramid_add_touched(lot: OpenLot, bar: Bar) -> bool:
+    pct = _pyramid_add_trigger_pct(lot)
+    if pct is None or lot.entry_price <= 0:
+        return False
+    if lot.side == "buy":
+        return bar.high >= _pct_level(lot.entry_price, pct, above=True)
+    return bar.low <= _pct_level(lot.entry_price, pct, above=False)
+
+
+def _pyramid_add_price(lot: OpenLot, bar: Bar) -> Optional[float]:
+    """Fill the add at the same gap-through convention as stops.
+
+    Trigger = original fill × (1 ± add_pct/100). If the bar opens through
+    the trigger, the add fills at the open; otherwise at the trigger
     (the high/low tagged it).
     """
-    trigger_pct = lot.lock_trigger_pct
+    trigger_pct = _pyramid_add_trigger_pct(lot)
     if trigger_pct is None or lot.entry_price <= 0:
         return None
     if lot.side == "buy":
@@ -462,12 +487,16 @@ def _try_pyramid_add(
     commission: float,
     slippage_pct: float,
 ) -> tuple[float, bool]:
-    """Add ``base_qty`` at the lock-arm print. Returns (cash, skipped_for_cash).
+    """Add ``base_qty`` at the add-trigger print. Returns (cash, skipped_for_cash).
 
-    Does not pre-reserve cash at entry. Lock stays armed even when the add
-    is skipped.
+    Does not pre-reserve cash at entry. A cash skip is attempted once; lock
+    can still arm later. Not a second EMA signal.
     """
-    if lot.pyramid_added or not lot.pyramid_on_lock:
+    if lot.pyramid_added or lot.pyramid_add_skipped:
+        return cash, False
+    if _pyramid_add_trigger_pct(lot) is None:
+        return cash, False
+    if not _pyramid_add_touched(lot, bar):
         return cash, False
     add_qty = lot.base_qty if lot.base_qty >= 1 else lot.qty
     if add_qty < 1:
@@ -533,11 +562,14 @@ def _lock_arm_pyramid_then_take(
     commission: float,
     slippage_pct: float,
 ) -> tuple[float, bool, Optional[tuple[str, float]]]:
-    """After stop/take miss: manage lock, maybe add, then take-only on the arm bar."""
+    """After stop/take miss: add if the add print tagged, then lock, then take.
+
+    Add-before-lock so a bar that gaps through +0.5% and +1% (no earlier
+    +0.5% bar) still doubles first, then arms the lock on the full lot.
+    Locked stop is live next bar; take is checked only on the arm bar.
+    """
+    cash, skipped = _try_pyramid_add(lot, bar, cash, commission, slippage_pct)
     just_armed = _maybe_manage_stop(lot, bar)
-    skipped = False
-    if just_armed and lot.pyramid_on_lock:
-        cash, skipped = _try_pyramid_add(lot, bar, cash, commission, slippage_pct)
     take_hit = _take_only_hit(bar, lot) if just_armed else None
     return cash, skipped, take_hit
 
@@ -1026,6 +1058,7 @@ def run_backtest(
                     trail_pct=order.trail_pct,
                     peak_price=fill_px,
                     pyramid_on_lock=order.pyramid_on_lock,
+                    pyramid_add_pct=order.pyramid_add_pct,
                     base_qty=order.qty,
                     cost_basis=order.qty * fill_px,
                     take_anchor=order.take_anchor,
@@ -1559,8 +1592,34 @@ def run_backtest(
                 f"{sum(1 for t in trades if t.lock_armed)} trade(s) armed the +lock; "
                 f"{sum(1 for t in trades if t.exit_reason == 'lock_stop')} exited as lock_stop."
             )
-            if sample.pyramid_on_lock:
-                trig = sample.resolved_lock_trigger_pct()
+            if sample.pyramid_add_pct is not None:
+                add_pct = sample.pyramid_add_pct
+                extra_notes.append(
+                    f"Pyramid add (pyramid_add_pct: {add_pct:g}): when price first reaches "
+                    f"original fill × (1+{add_pct:g}/100) (long: bar high ≥ that print), "
+                    "add the same share count as the open lot (double total shares). "
+                    "Add fill: if the bar opens through that trigger the add fills at the "
+                    "open (gapped buy-stop); otherwise at the trigger (high tagged it). "
+                    f"The +{(trig or 0):g}% lock still arms separately on first touch of "
+                    f"original fill × (1+{(trig or 0):g}/100) and rests the stop there on "
+                    "the full position. If a bar gaps through both prints with no earlier "
+                    "+add bar, the engine adds first, then locks; the locked stop is live "
+                    "from the next bar. No hard take-profit when take_profit_pct is omitted. "
+                    "Cash for the add is not reserved at entry; a cash skip is attempted "
+                    "once and the lock can still arm. Session flatten still applies. "
+                    "This add is intra-lot, not a second EMA signal. Live does not auto-add."
+                )
+                extra_notes.append(
+                    f"{sum(1 for t in trades if t.pyramid_added)} trade(s) added at "
+                    f"+{add_pct:g}%; "
+                    f"{sum(1 for t in trades if t.pyramid_add_skipped)} skipped the add "
+                    f"(insufficient cash); "
+                    f"{sum(1 for t in trades if t.pyramid_added and t.lock_armed)} "
+                    f"added then armed the +lock; "
+                    f"{sum(1 for t in trades if t.lock_armed and not t.pyramid_added)} "
+                    f"locked without an add."
+                )
+            elif sample.pyramid_on_lock:
                 take_pct = sample.take_profit_pct
                 extra_notes.append(
                     f"Pyramid-on-lock (pyramid_on_lock): when the +{(trig or 0):g}% lock arms, "
@@ -1614,8 +1673,8 @@ def run_backtest(
         )
     if pyramid_add_skips:
         extra_notes.append(
-            f"{pyramid_add_skips} lock-arm add(s) skipped for insufficient cash "
-            "(lock still armed; cash is not reserved for the add at entry)."
+            f"{pyramid_add_skips} pyramid add(s) skipped for insufficient cash "
+            "(lock can still arm; cash is not reserved for the add at entry)."
         )
     cash_signal_skips = sum(1 for s in signals if s.skip_reason == "insufficient_cash")
     if cash_signal_skips:
@@ -1723,6 +1782,7 @@ def format_report_md(payload: dict[str, Any]) -> str:
             or n.startswith("Fixed entry stop")
             or n.startswith("Lock-plus")
             or n.startswith("Pyramid-on-lock")
+            or n.startswith("Pyramid add")
             or n.startswith("Take is fill-anchored")
             or n.startswith("Trailing stop")
             or n.startswith("Exit P&L")

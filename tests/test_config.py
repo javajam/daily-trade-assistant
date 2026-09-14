@@ -561,6 +561,31 @@ def test_ema9_trend_stop_manage_configs_load():
         assert cfg.rules[0].action.take_profit_pct is None
 
 
+def test_ema9_trend_lock1_add05_configs_load():
+    ten = load_config("config/ema9_trend_bracket_nobe_lock1_add05.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.exit == "fixed_bracket"
+    assert rule.action.stop_mode == "lock_plus"
+    assert rule.action.resolved_lock_trigger_pct() == 1.0
+    assert rule.action.resolved_lock_stop_pct() == 1.0
+    assert rule.action.pyramid_add_pct == 0.5
+    assert rule.action.pyramid_on_lock is False
+    assert rule.action.take_profit_pct is None
+    assert rule.action.has_pyramid_add() is True
+    assert rule.action.resolved_pyramid_add_pct() == 0.5
+    assert rule.action.size and rule.action.size.value == 10
+    assert has_noon_stack(rule.when)
+    assert not has_volume_gt_prev(rule.when)
+    assert ten.settings.entry_cutoff == "12:00"
+    assert ten.settings.flatten_by == "15:55"
+    risk = load_config("config/ema9_trend_risk_nobe_lock1_add05.example.yaml")
+    assert risk.rules[0].action.pyramid_add_pct == 0.5
+    assert risk.rules[0].action.take_profit_pct is None
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+
+
 def test_ema9_trend_lock1_pyramid2_configs_load():
     ten = load_config("config/ema9_trend_bracket_nobe_lock1_pyramid2.example.yaml")
     rule = ten.rules[0]
@@ -802,6 +827,11 @@ def test_cli_validate_timeframe_override(capsys):
     lock_out = capsys.readouterr().out
     assert "stop_mode=lock_plus" in lock_out
     assert "lock_trigger_pct=1" in lock_out
+    add05_rc = main(["validate", "--config", "config/ema9_trend_bracket_nobe_lock1_add05.example.yaml"])
+    assert add05_rc == 0
+    add05_out = capsys.readouterr().out
+    assert "stop_mode=lock_plus" in add05_out
+    assert "pyramid_add_pct=0.5" in add05_out
     pyr_rc = main(["validate", "--config", "config/ema9_trend_bracket_nobe_lock1_pyramid2.example.yaml"])
     assert pyr_rc == 0
     pyr_out = capsys.readouterr().out

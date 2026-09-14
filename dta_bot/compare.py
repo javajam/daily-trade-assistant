@@ -407,7 +407,18 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
             trig = action.resolved_lock_trigger_pct()
             lock = action.resolved_lock_stop_pct()
             pyramid_txt = ""
-            if action.pyramid_on_lock:
+            if action.pyramid_add_pct is not None:
+                add_pct = action.pyramid_add_pct
+                pyramid_txt = (
+                    f" pyramid_add_pct {add_pct:g} adds the same share count on first "
+                    f"touch of fill×(1+{add_pct:g}/100) (gap-through: add at open if the "
+                    "bar opens through that print, else at the trigger). The +lock still "
+                    f"arms at fill×(1+{(trig or 0):g}/100) and rests the stop at original "
+                    f"fill × (1+{(lock or 0):g}/100) on the full position. A bar that gaps "
+                    "through both prints adds first, then locks; locked stop is live next "
+                    "bar. Cash for the add is not reserved. Live does not auto-add."
+                )
+            elif action.pyramid_on_lock:
                 pyramid_txt = (
                     f" pyramid_on_lock adds the same share count at the lock-arm print "
                     f"(gap-through: add at open if the bar opens through the trigger, else "
@@ -621,6 +632,8 @@ def _fixed_bracket_tag(config: BotConfig) -> Optional[str]:
         trig = action.resolved_lock_trigger_pct() or stop
         if trig is None:
             return "lock+"
+        if action.pyramid_add_pct is not None:
+            return f"lock +{trig:.1f}% add@{action.pyramid_add_pct:.1f}%"
         if action.pyramid_on_lock:
             if take is not None:
                 return f"lock +{trig:.1f}% pyramid/{take:.1f}"

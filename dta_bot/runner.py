@@ -239,7 +239,7 @@ def _flatten_ma_cross(
     flatten on the next poll after the signal bar closes, matching the backtest
     next-bar-open convention as closely as the loop allows. Optional percent /
     lock_plus stop stays on the broker when stop_loss_pct is set.
-    pyramid_on_lock is backtest-only — live does not auto-add on lock.
+    pyramid_on_lock / pyramid_add_pct are backtest-only — live does not auto-add.
     """
     kill_file = config.settings.kill_switch_file
     if is_active(kill_file):

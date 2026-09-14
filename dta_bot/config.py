@@ -136,6 +136,12 @@ class ActionSpec(BaseModel):
     # add is not reserved at entry — if cash cannot cover it, lock still
     # arms and the add is skipped. Backtest-only (live does not auto-add).
     pyramid_on_lock: bool = False
+    # lock_plus only: add the same share count on first trade/touch of
+    # original fill × (1 + pyramid_add_pct/100), which may be *before* the
+    # +lock (e.g. 0.5 then lock at 1.0). No take required. Cash is not
+    # reserved. If a bar gaps through both prints, add first then lock;
+    # the locked stop is live next bar. Backtest-only.
+    pyramid_add_pct: Optional[float] = Field(default=None, gt=0)
     # signal = take_profit_pct from the signal-bar close (legacy).
     # entry = take_profit_pct from the fill (next-bar open). Forced to
     # entry when pyramid_on_lock is true.
@@ -227,7 +233,20 @@ class ActionSpec(BaseModel):
             if self.take_profit_pct is None:
                 raise ValueError("pyramid_on_lock requires take_profit_pct")
             self.take_anchor = "entry"
+        if self.pyramid_add_pct is not None:
+            if self.stop_mode != "lock_plus":
+                raise ValueError("pyramid_add_pct requires stop_mode: lock_plus")
         return self
+
+    def has_pyramid_add(self) -> bool:
+        return self.pyramid_on_lock or self.pyramid_add_pct is not None
+
+    def resolved_pyramid_add_pct(self) -> Optional[float]:
+        if self.pyramid_add_pct is not None:
+            return self.pyramid_add_pct
+        if self.pyramid_on_lock:
+            return self.resolved_lock_trigger_pct()
+        return None
 
     def resolved_lock_trigger_pct(self) -> Optional[float]:
         if self.lock_trigger_pct is not None:
@@ -881,6 +900,7 @@ def _parse_action(raw: dict[str, Any]) -> ActionSpec:
         lock_stop_pct=raw.get("lock_stop_pct"),
         trail_pct=raw.get("trail_pct"),
         pyramid_on_lock=raw.get("pyramid_on_lock", False),
+        pyramid_add_pct=raw.get("pyramid_add_pct"),
         take_anchor=raw.get("take_anchor", "signal"),
         exit=raw.get("exit", "fixed_bracket"),
         exit_ema_period=raw.get("exit_ema_period", raw.get("ema_period", 9)),
