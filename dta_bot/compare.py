@@ -418,6 +418,16 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
                     "through both prints adds first, then locks; locked stop is live next "
                     "bar. Cash for the add is not reserved. Live does not auto-add."
                 )
+            elif action.partial_take_be:
+                pyramid_txt = (
+                    f" partial_take_be sells floor(half) the open shares at the "
+                    f"+{(trig or 0):g}% print (gap-through: open if the bar opens "
+                    f"through fill×(1+{(trig or 0):g}/100), else the trigger) and "
+                    "rests the remainder stop at original fill × 1.00 (break-even), "
+                    f"not at fill × (1+{(lock or 0):g}/100). Size 1 skips the partial "
+                    "and still arms BE. The BE stop is live from the next bar. No "
+                    "pyramid. No hard full take. Live does not auto scale-out."
+                )
             elif action.partial_take_on_lock:
                 pyramid_txt = (
                     f" partial_take_on_lock sells floor(half) the open shares at the "
@@ -643,6 +653,8 @@ def _fixed_bracket_tag(config: BotConfig) -> Optional[str]:
             return "lock+"
         if action.pyramid_add_pct is not None:
             return f"lock +{trig:.1f}% add@{action.pyramid_add_pct:.1f}%"
+        if action.partial_take_be:
+            return f"lock +{trig:.1f}% half-take BE"
         if action.partial_take_on_lock:
             return f"lock +{trig:.1f}% half-take"
         if action.pyramid_on_lock:

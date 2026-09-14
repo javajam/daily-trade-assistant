@@ -1479,6 +1479,149 @@ def test_partial_take_same_bar_touch_does_not_lock_stop_remainder():
     assert trade.pnl == pytest.approx(5 * 1.0 + 5 * 0.80)
 
 
+def _half_be_rule(**action_kw) -> RuleSpec:
+    defaults = dict(
+        type="buy",
+        size=SizeSpec(type="shares", value=10),
+        exit="fixed_bracket",
+        stop_mode="lock_plus",
+        stop_loss_pct=1.0,
+        lock_trigger_pct=1.0,
+        lock_stop_pct=1.0,
+        partial_take_be=True,
+    )
+    defaults.update(action_kw)
+    return _buy_rule(action=ActionSpec(**defaults))
+
+
+def test_partial_take_be_sells_half_then_be_stop_remainder():
+    # Fill at 100. First +1% sells 5 at 101; remainder 5 BE-stop next bar at 100.
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        Bar(bar(2, 100.0, 101.05, 100.20, 100.80).timestamp, 100.0, 101.05, 100.20, 100.80, 1000),
+        Bar(bar(3, 100.50, 100.60, 99.80, 99.90).timestamp, 100.50, 100.60, 99.80, 99.90, 1000),
+    ]
+    result = run_backtest(_cfg(_half_be_rule()), {("AAPL", "15Min"): bars})
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.entry_price == 100.0
+    assert trade.lock_armed is False
+    assert trade.breakeven_armed is True
+    assert trade.partial_take is True
+    assert trade.partial_take_qty == 5
+    assert trade.partial_take_price == pytest.approx(101.0)
+    assert trade.partial_take_pnl == pytest.approx(5.0)
+    assert trade.qty == 5
+    assert trade.exit_reason == "breakeven_stop"
+    assert trade.exit_price == pytest.approx(100.0)
+    assert trade.pnl == pytest.approx(5.0)
+    assert result.report.partial_take == 1
+    assert result.report.breakeven_armed == 1
+    assert any("Partial take then BE" in n for n in result.report.notes)
+
+
+def test_partial_take_be_gap_through_fills_at_open():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        Bar(bar(2, 100.0, 100.40, 99.90, 100.20).timestamp, 100.0, 100.40, 99.90, 100.20, 1000),
+        # Open through 101. Same-bar low 99.80 must not BE-stop the remainder.
+        Bar(bar(3, 101.40, 101.60, 99.80, 101.00).timestamp, 101.40, 101.60, 99.80, 101.00, 1000),
+        Bar(bar(4, 100.20, 100.30, 99.70, 99.80).timestamp, 100.20, 100.30, 99.70, 99.80, 1000),
+    ]
+    result = run_backtest(_cfg(_half_be_rule()), {("AAPL", "15Min"): bars})
+    trade = result.trades[0]
+    assert trade.partial_take is True
+    assert trade.partial_take_price == pytest.approx(101.40)
+    assert trade.partial_take_pnl == pytest.approx(5 * 1.40)
+    assert trade.qty == 5
+    assert trade.lock_armed is False
+    assert trade.breakeven_armed is True
+    assert trade.exit_reason == "breakeven_stop"
+    assert trade.exit_price == pytest.approx(100.0)
+    assert trade.pnl == pytest.approx(5 * 1.40)
+
+
+def test_partial_take_be_size_one_skips_partial_still_arms_be():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        Bar(bar(2, 100.0, 101.05, 100.20, 100.80).timestamp, 100.0, 101.05, 100.20, 100.80, 1000),
+        Bar(bar(3, 100.50, 100.60, 99.80, 99.90).timestamp, 100.50, 100.60, 99.80, 99.90, 1000),
+    ]
+    result = run_backtest(
+        _cfg(_half_be_rule(size=SizeSpec(type="shares", value=1))),
+        {("AAPL", "15Min"): bars},
+    )
+    trade = result.trades[0]
+    assert trade.partial_take is False
+    assert trade.partial_take_skipped_size is True
+    assert trade.qty == 1
+    assert trade.lock_armed is False
+    assert trade.breakeven_armed is True
+    assert trade.exit_reason == "breakeven_stop"
+    assert trade.exit_price == pytest.approx(100.0)
+    assert trade.pnl == pytest.approx(0.0)
+
+
+def test_partial_take_be_odd_lot_rounds_down():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        Bar(bar(2, 100.0, 101.05, 100.20, 100.80).timestamp, 100.0, 101.05, 100.20, 100.80, 1000),
+        Bar(bar(3, 100.50, 100.60, 99.80, 99.90).timestamp, 100.50, 100.60, 99.80, 99.90, 1000),
+    ]
+    result = run_backtest(
+        _cfg(_half_be_rule(size=SizeSpec(type="shares", value=11))),
+        {("AAPL", "15Min"): bars},
+    )
+    trade = result.trades[0]
+    assert trade.partial_take_qty == 5
+    assert trade.qty == 6
+    assert trade.partial_take_pnl == pytest.approx(5.0)
+    assert trade.exit_reason == "breakeven_stop"
+    assert trade.pnl == pytest.approx(5.0)
+
+
+def test_partial_take_be_never_plus_one_identical_to_plain_lock():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        Bar(bar(2, 100.0, 100.4, 98.90, 99.20).timestamp, 100.0, 100.4, 98.90, 99.20, 1000),
+    ]
+    plain = run_backtest(
+        _cfg(_manage_rule(stop_mode="lock_plus")),
+        {("AAPL", "15Min"): bars},
+    )
+    be = run_backtest(_cfg(_half_be_rule()), {("AAPL", "15Min"): bars})
+    assert len(plain.trades) == 1
+    assert len(be.trades) == 1
+    assert be.trades[0].partial_take is False
+    assert be.trades[0].breakeven_armed is False
+    assert plain.trades[0].exit_reason == be.trades[0].exit_reason
+    assert plain.trades[0].pnl == pytest.approx(be.trades[0].pnl)
+
+
+def test_partial_take_be_same_bar_touch_does_not_be_stop_remainder():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        # High 101.20 tags +1%; same-bar low 99.50 must not BE-stop the leftover 5.
+        Bar(bar(2, 100.0, 101.20, 99.50, 100.80).timestamp, 100.0, 101.20, 99.50, 100.80, 1000),
+    ]
+    result = run_backtest(_cfg(_half_be_rule()), {("AAPL", "15Min"): bars})
+    trade = result.trades[0]
+    assert trade.partial_take is True
+    assert trade.partial_take_qty == 5
+    assert trade.qty == 5
+    assert trade.breakeven_armed is True
+    assert trade.lock_armed is False
+    assert trade.exit_reason == "eod"
+    assert trade.exit_price == 100.80
+    assert trade.pnl == pytest.approx(5 * 1.0 + 5 * 0.80)
+
+
 def test_add05_insufficient_cash_still_locks():
     bars = [
         Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),

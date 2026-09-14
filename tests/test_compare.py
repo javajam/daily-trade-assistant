@@ -390,6 +390,11 @@ def test_run_rule_books_prefixes_and_soxl_breakout():
     half_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, half)
     assert any("partial_take_on_lock" in n and "floor(half)" in n for n in half_notes)
     assert any("Size 1 skips" in n for n in half_notes)
+    half_be = load_config("config/ema9_trend_bracket_nobe_lock1_half_be.example.yaml")
+    assert session_gate_suffix(half_be) == " (cutoff 12:00, flat 15:55, lock +1.0% half-take BE)"
+    half_be_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, half_be)
+    assert any("partial_take_be" in n and "break-even" in n for n in half_be_notes)
+    assert any("fill × 1.00" in n for n in half_be_notes)
     pyr2 = load_config("config/ema9_trend_bracket_nobe_lock1_pyramid2.example.yaml")
     assert session_gate_suffix(pyr2) == " (cutoff 12:00, flat 15:55, lock +1.0% pyramid/2.0)"
     pyr_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, pyr2)

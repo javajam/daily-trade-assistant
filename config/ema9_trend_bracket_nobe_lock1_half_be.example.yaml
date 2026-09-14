@@ -1,0 +1,72 @@
+# Noon EMA9 long-only AAPL+MSFT: half-take at +1%, BE remainder. No add.
+#
+# Same entry / gates as the lock-+1% default
+# (config/ema9_trend_bracket_nobe_lock1.example.yaml). Additive changes only:
+#   1. Initial stop = fill × 0.99.
+#   2. When price first reaches original fill × 1.01, sell floor(half) the
+#      open shares. Fill: bar open if it gaps through that trigger, else
+#      the trigger (high tagged it). Size ≥ 2 leaves at least 1 share;
+#      size 1 skips the partial and still arms BE.
+#   3. On that same event, rest the remainder stop at original fill × 1.00
+#      (break-even), NOT lock at fill × 1.01. BE stop is live next bar.
+#   4. Remainder rides to breakeven_stop / session_flatten / initial stop.
+#   5. No hard 2% take. No pyramid add. No volume filter.
+#
+#   python -m dta_bot backtest --config config/ema9_trend_bracket_nobe_lock1.example.yaml \
+#     --compare-config config/ema9_trend_bracket_nobe_lock1_half.example.yaml \
+#     --compare-config config/ema9_trend_bracket_nobe_lock1_half_be.example.yaml \
+#     --source yahoo --combined-only --symbols AAPL,MSFT \
+#     --output artifacts/ema9_lock1_half_be.json \
+#     --report artifacts/ema9_lock1_half_be.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"
+  flatten_by: "15:55"
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Noon book C half-take BE: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 10 shares, sell 5 at entry×1.01 and rest the remaining 5 at fill (BE), no lock at +1%, no add, no 2% take."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      exit: fixed_bracket
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      lock_trigger_pct: 1.0
+      lock_stop_pct: 1.0
+      partial_take_be: true

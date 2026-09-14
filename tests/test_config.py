@@ -642,6 +642,92 @@ def test_ema9_trend_lock1_half_configs_load():
     assert risk.rules[0].action.size.stop_pct == 1.0
 
 
+def test_ema9_trend_lock1_half_be_configs_load():
+    ten = load_config("config/ema9_trend_bracket_nobe_lock1_half_be.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.exit == "fixed_bracket"
+    assert rule.action.stop_mode == "lock_plus"
+    assert rule.action.resolved_lock_trigger_pct() == 1.0
+    assert rule.action.partial_take_be is True
+    assert rule.action.partial_take_on_lock is False
+    assert rule.action.pyramid_on_lock is False
+    assert rule.action.pyramid_add_pct is None
+    assert rule.action.take_profit_pct is None
+    assert rule.action.size and rule.action.size.value == 10
+    assert has_noon_stack(rule.when)
+    assert not has_volume_gt_prev(rule.when)
+    assert ten.settings.entry_cutoff == "12:00"
+    assert ten.settings.flatten_by == "15:55"
+    risk = load_config("config/ema9_trend_risk_nobe_lock1_half_be.example.yaml")
+    assert risk.rules[0].action.partial_take_be is True
+    assert risk.rules[0].action.partial_take_on_lock is False
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+
+
+def test_partial_take_be_requires_lock_plus_and_rejects_combos(tmp_path: Path):
+    bad_mode = tmp_path / "bad_be_mode.yaml"
+    bad_mode.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action:
+      type: buy
+      size: {type: shares, value: 10}
+      stop_mode: entry_pct
+      stop_loss_pct: 1.0
+      partial_take_be: true
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="partial_take_be"):
+        load_config(bad_mode)
+    bad_lock = tmp_path / "bad_be_lock.yaml"
+    bad_lock.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action:
+      type: buy
+      size: {type: shares, value: 10}
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      partial_take_be: true
+      partial_take_on_lock: true
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="cannot combine"):
+        load_config(bad_lock)
+    bad_pyr = tmp_path / "bad_be_pyr.yaml"
+    bad_pyr.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action:
+      type: buy
+      size: {type: shares, value: 10}
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      partial_take_be: true
+      pyramid_add_pct: 0.5
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="cannot combine"):
+        load_config(bad_pyr)
+
+
 def test_partial_take_on_lock_requires_lock_plus_and_rejects_pyramid(tmp_path: Path):
     bad_mode = tmp_path / "bad_half_mode.yaml"
     bad_mode.write_text(
@@ -929,6 +1015,12 @@ def test_cli_validate_timeframe_override(capsys):
     assert "stop_mode=lock_plus" in half_out
     assert "partial_take_on_lock" in half_out
     assert "pyramid_on_lock" not in half_out
+    half_be_rc = main(["validate", "--config", "config/ema9_trend_bracket_nobe_lock1_half_be.example.yaml"])
+    assert half_be_rc == 0
+    half_be_out = capsys.readouterr().out
+    assert "stop_mode=lock_plus" in half_be_out
+    assert "partial_take_be" in half_be_out
+    assert "partial_take_on_lock" not in half_be_out
     pyr_rc = main(["validate", "--config", "config/ema9_trend_bracket_nobe_lock1_pyramid2.example.yaml"])
     assert pyr_rc == 0
     pyr_out = capsys.readouterr().out

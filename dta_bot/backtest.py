@@ -166,6 +166,7 @@ class OpenLot:
     take_anchor: str = "signal"
     take_profit_pct: Optional[float] = None
     partial_take_on_lock: bool = False
+    partial_take_be: bool = False
     partial_take: bool = False
     partial_take_skipped_size: bool = False
     partial_take_qty: float = 0.0
@@ -205,6 +206,7 @@ class PendingOrder:
     take_anchor: str = "signal"
     take_profit_pct: Optional[float] = None
     partial_take_on_lock: bool = False
+    partial_take_be: bool = False
 
 
 @dataclass
@@ -407,6 +409,7 @@ def _stop_manage_fields(action: ActionSpec) -> dict[str, Any]:
         "take_anchor": action.take_anchor,
         "take_profit_pct": action.take_profit_pct,
         "partial_take_on_lock": action.partial_take_on_lock,
+        "partial_take_be": action.partial_take_be,
     }
 
 
@@ -438,6 +441,9 @@ def _maybe_arm_lock(lot: OpenLot, bar: Bar) -> bool:
     Returns True when the lock newly armed on this bar.
     """
     if lot.lock_armed or lot.stop_mode != "lock_plus":
+        return False
+    # Variant C already converted the +1% event to a BE remainder stop.
+    if lot.partial_take_be and lot.breakeven_armed:
         return False
     trigger_pct = lot.lock_trigger_pct
     lock_pct = lot.lock_stop_pct
@@ -603,7 +609,7 @@ def _try_partial_take_on_lock(
     Size 1 skips the scale-out and keeps the single share (still locked).
     Locked stop is live next bar — do not re-check stop after this.
     """
-    if not lot.partial_take_on_lock or lot.partial_take or not lot.lock_armed:
+    if not (lot.partial_take_on_lock or lot.partial_take_be) or lot.partial_take or not lot.lock_armed:
         return cash
     take_qty = _partial_take_qty(lot.qty)
     if take_qty < 1:
@@ -643,11 +649,17 @@ def _lock_arm_pyramid_then_take(
     +0.5% bar) still doubles first, then arms the lock on the full lot.
     Locked stop is live next bar; take is checked only on the arm bar.
     partial_take_on_lock scales out half at the lock print after the lock arms.
+    partial_take_be then rests the remainder stop at original fill (BE),
+    live next bar — not lock at +1%.
     """
     cash, skipped = _try_pyramid_add(lot, bar, cash, commission, slippage_pct)
     just_armed = _maybe_manage_stop(lot, bar)
     if just_armed:
         cash = _try_partial_take_on_lock(lot, bar, cash, commission, slippage_pct)
+        if lot.partial_take_be:
+            lot.stop = lot.entry_price
+            lot.breakeven_armed = True
+            lot.lock_armed = False
     take_hit = _take_only_hit(bar, lot) if just_armed else None
     return cash, skipped, take_hit
 
@@ -1150,6 +1162,7 @@ def run_backtest(
                     pyramid_on_lock=order.pyramid_on_lock,
                     pyramid_add_pct=order.pyramid_add_pct,
                     partial_take_on_lock=order.partial_take_on_lock,
+                    partial_take_be=order.partial_take_be,
                     base_qty=order.qty,
                     cost_basis=order.qty * fill_px,
                     take_anchor=order.take_anchor,
@@ -1743,7 +1756,34 @@ def run_backtest(
                     f"take_profit_pct {sample.take_profit_pct:g}% from the fill, not the "
                     "signal-bar close."
                 )
-            if sample.partial_take_on_lock:
+            if sample.partial_take_be:
+                extra_notes.append(
+                    f"Partial take then BE (partial_take_be): when price first reaches "
+                    f"original fill × (1+{(trig or 0):g}/100), sell floor(half) of the "
+                    "open shares at the lock-trigger print (gap-through: fill at open "
+                    "if the bar opens through that trigger, else at the trigger) and "
+                    "rest the remainder stop at original fill × 1.00 (break-even), "
+                    "not at fill × "
+                    f"(1+{(sample.resolved_lock_stop_pct() or 0):g}/100). Odd lots "
+                    "round the take down so at least 1 share remains when size ≥ 2. "
+                    "Size 1 skips the partial and still arms BE. The BE stop is live "
+                    "from the next bar; same-bar pullback after the tag still uses "
+                    "the initial 1% stop. Remainder exits as breakeven_stop / "
+                    "session_flatten / stop (if never +1%). No hard full take. No "
+                    "pyramid. Live does not auto scale-out."
+                )
+                extra_notes.append(
+                    f"{sum(1 for t in trades if t.partial_take)} trade(s) scaled out half "
+                    f"at +{(trig or 0):g}% "
+                    f"(${sum(t.partial_take_pnl for t in trades if t.partial_take):,.2f}); "
+                    f"{sum(1 for t in trades if t.partial_take_skipped_size)} skipped "
+                    "the partial (size < 2); "
+                    f"{sum(1 for t in trades if t.breakeven_armed)} armed BE on the "
+                    f"remainder; "
+                    f"{sum(1 for t in trades if t.exit_reason == 'breakeven_stop')} "
+                    "exited as breakeven_stop."
+                )
+            elif sample.partial_take_on_lock:
                 extra_notes.append(
                     f"Partial take on lock (partial_take_on_lock): when the "
                     f"+{(trig or 0):g}% lock arms, sell floor(half) of the open shares "
@@ -1909,6 +1949,8 @@ def format_report_md(payload: dict[str, Any]) -> str:
             or "SMA20" in n
             or "session_flatten" in n
             or "armed break-even" in n
+            or "armed BE" in n
+            or "breakeven_stop" in n
             or "exited as ma_cross" in n
             or "exited as lower_high" in n
             or "lock_stop" in n

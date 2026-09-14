@@ -148,6 +148,12 @@ class ActionSpec(BaseModel):
     # skips the partial and still locks. No pyramid. No hard full take.
     # Backtest-only (live does not auto scale-out).
     partial_take_on_lock: bool = False
+    # lock_plus only: same half-take as partial_take_on_lock, but the
+    # remainder stop rests at original fill × 1.00 (break-even), not at
+    # fill × (1+lock_stop/100). Size 1 skips the partial and still arms
+    # BE. BE stop is live next bar. Cannot combine with partial_take_on_lock
+    # or pyramid. Backtest-only.
+    partial_take_be: bool = False
     # signal = take_profit_pct from the signal-bar close (legacy).
     # entry = take_profit_pct from the fill (next-bar open). Forced to
     # entry when pyramid_on_lock is true.
@@ -247,6 +253,13 @@ class ActionSpec(BaseModel):
                 raise ValueError("partial_take_on_lock requires stop_mode: lock_plus")
             if self.pyramid_on_lock or self.pyramid_add_pct is not None:
                 raise ValueError("partial_take_on_lock cannot combine with pyramid adds")
+        if self.partial_take_be:
+            if self.stop_mode != "lock_plus":
+                raise ValueError("partial_take_be requires stop_mode: lock_plus")
+            if self.pyramid_on_lock or self.pyramid_add_pct is not None:
+                raise ValueError("partial_take_be cannot combine with pyramid adds")
+            if self.partial_take_on_lock:
+                raise ValueError("partial_take_be cannot combine with partial_take_on_lock")
         return self
 
     def has_pyramid_add(self) -> bool:
@@ -913,6 +926,7 @@ def _parse_action(raw: dict[str, Any]) -> ActionSpec:
         pyramid_on_lock=raw.get("pyramid_on_lock", False),
         pyramid_add_pct=raw.get("pyramid_add_pct"),
         partial_take_on_lock=raw.get("partial_take_on_lock", False),
+        partial_take_be=raw.get("partial_take_be", False),
         take_anchor=raw.get("take_anchor", "signal"),
         exit=raw.get("exit", "fixed_bracket"),
         exit_ema_period=raw.get("exit_ema_period", raw.get("ema_period", 9)),
