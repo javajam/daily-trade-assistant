@@ -1337,6 +1337,148 @@ def test_add05_without_lock_keeps_initial_stop():
     assert trade.pnl == pytest.approx(-25.0)
 
 
+def _half_rule(**action_kw) -> RuleSpec:
+    defaults = dict(
+        type="buy",
+        size=SizeSpec(type="shares", value=10),
+        exit="fixed_bracket",
+        stop_mode="lock_plus",
+        stop_loss_pct=1.0,
+        lock_trigger_pct=1.0,
+        lock_stop_pct=1.0,
+        partial_take_on_lock=True,
+    )
+    defaults.update(action_kw)
+    return _buy_rule(action=ActionSpec(**defaults))
+
+
+def test_partial_take_on_lock_sells_half_then_lock_stop_remainder():
+    # Fill at 100. First +1% sells 5 at 101; remainder 5 lock_stop next bar at 101.
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        Bar(bar(2, 100.0, 101.05, 100.20, 100.80).timestamp, 100.0, 101.05, 100.20, 100.80, 1000),
+        Bar(bar(3, 101.05, 101.20, 100.85, 100.90).timestamp, 101.05, 101.20, 100.85, 100.90, 1000),
+    ]
+    result = run_backtest(_cfg(_half_rule()), {("AAPL", "15Min"): bars})
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.entry_price == 100.0
+    assert trade.lock_armed is True
+    assert trade.partial_take is True
+    assert trade.partial_take_qty == 5
+    assert trade.partial_take_price == pytest.approx(101.0)
+    assert trade.partial_take_pnl == pytest.approx(5.0)
+    assert trade.qty == 5
+    assert trade.exit_reason == "lock_stop"
+    assert trade.exit_price == pytest.approx(101.0)
+    assert trade.pnl == pytest.approx(10.0)
+    assert result.report.partial_take == 1
+    assert result.report.partial_take_pnl == pytest.approx(5.0)
+    assert any("Partial take on lock" in n for n in result.report.notes)
+    assert any("scaled out half" in n for n in result.report.notes)
+
+
+def test_partial_take_on_lock_gap_through_fills_at_open():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        Bar(bar(2, 100.0, 100.40, 99.90, 100.20).timestamp, 100.0, 100.40, 99.90, 100.20, 1000),
+        # Open through 101. Same-bar low 100.90 must not lock_stop the remainder.
+        Bar(bar(3, 101.40, 101.60, 100.90, 101.50).timestamp, 101.40, 101.60, 100.90, 101.50, 1000),
+        Bar(bar(4, 101.50, 101.60, 100.90, 101.00).timestamp, 101.50, 101.60, 100.90, 101.00, 1000),
+    ]
+    result = run_backtest(_cfg(_half_rule()), {("AAPL", "15Min"): bars})
+    trade = result.trades[0]
+    assert trade.partial_take is True
+    assert trade.partial_take_price == pytest.approx(101.40)
+    assert trade.partial_take_pnl == pytest.approx(5 * 1.40)
+    assert trade.qty == 5
+    assert trade.lock_armed is True
+    assert trade.exit_reason == "lock_stop"
+    assert trade.exit_price == pytest.approx(101.0)
+    assert trade.pnl == pytest.approx(5 * 1.40 + 5 * 1.0)
+
+
+def test_partial_take_on_lock_size_one_skips_partial_still_locks():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        Bar(bar(2, 100.0, 101.05, 100.20, 100.80).timestamp, 100.0, 101.05, 100.20, 100.80, 1000),
+        Bar(bar(3, 101.05, 101.20, 100.85, 100.90).timestamp, 101.05, 101.20, 100.85, 100.90, 1000),
+    ]
+    result = run_backtest(
+        _cfg(_half_rule(size=SizeSpec(type="shares", value=1))),
+        {("AAPL", "15Min"): bars},
+    )
+    trade = result.trades[0]
+    assert trade.partial_take is False
+    assert trade.partial_take_skipped_size is True
+    assert trade.qty == 1
+    assert trade.lock_armed is True
+    assert trade.exit_reason == "lock_stop"
+    assert trade.exit_price == pytest.approx(101.0)
+    assert trade.pnl == pytest.approx(1.0)
+    assert result.report.partial_take_skipped_size == 1
+    assert any("skipped the partial" in n for n in result.report.notes)
+
+
+def test_partial_take_on_lock_odd_lot_rounds_down():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        Bar(bar(2, 100.0, 101.05, 100.20, 100.80).timestamp, 100.0, 101.05, 100.20, 100.80, 1000),
+        Bar(bar(3, 101.05, 101.20, 100.85, 100.90).timestamp, 101.05, 101.20, 100.85, 100.90, 1000),
+    ]
+    result = run_backtest(
+        _cfg(_half_rule(size=SizeSpec(type="shares", value=11))),
+        {("AAPL", "15Min"): bars},
+    )
+    trade = result.trades[0]
+    assert trade.partial_take_qty == 5
+    assert trade.qty == 6
+    assert trade.partial_take_pnl == pytest.approx(5.0)
+    assert trade.pnl == pytest.approx(5.0 + 6.0)
+
+
+def test_partial_take_never_locks_identical_to_plain_lock():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        Bar(bar(2, 100.0, 100.4, 98.90, 99.20).timestamp, 100.0, 100.4, 98.90, 99.20, 1000),
+    ]
+    plain = run_backtest(
+        _cfg(_manage_rule(stop_mode="lock_plus")),
+        {("AAPL", "15Min"): bars},
+    )
+    half = run_backtest(_cfg(_half_rule()), {("AAPL", "15Min"): bars})
+    assert len(plain.trades) == 1
+    assert len(half.trades) == 1
+    assert half.trades[0].partial_take is False
+    assert half.trades[0].lock_armed is False
+    assert plain.trades[0].exit_reason == half.trades[0].exit_reason
+    assert plain.trades[0].pnl == pytest.approx(half.trades[0].pnl)
+    assert plain.report.total_pnl == pytest.approx(half.report.total_pnl)
+
+
+def test_partial_take_same_bar_touch_does_not_lock_stop_remainder():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        # High 101.20 tags +1%; same-bar low 100.10 must not lock_stop the leftover 5.
+        Bar(bar(2, 100.0, 101.20, 100.10, 100.80).timestamp, 100.0, 101.20, 100.10, 100.80, 1000),
+    ]
+    result = run_backtest(_cfg(_half_rule()), {("AAPL", "15Min"): bars})
+    trade = result.trades[0]
+    assert trade.partial_take is True
+    assert trade.partial_take_qty == 5
+    assert trade.qty == 5
+    assert trade.lock_armed is True
+    assert trade.exit_reason == "eod"
+    assert trade.exit_price == 100.80
+    assert trade.pnl == pytest.approx(5 * 1.0 + 5 * 0.80)
+
+
 def test_add05_insufficient_cash_still_locks():
     bars = [
         Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),

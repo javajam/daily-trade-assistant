@@ -418,6 +418,15 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
                     "through both prints adds first, then locks; locked stop is live next "
                     "bar. Cash for the add is not reserved. Live does not auto-add."
                 )
+            elif action.partial_take_on_lock:
+                pyramid_txt = (
+                    f" partial_take_on_lock sells floor(half) the open shares at the "
+                    f"lock-arm print (gap-through: open if the bar opens through "
+                    f"fill×(1+{(trig or 0):g}/100), else the trigger) and locks the "
+                    f"remainder at original fill × (1+{(lock or 0):g}/100). Size 1 skips "
+                    "the partial and still locks. No pyramid. No hard full take. Live "
+                    "does not auto scale-out."
+                )
             elif action.pyramid_on_lock:
                 pyramid_txt = (
                     f" pyramid_on_lock adds the same share count at the lock-arm print "
@@ -634,6 +643,8 @@ def _fixed_bracket_tag(config: BotConfig) -> Optional[str]:
             return "lock+"
         if action.pyramid_add_pct is not None:
             return f"lock +{trig:.1f}% add@{action.pyramid_add_pct:.1f}%"
+        if action.partial_take_on_lock:
+            return f"lock +{trig:.1f}% half-take"
         if action.pyramid_on_lock:
             if take is not None:
                 return f"lock +{trig:.1f}% pyramid/{take:.1f}"
@@ -1225,6 +1236,13 @@ def format_side_by_side_table(columns: list[tuple[str, dict[str, Any]]]) -> list
         ("Lock armed", lambda r: str(int(r.get("lock_armed") or 0))),
         ("Pyramid added", lambda r: str(int(r.get("pyramid_added") or 0))),
         ("Pyramid add skipped", lambda r: str(int(r.get("pyramid_add_skipped") or 0))),
+        (
+            "Partial take",
+            lambda r: (
+                f"{int(r.get('partial_take') or 0)} "
+                f"({_fmt_money(r.get('partial_take_pnl'))})"
+            ),
+        ),
         ("Trail ratcheted", lambda r: str(int(r.get("trail_ratcheted") or 0))),
         ("By side", lambda r: _side_mix(r)),
     ]

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -88,6 +89,11 @@ class Trade:
     trail_ratcheted: bool = False
     pyramid_added: bool = False
     pyramid_add_skipped: bool = False
+    partial_take: bool = False
+    partial_take_qty: float = 0.0
+    partial_take_price: Optional[float] = None
+    partial_take_pnl: float = 0.0
+    partial_take_skipped_size: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -159,6 +165,12 @@ class OpenLot:
     cost_basis: float = 0.0
     take_anchor: str = "signal"
     take_profit_pct: Optional[float] = None
+    partial_take_on_lock: bool = False
+    partial_take: bool = False
+    partial_take_skipped_size: bool = False
+    partial_take_qty: float = 0.0
+    partial_take_price: Optional[float] = None
+    partial_take_pnl: float = 0.0
 
 
 @dataclass
@@ -192,6 +204,7 @@ class PendingOrder:
     pyramid_add_pct: Optional[float] = None
     take_anchor: str = "signal"
     take_profit_pct: Optional[float] = None
+    partial_take_on_lock: bool = False
 
 
 @dataclass
@@ -225,6 +238,9 @@ class RuleReport:
     trail_ratcheted: int = 0
     pyramid_added: int = 0
     pyramid_add_skipped: int = 0
+    partial_take: int = 0
+    partial_take_pnl: float = 0.0
+    partial_take_skipped_size: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -390,6 +406,7 @@ def _stop_manage_fields(action: ActionSpec) -> dict[str, Any]:
         "pyramid_add_pct": action.pyramid_add_pct,
         "take_anchor": action.take_anchor,
         "take_profit_pct": action.take_profit_pct,
+        "partial_take_on_lock": action.partial_take_on_lock,
     }
 
 
@@ -555,6 +572,64 @@ def _maybe_manage_stop(lot: OpenLot, bar: Bar) -> bool:
     return just_armed
 
 
+def _partial_take_qty(qty: float) -> float:
+    """Shares to scale out: floor(half), leaving ≥1 when size ≥ 2. Size 1 → 0."""
+    if qty < 2:
+        return 0.0
+    return float(math.floor(qty / 2.0))
+
+
+def _lock_trigger_fill_price(lot: OpenLot, bar: Bar) -> Optional[float]:
+    """Gap-through fill at the lock trigger (same convention as stops/adds)."""
+    trigger_pct = lot.lock_trigger_pct
+    if trigger_pct is None or lot.entry_price <= 0:
+        return None
+    if lot.side == "buy":
+        trigger = _pct_level(lot.entry_price, trigger_pct, above=True)
+        return bar.open if bar.open >= trigger else trigger
+    trigger = _pct_level(lot.entry_price, trigger_pct, above=False)
+    return bar.open if bar.open <= trigger else trigger
+
+
+def _try_partial_take_on_lock(
+    lot: OpenLot,
+    bar: Bar,
+    cash: float,
+    commission: float,
+    slippage_pct: float,
+) -> float:
+    """Sell half at the lock-arm print; lock already rests on the remainder.
+
+    Size 1 skips the scale-out and keeps the single share (still locked).
+    Locked stop is live next bar — do not re-check stop after this.
+    """
+    if not lot.partial_take_on_lock or lot.partial_take or not lot.lock_armed:
+        return cash
+    take_qty = _partial_take_qty(lot.qty)
+    if take_qty < 1:
+        lot.partial_take_skipped_size = True
+        return cash
+    raw_px = _lock_trigger_fill_price(lot, bar)
+    if raw_px is None:
+        return cash
+    take_px = _apply_slippage(raw_px, lot.side, slippage_pct, is_entry=False)
+    if lot.side == "buy":
+        cash += take_qty * take_px - commission
+        pnl = take_qty * (take_px - lot.entry_price) - commission
+    else:
+        cash -= take_qty * take_px + commission
+        pnl = take_qty * (lot.entry_price - take_px) - commission
+    if lot.cost_basis:
+        frac = take_qty / lot.qty if lot.qty else 0.0
+        lot.cost_basis -= lot.cost_basis * frac
+    lot.qty -= take_qty
+    lot.partial_take = True
+    lot.partial_take_qty = take_qty
+    lot.partial_take_price = take_px
+    lot.partial_take_pnl = pnl
+    return cash
+
+
 def _lock_arm_pyramid_then_take(
     lot: OpenLot,
     bar: Bar,
@@ -567,9 +642,12 @@ def _lock_arm_pyramid_then_take(
     Add-before-lock so a bar that gaps through +0.5% and +1% (no earlier
     +0.5% bar) still doubles first, then arms the lock on the full lot.
     Locked stop is live next bar; take is checked only on the arm bar.
+    partial_take_on_lock scales out half at the lock print after the lock arms.
     """
     cash, skipped = _try_pyramid_add(lot, bar, cash, commission, slippage_pct)
     just_armed = _maybe_manage_stop(lot, bar)
+    if just_armed:
+        cash = _try_partial_take_on_lock(lot, bar, cash, commission, slippage_pct)
     take_hit = _take_only_hit(bar, lot) if just_armed else None
     return cash, skipped, take_hit
 
@@ -744,20 +822,24 @@ def _close_lot(
         cash += proceeds - commission
         if lot.pyramid_added:
             basis = lot.cost_basis if lot.cost_basis else lot.qty * lot.entry_price
-            pnl = proceeds - basis - commission
+            remainder_pnl = proceeds - basis - commission
         else:
-            pnl = lot.qty * (fill - lot.entry_price) - commission
+            remainder_pnl = lot.qty * (fill - lot.entry_price) - commission
     else:
         cost = lot.qty * fill
         cash -= cost + commission
         if lot.pyramid_added:
             basis = lot.cost_basis if lot.cost_basis else lot.qty * lot.entry_price
-            pnl = basis - cost - commission
+            remainder_pnl = basis - cost - commission
         else:
-            pnl = lot.qty * (lot.entry_price - fill) - commission
-    notional = lot.qty * lot.entry_price
+            remainder_pnl = lot.qty * (lot.entry_price - fill) - commission
+    pnl = remainder_pnl + lot.partial_take_pnl
+    orig_qty = (lot.qty + lot.partial_take_qty) if lot.partial_take else lot.qty
+    notional = orig_qty * lot.entry_price
     if lot.pyramid_added and lot.cost_basis:
-        notional = lot.cost_basis
+        notional = lot.cost_basis + (
+            lot.partial_take_qty * lot.entry_price if lot.partial_take else 0.0
+        )
     pnl_pct = (pnl / notional * 100.0) if notional else 0.0
     trade = Trade(
         rule_id=lot.rule_id,
@@ -778,6 +860,11 @@ def _close_lot(
         trail_ratcheted=lot.trail_ratcheted,
         pyramid_added=lot.pyramid_added,
         pyramid_add_skipped=lot.pyramid_add_skipped,
+        partial_take=lot.partial_take,
+        partial_take_qty=lot.partial_take_qty,
+        partial_take_price=lot.partial_take_price,
+        partial_take_pnl=lot.partial_take_pnl,
+        partial_take_skipped_size=lot.partial_take_skipped_size,
     )
     return trade, cash
 
@@ -860,6 +947,9 @@ def summarize(
         lock_armed=sum(1 for t in trades if t.lock_armed),
         pyramid_added=sum(1 for t in trades if t.pyramid_added),
         pyramid_add_skipped=sum(1 for t in trades if t.pyramid_add_skipped),
+        partial_take=sum(1 for t in trades if t.partial_take),
+        partial_take_pnl=sum(t.partial_take_pnl for t in trades if t.partial_take),
+        partial_take_skipped_size=sum(1 for t in trades if t.partial_take_skipped_size),
         trail_ratcheted=sum(1 for t in trades if t.trail_ratcheted),
     )
 
@@ -1059,6 +1149,7 @@ def run_backtest(
                     peak_price=fill_px,
                     pyramid_on_lock=order.pyramid_on_lock,
                     pyramid_add_pct=order.pyramid_add_pct,
+                    partial_take_on_lock=order.partial_take_on_lock,
                     base_qty=order.qty,
                     cost_basis=order.qty * fill_px,
                     take_anchor=order.take_anchor,
@@ -1652,6 +1743,26 @@ def run_backtest(
                     f"take_profit_pct {sample.take_profit_pct:g}% from the fill, not the "
                     "signal-bar close."
                 )
+            if sample.partial_take_on_lock:
+                extra_notes.append(
+                    f"Partial take on lock (partial_take_on_lock): when the "
+                    f"+{(trig or 0):g}% lock arms, sell floor(half) of the open shares "
+                    "at the lock-trigger print (gap-through: fill at open if the bar "
+                    "opens through original fill × "
+                    f"(1+{(trig or 0):g}/100), else at the trigger) and lock the "
+                    "remainder at that same print. Odd lots round the take down so at "
+                    "least 1 share remains when size ≥ 2. Size 1 skips the partial and "
+                    "still locks. No hard full take. No pyramid add. The locked stop is "
+                    "live from the next bar. Remainder exits as lock_stop / "
+                    "session_flatten / stop. Live does not auto scale-out."
+                )
+                extra_notes.append(
+                    f"{sum(1 for t in trades if t.partial_take)} trade(s) scaled out half "
+                    f"at +{(trig or 0):g}% "
+                    f"(${sum(t.partial_take_pnl for t in trades if t.partial_take):,.2f}); "
+                    f"{sum(1 for t in trades if t.partial_take_skipped_size)} skipped "
+                    "the partial (size < 2)."
+                )
         if sample.stop_mode == "trail":
             trail = sample.resolved_trail_pct()
             extra_notes.append(
@@ -1762,6 +1873,10 @@ def format_report_md(payload: dict[str, Any]) -> str:
                 f"- Pyramid add skipped (cash): {r.get('pyramid_add_skipped', 0)}"
                 if r.get("pyramid_add_skipped")
                 else "",
+                f"- Partial take (half at +lock): {r.get('partial_take', 0)} "
+                f"(${float(r.get('partial_take_pnl') or 0):,.2f})"
+                if r.get("partial_take") or r.get("partial_take_pnl")
+                else "",
                 f"- Trail ratcheted: {r.get('trail_ratcheted', 0)}"
                 if r.get("trail_ratcheted") or (r.get("exit_reasons") or {}).get("trail_stop")
                 else "",
@@ -1783,6 +1898,7 @@ def format_report_md(payload: dict[str, Any]) -> str:
             or n.startswith("Lock-plus")
             or n.startswith("Pyramid-on-lock")
             or n.startswith("Pyramid add")
+            or n.startswith("Partial take")
             or n.startswith("Take is fill-anchored")
             or n.startswith("Trailing stop")
             or n.startswith("Exit P&L")
@@ -1799,6 +1915,7 @@ def format_report_md(payload: dict[str, Any]) -> str:
             or "trail_stop" in n
             or "armed the +lock" in n
             or "added at the lock" in n
+            or "scaled out half" in n
             or "lock-arm add" in n
             or "ratcheted the trail" in n
             or "opposite_signal_in_trade" in n

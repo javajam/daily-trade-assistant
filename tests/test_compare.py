@@ -385,6 +385,11 @@ def test_run_rule_books_prefixes_and_soxl_breakout():
     assert session_gate_suffix(add05) == " (cutoff 12:00, flat 15:55, lock +1.0% add@0.5%)"
     add05_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, add05)
     assert any("pyramid_add_pct" in n and "0.5" in n and "adds first" in n for n in add05_notes)
+    half = load_config("config/ema9_trend_bracket_nobe_lock1_half.example.yaml")
+    assert session_gate_suffix(half) == " (cutoff 12:00, flat 15:55, lock +1.0% half-take)"
+    half_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, half)
+    assert any("partial_take_on_lock" in n and "floor(half)" in n for n in half_notes)
+    assert any("Size 1 skips" in n for n in half_notes)
     pyr2 = load_config("config/ema9_trend_bracket_nobe_lock1_pyramid2.example.yaml")
     assert session_gate_suffix(pyr2) == " (cutoff 12:00, flat 15:55, lock +1.0% pyramid/2.0)"
     pyr_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, pyr2)

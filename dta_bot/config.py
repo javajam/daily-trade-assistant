@@ -142,6 +142,12 @@ class ActionSpec(BaseModel):
     # reserved. If a bar gaps through both prints, add first then lock;
     # the locked stop is live next bar. Backtest-only.
     pyramid_add_pct: Optional[float] = Field(default=None, gt=0)
+    # lock_plus only: on the lock-arm print, sell half the open shares
+    # (floor; leave ≥1 when size ≥ 2) at the lock-trigger fill convention
+    # and lock the remainder at original fill × (1+lock_stop/100). Size 1
+    # skips the partial and still locks. No pyramid. No hard full take.
+    # Backtest-only (live does not auto scale-out).
+    partial_take_on_lock: bool = False
     # signal = take_profit_pct from the signal-bar close (legacy).
     # entry = take_profit_pct from the fill (next-bar open). Forced to
     # entry when pyramid_on_lock is true.
@@ -236,6 +242,11 @@ class ActionSpec(BaseModel):
         if self.pyramid_add_pct is not None:
             if self.stop_mode != "lock_plus":
                 raise ValueError("pyramid_add_pct requires stop_mode: lock_plus")
+        if self.partial_take_on_lock:
+            if self.stop_mode != "lock_plus":
+                raise ValueError("partial_take_on_lock requires stop_mode: lock_plus")
+            if self.pyramid_on_lock or self.pyramid_add_pct is not None:
+                raise ValueError("partial_take_on_lock cannot combine with pyramid adds")
         return self
 
     def has_pyramid_add(self) -> bool:
@@ -901,6 +912,7 @@ def _parse_action(raw: dict[str, Any]) -> ActionSpec:
         trail_pct=raw.get("trail_pct"),
         pyramid_on_lock=raw.get("pyramid_on_lock", False),
         pyramid_add_pct=raw.get("pyramid_add_pct"),
+        partial_take_on_lock=raw.get("partial_take_on_lock", False),
         take_anchor=raw.get("take_anchor", "signal"),
         exit=raw.get("exit", "fixed_bracket"),
         exit_ema_period=raw.get("exit_ema_period", raw.get("ema_period", 9)),
