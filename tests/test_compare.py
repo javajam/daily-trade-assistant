@@ -410,6 +410,12 @@ def test_run_rule_books_prefixes_and_soxl_breakout():
     lh_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, lh_vol)
     assert any("lower-high" in n and "previous bar's high" in n for n in lh_notes)
     assert any("signal-bar volume > previous-bar volume" in n for n in lh_notes)
+    macross = load_config("config/ema9_trend_bracket_nobe_macross.example.yaml")
+    assert session_gate_suffix(macross) == " (cutoff 12:00, flat 15:55, MA-cross close)"
+    macross_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, macross)
+    assert any("ma_cross_close" in n and "close-to-close" in n for n in macross_notes)
+    assert any("that close wins" in n for n in macross_notes)
+    assert not any("signal-bar volume > previous-bar volume" in n for n in macross_notes)
     lock_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, lock1)
     assert any("stop_mode: lock_plus" in n and "entry×(1+1/100)" in n for n in lock_notes)
     trail_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, trail1)

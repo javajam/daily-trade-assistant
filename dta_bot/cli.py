@@ -248,7 +248,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 f" valid={rule.action.breakeven_valid}"
             )
         ma_txt = ""
-        if rule.action.exit == "ma_cross":
+        if rule.action.exit in {"ma_cross", "ma_cross_close"}:
             ma_txt = (
                 f" ema_period={rule.action.exit_ema_period}"
                 f" sma_period={rule.action.exit_sma_period}"

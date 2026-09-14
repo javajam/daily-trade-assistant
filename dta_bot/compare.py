@@ -274,6 +274,11 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         if rule.action.exit == "ema_invalid"
     }
     period = next(iter(periods), 9)
+    ma_close_rules = [
+        rule
+        for rule in (config.rules if config is not None else [])
+        if rule.action.type != "close" and rule.action.exit == "ma_cross_close"
+    ]
     ma_rules = [
         rule
         for rule in (config.rules if config is not None else [])
@@ -284,6 +289,7 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         and "lower_high" in modes
         and "fixed_bracket" not in modes
         and "ma_cross" not in modes
+        and "ma_cross_close" not in modes
         and "ema_invalid" not in modes
     ):
         return (
@@ -295,6 +301,21 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
             "catastrophic stop only (off when omitted). Percent take-profit is ignored. "
             "Same-bar stop + lower-high → stop. If the lower-high bar is also the flatten "
             "bar, lower_high at that close wins over session_flatten."
+        )
+    if modes == {"ma_cross_close"} and ma_close_rules:
+        action = ma_close_rules[0].action
+        return (
+            f"Exit is MA-cross at close (action.exit: ma_cross_close): after entry, on "
+            f"each completed signal-timeframe bar, leave when EMA({action.exit_ema_period}) "
+            f"crosses SMA({action.exit_sma_period}) against the position and fill at that "
+            "bar's close — the same fill convention as ema_invalid / lower_high. "
+            "Cross is EMA vs SMA close-to-close (not price vs MA). "
+            "Long: prev EMA >= prev SMA and curr EMA < curr SMA (cross-under). "
+            "Short: prev EMA <= prev SMA and curr EMA > curr SMA (cross-over / cover). "
+            "Optional stop_loss_pct is a catastrophic stop only (off when omitted). "
+            "Percent take-profit is ignored. Same-bar stop + cross → stop. "
+            "If the cross bar is also the flatten bar, ma_cross at that close wins "
+            "over session_flatten."
         )
     if modes == {"ma_cross"} and ma_rules:
         action = ma_rules[0].action
@@ -344,7 +365,13 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
             "ema_invalid holds until a signal-timeframe close < EMA (exit at that close)."
             + lock_txt
         )
-    if modes == {"ema_invalid"} or (config is not None and "ema_invalid" in modes and "fixed_bracket" not in modes and "ma_cross" not in modes):
+    if modes == {"ema_invalid"} or (
+        config is not None
+        and "ema_invalid" in modes
+        and "fixed_bracket" not in modes
+        and "ma_cross" not in modes
+        and "ma_cross_close" not in modes
+    ):
         return (
             f"Exit is EMA-invalidation (action.exit: ema_invalid): hold the long until a "
             f"signal-timeframe bar closes < EMA({period}) and exit at that close. "
@@ -473,7 +500,9 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         "to +stop_loss_pct after the first touch of that print. Set action.stop_mode: trail to "
         "ratchet the stop to peak×(1−stop_loss_pct/100). Set action.exit: ma_cross "
         "to flatten at the next bar open after EMA crosses SMA against the position "
-        "(long: under; short: over). Set action.exit: ema_invalid "
+        "(long: under; short: over). Set action.exit: ma_cross_close for the same "
+        "EMA-vs-SMA close-to-close pair-cross filled at that bar's close. "
+        "Set action.exit: ema_invalid "
         "to hold until a signal-timeframe close is on the wrong side of EMA (long: close < EMA; "
         "exit at that close). Set action.exit: lower_high to leave a long when a completed "
         "bar's high is strictly below the previous bar's high (exit at that close)."
@@ -614,9 +643,10 @@ def _session_gate_assumption(config: Optional[BotConfig]) -> Optional[str]:
         "15m RTH bars opening :00,:15,:30,:45 flatten on the 15:45 ET bar close when "
         "flatten_by is 15:55 (last regular 15m bar, aligned with “by 15:55”); "
         "5m flattens on the 15:50 ET bar close (last 5m bar that completes at/before 15:55). "
-        "Stop/take/ema_invalid/lower_high/ma_cross-on-this-bar still win if they hit first "
-        "(ma_cross fills at the next open, so a same-bar flatten_by close wins; "
-        "ema_invalid and lower_high fill at that close). "
+        "Stop/take/ema_invalid/lower_high/ma_cross_close/ma_cross-on-this-bar still win "
+        "if they hit first (ma_cross fills at the next open, so a same-bar flatten_by "
+        "close wins; ema_invalid, lower_high, and ma_cross_close fill at that close, "
+        "so the signal exit wins over session_flatten). "
         "Set entry_cutoff / flatten_by to null / off to restore overnight holds."
     )
 
@@ -757,6 +787,8 @@ def session_gate_suffix(config: BotConfig) -> str:
         bits.append("short MA-cross")
     elif exits == {"ma_cross"}:
         bits.append("MA-cross")
+    elif exits == {"ma_cross_close"}:
+        bits.append("MA-cross close")
     elif exits == {"lower_high"}:
         bits.append("lower-high")
     if bracket:
@@ -784,10 +816,12 @@ def assumptions_rules(
         _rules_exit_assumption(config),
         _breakeven_assumption(config),
         "If stop and take (or EMA-invalidation) both trade in the fill bar, the stop is assumed to fill first.",
-        "A gap through stop/take fills at that bar's open. EMA-invalidation and lower-high "
-        "exits fill at that completed bar's close. "
-        "MA-cross exits fill at the next bar open after the opposing EMA/SMA pair-cross "
-        "(long: EMA under SMA; short: EMA over SMA).",
+        "A gap through stop/take fills at that bar's open. EMA-invalidation, lower-high, "
+        "and ma_cross_close exits fill at that completed bar's close. "
+        "MA-cross (action.exit: ma_cross) exits fill at the next bar open after the "
+        "opposing EMA/SMA pair-cross (long: EMA under SMA; short: EMA over SMA). "
+        "ma_cross_close uses the same close-to-close EMA-vs-SMA pair-cross but fills "
+        "at that bar's close.",
         "One open lot per symbol (no pyramiding; long or short, not both). "
         "A second signal while that symbol is already open is skipped "
         "(already_in_position, or opposite_signal_in_trade when the new side is the other way).",

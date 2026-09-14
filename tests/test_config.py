@@ -858,6 +858,30 @@ def test_ema9_trend_lock1_vol_configs_load():
     assert has_volume_gt_prev(risk.rules[0].when)
 
 
+def test_ema9_trend_macross_close_configs_load():
+    ten = load_config("config/ema9_trend_bracket_nobe_macross.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.exit == "ma_cross_close"
+    assert rule.action.exit_ema_period == 9
+    assert rule.action.exit_sma_period == 20
+    assert rule.action.stop_loss_pct is None
+    assert rule.action.take_profit_pct is None
+    assert rule.action.size and rule.action.size.type == "shares"
+    assert rule.action.size.value == 10
+    assert has_noon_stack(rule.when)
+    assert not has_volume_gt_prev(rule.when)
+    assert ten.settings.entry_cutoff == "12:00"
+    assert ten.settings.flatten_by == "15:55"
+    risk = load_config("config/ema9_trend_risk_nobe_macross.example.yaml")
+    assert risk.rules[0].action.exit == "ma_cross_close"
+    assert risk.rules[0].action.stop_loss_pct is None
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+    assert risk.rules[0].action.size.stop_pct == 1.0
+    assert not has_volume_gt_prev(risk.rules[0].when)
+
+
 def test_ema9_trend_lower_high_vol_configs_load():
     ten = load_config("config/ema9_trend_bracket_nobe_lh_vol.example.yaml")
     rule = ten.rules[0]
@@ -946,6 +970,20 @@ rules:
     )
     lh = load_config(lh_path)
     assert lh.rules[0].action.exit == "lower_high"
+    close_path = tmp_path / "maclose.yaml"
+    close_path.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action: {type: buy, size: {type: shares, value: 1}, exit: ma_cross_at_close}
+""",
+        encoding="utf-8",
+    )
+    close_cfg = load_config(close_path)
+    assert close_cfg.rules[0].action.exit == "ma_cross_close"
     bad = tmp_path / "bad_exit.yaml"
     bad.write_text(
         """
@@ -1039,6 +1077,14 @@ def test_cli_validate_timeframe_override(capsys):
     assert "exit=lower_high" in lh_out
     assert "volume_gt_prev" in lh_out
     assert "stop=off" in lh_out
+    macross_rc = main(["validate", "--config", "config/ema9_trend_bracket_nobe_macross.example.yaml"])
+    assert macross_rc == 0
+    macross_out = capsys.readouterr().out
+    assert "exit=ma_cross_close" in macross_out
+    assert "ema_period=9" in macross_out
+    assert "sma_period=20" in macross_out
+    assert "stop=off" in macross_out
+    assert "volume_gt_prev" not in macross_out
 
 
 def test_ema_cross_yaml_parses_and_does_not_steal_level_ema():

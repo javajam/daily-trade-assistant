@@ -29,6 +29,9 @@
 # Lock-+1% + add at +0.5% (no take):
 #   config/ema9_trend_bracket_nobe_lock1_add05.example.yaml
 #   writeup: artifacts/ema9_lock1_add05.md
+# MA-cross at close (no lock-+1% / no % stop; EMA9×below SMA20 at that close):
+#   config/ema9_trend_bracket_nobe_macross.example.yaml
+#   writeup: artifacts/ema9_lock1_macross.md
 
 settings:
   paper: true

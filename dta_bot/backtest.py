@@ -1177,6 +1177,9 @@ def run_backtest(
         #    wrong side of EMA (long: close < EMA). Same-bar stop + invalid → stop.
         #    lower_high exits at this bar's close when the completed bar's high is
         #    strictly below the previous bar's high (long). Same fill as ema_invalid.
+        #    ma_cross_close uses the same EMA-vs-SMA close-to-close pair-cross as
+        #    ma_cross (long: prev EMA >= prev SMA and curr EMA < curr SMA) but
+        #    fills at this bar's close. Same-bar stop + cross → stop.
         #    ma_cross schedules flatten at the *next* bar open (same fill as entries).
         for symbol, tf, bar in closing:
             last_price[symbol] = bar.close
@@ -1195,6 +1198,10 @@ def run_backtest(
                     prev = _prev_bar(series, bar.timestamp)
                     if prev is not None and lower_high_exit(lot.side, bar, prev):
                         hit = ("lower_high", bar.close)
+                if hit is None and lot.exit_mode == "ma_cross_close" and _ma_pair_cross_exit(
+                    lot, bar, series
+                ):
+                    hit = ("ma_cross", bar.close)
                 if hit is None and lot.exit_mode == "ma_cross" and _ma_pair_cross_exit(lot, bar, series):
                     nxt = _next_bar(series, bar.timestamp)
                     already = any(
@@ -1285,7 +1292,9 @@ def run_backtest(
 
         # 2b) Session flatten at the close of the bar that contains flatten_by.
         #     15m + 15:55 → 15:45 ET bar close. 5m + 15:55 → 15:50 ET bar close.
-        #     Stop/take/ema_invalid/lower_high on this bar already ran; they win if they hit.
+        #     Stop/take/ema_invalid/lower_high/ma_cross_close on this bar already
+        #     ran; they win if they hit. Next-open ma_cross is still pending, so
+        #     flatten at this close wins over that scheduled next-open fill.
         if flatten_by:
             for symbol, tf, bar in closing:
                 if not is_flatten_bar(bar.timestamp, tf, flatten_by, session_tz):
@@ -1563,6 +1572,29 @@ def run_backtest(
         )
         extra_notes.append(
             f"Downloaded tape span {_iso(tape_start)} → {_iso(tape_end)}."
+        )
+    ma_close_rules = [
+        r
+        for r in config.rules
+        if r.enabled and r.action.type != "close" and r.action.exit == "ma_cross_close"
+    ]
+    if ma_close_rules:
+        sample = ma_close_rules[0].action
+        extra_notes.append(
+            f"MA-cross-at-close exit (action.exit: ma_cross_close): after entry, on each "
+            f"completed signal-timeframe bar, leave when EMA({sample.exit_ema_period}) "
+            f"crosses SMA({sample.exit_sma_period}) against the position and fill at "
+            "that bar's close (same convention as ema_invalid / lower_high). "
+            "Cross is EMA vs SMA close-to-close, not price vs MA. "
+            "Long: prev EMA >= prev SMA and curr EMA < curr SMA (cross-under). "
+            "Short: prev EMA <= prev SMA and curr EMA > curr SMA (cross-over / cover). "
+            "Same-bar stop + cross → stop. If the cross bar is also the flatten bar, "
+            "ma_cross at that close wins over session_flatten."
+        )
+        ma_close_exits = sum(1 for t in trades if t.exit_reason == "ma_cross")
+        extra_notes.append(
+            f"{ma_close_exits} trade(s) exited as ma_cross "
+            "(EMA/SMA pair-cross against the position, fill at that bar's close)."
         )
     ma_rules = [
         r

@@ -804,6 +804,112 @@ def test_ema_sma_cross_up_enters_at_next_open():
     assert result.trades[0].exit_reason == "eod"
 
 
+def test_ema_sma_cross_close_exits_at_that_bar_close():
+    # Same prices as the next-open ma_cross test: cross-under close is 99.2.
+    # ma_cross_close fills at that close, not the next open (99.15).
+    warmup = _pair_cross_warmup()
+    fill = Bar(bar(21, 100.5, 100.7, 100.4, 100.5).timestamp, 100.5, 100.7, 100.4, 100.5, 1000)
+    cross_under = Bar(bar(22, 100.5, 100.6, 99.2, 99.2).timestamp, 100.5, 100.6, 99.2, 99.2, 1000)
+    after = Bar(bar(23, 99.15, 99.3, 99.1, 99.2).timestamp, 99.15, 99.3, 99.1, 99.2, 1000)
+    result = run_backtest(
+        _cfg(_ma_cross_rule(exit="ma_cross_close", stop_loss_pct=None)),
+        {("AAPL", "15Min"): warmup + [fill, cross_under, after]},
+    )
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.entry_price == 100.5
+    assert trade.exit_reason == "ma_cross"
+    assert trade.exit_price == 99.2
+    assert result.report.exit_reasons == {"ma_cross": 1}
+    assert any("fill at that bar's close" in n for n in result.report.notes)
+
+
+def test_ema_sma_cross_close_without_cross_rides_to_flatten():
+    # No pair-cross after entry: no live percent stop, so the lot rides to
+    # the 15:45 ET flatten bar and exits as session_flatten at that close.
+    bars = []
+    t = datetime(2026, 9, 11, 9, 30, tzinfo=NY)
+    end = datetime(2026, 9, 11, 15, 45, tzinfo=NY)
+    i = 0
+    while t <= end:
+        if i < 20:
+            bars.append(_et_bar(t.hour, t.minute, 100.0, 100.1, 99.9, 100.0))
+        elif i == 20:
+            bars.append(_et_bar(t.hour, t.minute, 100.0, 100.6, 99.9, 100.5))
+        else:
+            bars.append(_et_bar(t.hour, t.minute, 100.5, 100.7, 100.4, 100.5))
+        nxt_min = t.minute + 15
+        t = t.replace(hour=t.hour + nxt_min // 60, minute=nxt_min % 60)
+        i += 1
+    result = run_backtest(
+        _cfg(
+            _ma_cross_rule(exit="ma_cross_close", stop_loss_pct=None),
+            entry_cutoff=None,
+            flatten_by="15:55",
+        ),
+        {("AAPL", "15Min"): bars},
+    )
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.exit_reason == "session_flatten"
+    assert trade.exit_price == 100.5
+    assert trade.exit_time == datetime(2026, 9, 11, 16, 0, tzinfo=NY)
+
+
+def test_ema_sma_cross_close_wins_over_flatten_on_same_bar():
+    # Cross-under lands on the 15:45 ET flatten bar. Close-fill ma_cross wins;
+    # next-open ma_cross would still be pending, so flatten would win.
+    bars = []
+    t = datetime(2026, 9, 11, 9, 30, tzinfo=NY)
+    end = datetime(2026, 9, 11, 15, 45, tzinfo=NY)
+    i = 0
+    while t <= end:
+        if i < 20:
+            bars.append(_et_bar(t.hour, t.minute, 100.0, 100.1, 99.9, 100.0))
+        elif i == 20:
+            bars.append(_et_bar(t.hour, t.minute, 100.0, 100.6, 99.9, 100.5))
+        elif t.hour == 15 and t.minute == 45:
+            # After several 100.5 holds, 99.2 is not a deep enough print to
+            # pull EMA9 under SMA20; 98.0 is (same close-to-close pair-cross).
+            bars.append(_et_bar(t.hour, t.minute, 100.5, 100.6, 97.8, 98.0))
+        else:
+            bars.append(_et_bar(t.hour, t.minute, 100.5, 100.7, 100.4, 100.5))
+        nxt_min = t.minute + 15
+        t = t.replace(hour=t.hour + nxt_min // 60, minute=nxt_min % 60)
+        i += 1
+    close_cfg = _cfg(
+        _ma_cross_rule(exit="ma_cross_close", stop_loss_pct=None),
+        entry_cutoff=None,
+        flatten_by="15:55",
+    )
+    close_result = run_backtest(close_cfg, {("AAPL", "15Min"): bars})
+    assert close_result.trades[0].exit_reason == "ma_cross"
+    assert close_result.trades[0].exit_price == 98.0
+    next_open = run_backtest(
+        _cfg(
+            _ma_cross_rule(exit="ma_cross", stop_loss_pct=None),
+            entry_cutoff=None,
+            flatten_by="15:55",
+        ),
+        {("AAPL", "15Min"): bars},
+    )
+    assert next_open.trades[0].exit_reason == "session_flatten"
+    assert next_open.trades[0].exit_price == 98.0
+
+
+def test_ema_sma_cross_close_optional_stop_still_fires_first():
+    warmup = _pair_cross_warmup()
+    fill = Bar(bar(21, 100.5, 100.7, 100.4, 100.5).timestamp, 100.5, 100.7, 100.4, 100.5, 1000)
+    drop = Bar(bar(22, 100.5, 100.6, 98.5, 99.2).timestamp, 100.5, 100.6, 98.5, 99.2, 1000)
+    after = Bar(bar(23, 99.2, 99.3, 99.1, 99.2).timestamp, 99.2, 99.3, 99.1, 99.2, 1000)
+    result = run_backtest(
+        _cfg(_ma_cross_rule(exit="ma_cross_close", stop_loss_pct=1.5)),
+        {("AAPL", "15Min"): warmup + [fill, drop, after]},
+    )
+    assert result.trades[0].exit_reason == "stop"
+    assert result.trades[0].exit_price == pytest.approx(100.5 * 0.985)
+
+
 def test_ema_sma_cross_down_exits_at_next_open():
     # Cross-up on bar 20 (close 100.5) → fill bar 21 open 100.5.
     # Bar 22 close 99.2 crosses EMA9 under SMA20; low stays above the 1.5% stop.

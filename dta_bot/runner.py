@@ -235,19 +235,20 @@ def _flatten_ma_cross(
 ) -> None:
     """Close paper/live lots when EMA crosses SMA against the position after entry.
 
-    Long: EMA under SMA. Short: EMA above SMA (cover). Live fill is a market
-    flatten on the next poll after the signal bar closes, matching the backtest
-    next-bar-open convention as closely as the loop allows. Optional percent /
-    lock_plus stop stays on the broker when stop_loss_pct is set.
-    pyramid_on_lock / pyramid_add_pct / partial_take_on_lock / partial_take_be
-    are backtest-only — live does not auto-add or auto scale-out.
+    Long: EMA under SMA. Short: EMA above SMA (cover). Used by both
+    ``ma_cross`` (backtest next-open) and ``ma_cross_close`` (backtest
+    close-of-bar). Live fill is a market flatten on the next poll after the
+    signal bar closes — as close as the loop allows to either convention.
+    Optional percent / lock_plus stop stays on the broker when stop_loss_pct
+    is set. pyramid_on_lock / pyramid_add_pct / partial_take_on_lock /
+    partial_take_be are backtest-only — live does not auto-add or auto scale-out.
     """
     kill_file = config.settings.kill_switch_file
     if is_active(kill_file):
         return
     positions = _position_map(broker.get_positions())
     for rule in config.rules:
-        if not rule.enabled or rule.action.exit != "ma_cross":
+        if not rule.enabled or rule.action.exit not in {"ma_cross", "ma_cross_close"}:
             continue
         needed = condition_timeframes(rule.when)
         if not needed:
@@ -496,7 +497,10 @@ def run_once(
         _flatten_ema_invalid(config, broker, bars, state, dry_run=dry_run)
     if any(rule.enabled and rule.action.exit == "lower_high" for rule in config.rules):
         _flatten_lower_high(config, broker, bars, state, dry_run=dry_run)
-    if any(rule.enabled and rule.action.exit == "ma_cross" for rule in config.rules):
+    if any(
+        rule.enabled and rule.action.exit in {"ma_cross", "ma_cross_close"}
+        for rule in config.rules
+    ):
         _flatten_ma_cross(config, broker, bars, state, dry_run=dry_run)
     results = evaluate_all(config, bars, state)
     rules = {r.id: r for r in config.rules}

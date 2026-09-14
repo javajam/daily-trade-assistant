@@ -45,7 +45,7 @@ class SizeSpec(BaseModel):
         return self
 
 
-EXIT_MODES = ("fixed_bracket", "ema_invalid", "ma_cross", "lower_high")
+EXIT_MODES = ("fixed_bracket", "ema_invalid", "ma_cross", "ma_cross_close", "lower_high")
 EXIT_ALIASES = {
     "ema_invalid": "ema_invalid",
     "ema_invalidation": "ema_invalid",
@@ -60,6 +60,11 @@ EXIT_ALIASES = {
     "ma_pair_cross": "ma_cross",
     "cross_under": "ma_cross",
     "ma_cross_under": "ma_cross",
+    "ma_cross_close": "ma_cross_close",
+    "ma_cross_at_close": "ma_cross_close",
+    "ema_sma_cross_close": "ma_cross_close",
+    "cross_under_close": "ma_cross_close",
+    "ema_cross_close": "ma_cross_close",
     "lower_high": "lower_high",
     "lowerhigh": "lower_high",
     "lh": "lower_high",
@@ -165,12 +170,18 @@ class ActionSpec(BaseModel):
     # at the next bar open. Long: EMA under SMA. Short: EMA above SMA (cover).
     # Optional stop_loss_pct is a catastrophic stop only (off when omitted).
     # The default noon short omits it. Percent take-profit is ignored.
+    # ma_cross_close = same EMA-vs-SMA close-to-close pair-cross as ma_cross
+    # (long: prev EMA >= prev SMA and curr EMA < curr SMA) but fill at that
+    # completed bar's close — same convention as ema_invalid / lower_high.
+    # If that bar is also the flatten bar, the close-fill wins over
+    # session_flatten. Optional stop is catastrophic only (off when omitted).
+    # Percent take is ignored. Do not change ma_cross next-open fill.
     # lower_high = hold until a completed signal-timeframe bar after entry
     # prints a lower high (long: curr high < prev high) and exit at that
     # close — same fill convention as ema_invalid. Shorts use the symmetric
     # higher low (curr low > prev low). Optional stop_loss_pct is
     # catastrophic only (off when omitted). Percent take is ignored.
-    exit: Literal["fixed_bracket", "ema_invalid", "ma_cross", "lower_high"] = "fixed_bracket"
+    exit: Literal["fixed_bracket", "ema_invalid", "ma_cross", "ma_cross_close", "lower_high"] = "fixed_bracket"
     exit_ema_period: int = Field(default=9, ge=2)
     exit_sma_period: int = Field(default=20, ge=2)
     # After this many complete signal-timeframe bars *after the entry bar*,
@@ -192,7 +203,8 @@ class ActionSpec(BaseModel):
         key = str(v).strip().lower().replace("-", "_").replace(" ", "_")
         if key not in EXIT_ALIASES:
             raise ValueError(
-                "exit must be 'ema_invalid', 'ma_cross', 'lower_high', or 'fixed_bracket'"
+                "exit must be 'ema_invalid', 'ma_cross', 'ma_cross_close', "
+                "'lower_high', or 'fixed_bracket'"
             )
         return EXIT_ALIASES[key]
 
