@@ -14,6 +14,7 @@
 # TSLA / MU 1% sibling: config/ema9_trend_risk_tsla_mu.example.yaml
 # SPY / QQQ long-only 1% sibling: config/ema9_trend_risk_spy_qqq.example.yaml
 # NVDA / AMD long-only 1% sibling: config/ema9_trend_risk_nvda_amd.example.yaml
+# AAPL / MSFT / META long-only 1% add-on: config/ema9_trend_risk_aapl_msft_meta.example.yaml
 # Prior pair-cross 1% book: config/ema9_trend_risk_pair.example.yaml
 #
 #   python -m dta_bot validate --config config/ema9_trend_risk.example.yaml

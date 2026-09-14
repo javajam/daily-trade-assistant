@@ -592,7 +592,7 @@ def _fixed_bracket_tag(config: BotConfig) -> Optional[str]:
 
 
 def universe_tag(config: BotConfig) -> str:
-    """AAPL+MSFT / TSLA+MU / SPY+QQQ / NVDA+AMD so combined books with the same gates stay distinct."""
+    """AAPL+MSFT / AAPL+MSFT+META / TSLA+MU / SPY+QQQ / NVDA+AMD so combined books with the same gates stay distinct."""
     return "+".join(config.universe) if config.universe else ""
 
 
@@ -855,7 +855,7 @@ def run_rule_books(
         _run(f"{prefix}{label}{suffix}", restrict_config(config, ids), extra)
 
     wanted_breakouts = [s.strip().upper() for s in (breakout_symbols or []) if s and str(s).strip()]
-    if wanted_breakouts and not combined_only:
+    if wanted_breakouts:
         entry_ids = breakout_rule_ids or [
             rule.id for rule in config.rules if rule.enabled and rule.action.type != "close" and rule.id == "ema9_trend"
         ]

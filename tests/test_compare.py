@@ -204,10 +204,13 @@ def test_combined_only_labels_include_universe_and_size():
     spy_risk = load_config("config/ema9_trend_risk_spy_qqq.example.yaml")
     nvda = load_config("config/ema9_trend_nvda_amd.example.yaml")
     nvda_risk = load_config("config/ema9_trend_risk_nvda_amd.example.yaml")
+    meta = load_config("config/ema9_trend_aapl_msft_meta.example.yaml")
+    meta_risk = load_config("config/ema9_trend_risk_aapl_msft_meta.example.yaml")
     assert universe_tag(ten) == "AAPL+MSFT"
     assert universe_tag(tsla) == "TSLA+MU"
     assert universe_tag(spy) == "SPY+QQQ"
     assert universe_tag(nvda) == "NVDA+AMD"
+    assert universe_tag(meta) == "AAPL+MSFT+META"
     assert sizing_tag(ten) == "10-share"
     assert sizing_tag(risk) == "1% risk"
     assert combined_book_label(ten) == "AAPL+MSFT 10-share long+short"
@@ -218,6 +221,8 @@ def test_combined_only_labels_include_universe_and_size():
     assert combined_book_label(spy_risk) == "SPY+QQQ 1% risk"
     assert combined_book_label(nvda) == "NVDA+AMD 10-share"
     assert combined_book_label(nvda_risk) == "NVDA+AMD 1% risk"
+    assert combined_book_label(meta) == "AAPL+MSFT+META 10-share"
+    assert combined_book_label(meta_risk) == "AAPL+MSFT+META 1% risk"
     assert [label for label, _ids, _note in rule_book_plan(tsla, combined_only=True)] == [
         "TSLA+MU 10-share"
     ]
@@ -294,6 +299,22 @@ def test_run_rule_books_prefixes_and_soxl_breakout():
     gated = " (cutoff 12:00, flat 15:55, MA-cross)"
     assert f"15m ema9_trend{gated}" in labels
     assert f"15m ema9_trend SOXL{gated}" in labels
+    meta = load_config("config/ema9_trend_aapl_msft_meta.example.yaml")
+    meta_runs = run_rule_books(
+        meta,
+        {},
+        starting_equity=100_000,
+        commission=0.0,
+        slippage_pct=0.0,
+        data_source="fixture",
+        assumptions=["x"],
+        combined_only=True,
+        breakout_symbols=["META"],
+    )
+    meta_labels = [block["label"] for block in meta_runs]
+    meta_gated = " (cutoff 12:00, flat 15:55, lock +1.0%)"
+    assert f"AAPL+MSFT+META 10-share{meta_gated}" in meta_labels
+    assert f"ema9_trend META{meta_gated}" in meta_labels
     rsi_cfg = load_config("config/ema9_trend_bracket_rsi.example.yaml")
     rsi_runs = run_rule_books(
         rsi_cfg,

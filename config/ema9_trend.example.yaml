@@ -29,6 +29,7 @@
 # TSLA / MU 10-share sibling: config/ema9_trend_tsla_mu.example.yaml
 # SPY / QQQ long-only 10-share sibling: config/ema9_trend_spy_qqq.example.yaml
 # NVDA / AMD long-only 10-share sibling: config/ema9_trend_nvda_amd.example.yaml
+# AAPL / MSFT / META long-only 10-share add-on: config/ema9_trend_aapl_msft_meta.example.yaml
 # Prior pair-cross product: config/ema9_trend_pair.example.yaml
 #
 # Bar size is settings.timeframe (or --timeframe). Default 15m. Same book on 5m:
