@@ -26,6 +26,7 @@
 # Optional stop siblings (same entry / session):
 #   fixed 1% from fill:  config/ema9_trend_bracket_nobe_fixed1.example.yaml
 #   trail 1% from peak:  config/ema9_trend_bracket_nobe_trail1.example.yaml
+# Lower-high + vol>prev (no lock-+1%): config/ema9_trend_bracket_nobe_lh_vol.example.yaml
 # TSLA / MU 10-share sibling: config/ema9_trend_tsla_mu.example.yaml
 # SPY / QQQ long-only 10-share sibling: config/ema9_trend_spy_qqq.example.yaml
 # NVDA / AMD long-only 10-share sibling: config/ema9_trend_nvda_amd.example.yaml

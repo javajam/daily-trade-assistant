@@ -16,6 +16,10 @@
 #     --source yahoo --combined-only --symbols AAPL,MSFT \
 #     --output artifacts/ema9_stop_manage.json \
 #     --report artifacts/ema9_stop_manage.md
+#
+# Lower-high + vol>prev sibling (no lock-+1%): 
+#   config/ema9_trend_bracket_nobe_lh_vol.example.yaml
+#   writeup: artifacts/ema9_lh_vol.md
 
 settings:
   paper: true
