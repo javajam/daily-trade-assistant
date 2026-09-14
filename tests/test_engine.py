@@ -107,6 +107,19 @@ def test_volume_filter():
     assert ev.matched
 
 
+def test_volume_gt_prev_filter():
+    low = [bar(i, 10, 10.2, 9.8, 10.1, v=1000) for i in range(2)]
+    high = [bar(0, 10, 10.2, 9.8, 10.1, v=1000), bar(1, 10, 10.2, 9.8, 10.1, v=1500)]
+    cond = parse_condition({"volume_gt_prev": {"timeframe": "15m"}})
+    miss = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): low}, BotState())
+    hit = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): high}, BotState())
+    assert not miss.matched
+    assert hit.matched
+    vs_prev = parse_condition({"volume": {"vs": "prev", "timeframe": "15m"}})
+    again = evaluate_rule(_rule(when=vs_prev), "AAPL", {("AAPL", "15Min"): high}, BotState())
+    assert again.matched
+
+
 def test_evaluate_all_covers_universe_and_disabled():
     from dta_bot.config import BotConfig, Settings
 

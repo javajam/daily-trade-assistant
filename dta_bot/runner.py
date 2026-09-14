@@ -9,7 +9,13 @@ from typing import Optional
 
 from dta_bot.broker import Broker
 from dta_bot.config import BotConfig, RuleSpec, condition_timeframes
-from dta_bot.engine import cooldown_key, evaluate_all, fire_key, ma_pair_cross_flatten_bar
+from dta_bot.engine import (
+    cooldown_key,
+    evaluate_all,
+    fire_key,
+    lower_high_flatten_bar,
+    ma_pair_cross_flatten_bar,
+)
 from dta_bot.killswitch import is_active, reason as kill_reason
 from dta_bot.market_data import MarketData
 from dta_bot.models import EvalResult, Position
@@ -229,17 +235,20 @@ def _flatten_ma_cross(
 ) -> None:
     """Close paper/live lots when EMA crosses SMA against the position after entry.
 
-    Long: EMA under SMA. Short: EMA above SMA (cover). Live fill is a market
-    flatten on the next poll after the signal bar closes, matching the backtest
-    next-bar-open convention as closely as the loop allows. Optional percent /
-    lock_plus stop stays on the broker when stop_loss_pct is set.
+    Long: EMA under SMA. Short: EMA above SMA (cover). Used by both
+    ``ma_cross`` (backtest next-open) and ``ma_cross_close`` (backtest
+    close-of-bar). Live fill is a market flatten on the next poll after the
+    signal bar closes — as close as the loop allows to either convention.
+    Optional percent / lock_plus stop stays on the broker when stop_loss_pct
+    is set. pyramid_on_lock / pyramid_add_pct / partial_take_on_lock /
+    partial_take_be are backtest-only — live does not auto-add or auto scale-out.
     """
     kill_file = config.settings.kill_switch_file
     if is_active(kill_file):
         return
     positions = _position_map(broker.get_positions())
     for rule in config.rules:
-        if not rule.enabled or rule.action.exit != "ma_cross":
+        if not rule.enabled or rule.action.exit not in {"ma_cross", "ma_cross_close"}:
             continue
         needed = condition_timeframes(rule.when)
         if not needed:
@@ -324,6 +333,55 @@ def _flatten_ema_invalid(
             broker.close_position(symbol)
             if dry_run:
                 log.info("DRY-RUN: EMA-invalid flatten was not sent to Alpaca")
+
+
+def _flatten_lower_high(
+    config: BotConfig,
+    broker: Broker,
+    bars,
+    state: BotState,
+    *,
+    dry_run: bool,
+) -> None:
+    """Close paper/live lots when a completed bar after entry prints a lower high.
+
+    Long: current high < previous high. Short: current low > previous low.
+    Live fill is a market flatten on the next poll after that bar closes,
+    matching the backtest close-of-bar convention as closely as the loop
+    allows. Optional percent stop stays on the broker when stop_loss_pct is set.
+    """
+    kill_file = config.settings.kill_switch_file
+    if is_active(kill_file):
+        return
+    positions = _position_map(broker.get_positions())
+    for rule in config.rules:
+        if not rule.enabled or rule.action.exit != "lower_high":
+            continue
+        needed = condition_timeframes(rule.when)
+        if not needed:
+            continue
+        fill_tf = min(needed, key=lambda t: duration(t))
+        for symbol in config.symbols_for(rule):
+            pos = positions.get(symbol.upper())
+            if pos is None:
+                continue
+            series = bars.get((symbol.upper(), fill_tf), []) or []
+            after = last_rule_fire_ts(state, rule.id, symbol)
+            hit = lower_high_flatten_bar(pos, series, after=after)
+            if hit is None:
+                continue
+            log.info(
+                "Lower-high flatten %s %s entry=%.4f high=%.4f @%s rule=%s",
+                pos.side,
+                symbol,
+                pos.avg_entry_price,
+                hit.high,
+                hit.timestamp.isoformat(),
+                rule.id,
+            )
+            broker.close_position(symbol)
+            if dry_run:
+                log.info("DRY-RUN: lower-high flatten was not sent to Alpaca")
 
 
 def _signal_sma(rule: RuleSpec, symbol: str, bars) -> Optional[float]:
@@ -437,7 +495,12 @@ def run_once(
     _flatten_session(config, broker, bars, dry_run=dry_run)
     if any(rule.enabled and rule.action.exit == "ema_invalid" for rule in config.rules):
         _flatten_ema_invalid(config, broker, bars, state, dry_run=dry_run)
-    if any(rule.enabled and rule.action.exit == "ma_cross" for rule in config.rules):
+    if any(rule.enabled and rule.action.exit == "lower_high" for rule in config.rules):
+        _flatten_lower_high(config, broker, bars, state, dry_run=dry_run)
+    if any(
+        rule.enabled and rule.action.exit in {"ma_cross", "ma_cross_close"}
+        for rule in config.rules
+    ):
         _flatten_ma_cross(config, broker, bars, state, dry_run=dry_run)
     results = evaluate_all(config, bars, state)
     rules = {r.id: r for r in config.rules}

@@ -110,16 +110,13 @@ def test_assumptions_rules_mention_ma_cross():
     cfg = load_config("config/ema9_trend.example.yaml")
     ema_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, cfg)
     assert any("noon day-trade stack" in n and "EMA(9)" in n and "SMA(20)" in n for n in ema_notes)
-    assert any("Short:" in n and "no RSI filter" in n for n in ema_notes)
-    assert any("Short:" in n and "EMA(9) crosses above SMA(20)" in n for n in ema_notes)
+    assert not any("Short: close crosses below EMA(9)" in n for n in ema_notes)
     assert not any("RSI(14) > 30" in n for n in ema_notes)
-    assert any("opposite_signal_in_trade" in n for n in ema_notes)
-    assert any("stop_mode: lock_plus" in n and "longs only" in n for n in ema_notes)
-    assert any("Shorts have no percent / lock_plus stop" in n for n in ema_notes)
-    assert any("ma_cross" in n and "EMA above SMA" in n for n in ema_notes)
+    assert any("ma_cross_close" in n and "close-to-close" in n for n in ema_notes)
     assert any("entry_cutoff=12:00" in n and "flatten_by=15:55" in n for n in ema_notes)
     assert not any("breakeven_after_bars: 1" in n for n in ema_notes)
-    assert session_gate_suffix(cfg) == " (cutoff 12:00, flat 15:55, short MA-cross, lock +1.0%)"
+    assert not any("stop_mode: lock_plus" in n for n in ema_notes)
+    assert session_gate_suffix(cfg) == " (cutoff 12:00, flat 15:55, MA-cross close)"
     pair = load_config("config/ema9_trend_pair.example.yaml")
     pair_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, pair)
     assert any("ma_cross" in n and "EMA(9)" in n and "SMA(20)" in n for n in pair_notes)
@@ -188,11 +185,9 @@ def test_pattern_hits_count_ema_cross():
 def test_ema9_rule_book_plan_isolates_each_entry():
     cfg = load_config("config/ema9_trend.example.yaml")
     labels = [label for label, _ids, _note in rule_book_plan(cfg)]
-    assert labels == ["ema9_trend", "ema9_trend_short", "AAPL+MSFT 10-share long+short"]
+    assert labels == ["ema9_trend"]
     five = load_config("config/ema9_trend_5m.example.yaml")
     assert [label for label, _ids, _note in rule_book_plan(five)] == labels
-    notes = {note for _label, _ids, note in rule_book_plan(cfg) if note}
-    assert any("opposite_signal_in_trade" in (note or "") for note in notes)
 
 
 def test_combined_only_labels_include_universe_and_size():
@@ -213,8 +208,8 @@ def test_combined_only_labels_include_universe_and_size():
     assert universe_tag(meta) == "AAPL+MSFT+META"
     assert sizing_tag(ten) == "10-share"
     assert sizing_tag(risk) == "1% risk"
-    assert combined_book_label(ten) == "AAPL+MSFT 10-share long+short"
-    assert combined_book_label(risk) == "AAPL+MSFT 1% risk long+short"
+    assert combined_book_label(ten) == "AAPL+MSFT 10-share"
+    assert combined_book_label(risk) == "AAPL+MSFT 1% risk"
     assert combined_book_label(tsla) == "TSLA+MU 10-share"
     assert combined_book_label(tsla_risk) == "TSLA+MU 1% risk"
     assert combined_book_label(spy) == "SPY+QQQ 10-share"
@@ -381,6 +376,49 @@ def test_run_rule_books_prefixes_and_soxl_breakout():
     assert session_gate_suffix(fixed1) == " (cutoff 12:00, flat 15:55, entry 1.0%)"
     assert session_gate_suffix(lock1) == " (cutoff 12:00, flat 15:55, lock +1.0%)"
     assert session_gate_suffix(trail1) == " (cutoff 12:00, flat 15:55, trail 1.0%)"
+    add05 = load_config("config/ema9_trend_bracket_nobe_lock1_add05.example.yaml")
+    assert session_gate_suffix(add05) == " (cutoff 12:00, flat 15:55, lock +1.0% add@0.5%)"
+    add05_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, add05)
+    assert any("pyramid_add_pct" in n and "0.5" in n and "adds first" in n for n in add05_notes)
+    half = load_config("config/ema9_trend_bracket_nobe_lock1_half.example.yaml")
+    assert session_gate_suffix(half) == " (cutoff 12:00, flat 15:55, lock +1.0% half-take)"
+    half_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, half)
+    assert any("partial_take_on_lock" in n and "floor(half)" in n for n in half_notes)
+    assert any("Size 1 skips" in n for n in half_notes)
+    half_be = load_config("config/ema9_trend_bracket_nobe_lock1_half_be.example.yaml")
+    assert session_gate_suffix(half_be) == " (cutoff 12:00, flat 15:55, lock +1.0% half-take BE)"
+    half_be_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, half_be)
+    assert any("partial_take_be" in n and "break-even" in n for n in half_be_notes)
+    assert any("fill × 1.00" in n for n in half_be_notes)
+    pyr2 = load_config("config/ema9_trend_bracket_nobe_lock1_pyramid2.example.yaml")
+    assert session_gate_suffix(pyr2) == " (cutoff 12:00, flat 15:55, lock +1.0% pyramid/2.0)"
+    pyr_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, pyr2)
+    assert any("pyramid_on_lock" in n and "take_2pct" in n for n in pyr_notes)
+    assert any("take_anchor: entry" in n for n in pyr_notes)
+    lock1_vol = load_config("config/ema9_trend_bracket_nobe_lock1_vol.example.yaml")
+    assert session_gate_suffix(lock1_vol) == " (cutoff 12:00, flat 15:55, lock +1.0%, vol>prev)"
+    lock_vol_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, lock1_vol)
+    assert any("signal-bar volume > previous-bar volume" in n for n in lock_vol_notes)
+    assert any("stop_mode: lock_plus" in n and "entry×(1+1/100)" in n for n in lock_vol_notes)
+    lh_vol = load_config("config/ema9_trend_bracket_nobe_lh_vol.example.yaml")
+    assert session_gate_suffix(lh_vol) == " (cutoff 12:00, flat 15:55, lower-high, vol>prev)"
+    lh_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, lh_vol)
+    assert any("lower-high" in n and "previous bar's high" in n for n in lh_notes)
+    assert any("signal-bar volume > previous-bar volume" in n for n in lh_notes)
+    macross = load_config("config/ema9_trend_bracket_nobe_macross.example.yaml")
+    assert session_gate_suffix(macross) == " (cutoff 12:00, flat 15:55, MA-cross close)"
+    macross_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, macross)
+    assert any("ma_cross_close" in n and "close-to-close" in n for n in macross_notes)
+    assert any("that close wins" in n for n in macross_notes)
+    assert not any("signal-bar volume > previous-bar volume" in n for n in macross_notes)
+    combo = load_config("config/ema9_trend_bracket_nobe_lock1_macross.example.yaml")
+    assert session_gate_suffix(combo) == (
+        " (cutoff 12:00, flat 15:55, MA-cross close, lock +1.0%)"
+    )
+    combo_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, combo)
+    assert any("lock-+1%" in n and "ma_cross_close" in n for n in combo_notes)
+    assert any("stop is checked first" in n for n in combo_notes)
+    assert not any("signal-bar volume > previous-bar volume" in n for n in combo_notes)
     lock_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, lock1)
     assert any("stop_mode: lock_plus" in n and "entry×(1+1/100)" in n for n in lock_notes)
     trail_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, trail1)

@@ -9,10 +9,12 @@ from dta_bot.config import (
     MaCrossCond,
     MaPairCrossCond,
     RsiCond,
+    VolumePrevCond,
     condition_timeframes,
     find_rsi_condition,
     has_noon_short_stack,
     has_noon_stack,
+    has_volume_gt_prev,
     load_config,
     parse_condition,
     restrict_universe,
@@ -43,7 +45,7 @@ def test_ema9_trend_config_loads():
     assert cfg.settings.paper is True
     assert cfg.settings.allow_live is False
     assert cfg.settings.dry_run is True
-    assert [r.id for r in cfg.rules] == ["ema9_trend", "ema9_trend_short"]
+    assert [r.id for r in cfg.rules] == ["ema9_trend"]
     rule = cfg.rules[0]
     assert rule.cooldown_minutes == 60
     assert rule.action.size and rule.action.size.value == 10
@@ -52,24 +54,13 @@ def test_ema9_trend_config_loads():
     assert any(isinstance(c, MaCrossCond) for c in rule.when.conditions)
     rsi = find_rsi_condition(rule.when)
     assert rsi is not None and rsi.below == 70
-    assert rule.action.exit == "fixed_bracket"
-    assert rule.action.stop_mode == "lock_plus"
-    assert rule.action.stop_loss_pct == 1.0
-    assert rule.action.resolved_lock_trigger_pct() == 1.0
-    assert rule.action.resolved_lock_stop_pct() == 1.0
+    assert rule.action.exit == "ma_cross_close"
+    assert rule.action.exit_ema_period == 9
+    assert rule.action.exit_sma_period == 20
+    assert rule.action.stop_loss_pct is None
     assert rule.action.take_profit_pct is None
     assert rule.action.breakeven_after_bars == 0
-    short = cfg.rules[1]
-    assert short.enabled is True
-    assert short.action.type == "sell"
-    assert has_noon_short_stack(short.when)
-    assert find_rsi_condition(short.when) is None
-    assert short.action.exit == "ma_cross"
-    assert short.action.exit_ema_period == 9
-    assert short.action.exit_sma_period == 20
-    assert short.action.stop_loss_pct is None
-    assert short.action.stop_mode == "percent"
-    assert short.action.take_profit_pct is None
+    assert not has_volume_gt_prev(rule.when)
     assert has_noon_short_stack(
         parse_condition(
             {
@@ -92,11 +83,12 @@ def test_ema9_trend_config_loads():
 def test_ema9_trend_risk_config_loads():
     cfg = load_config("config/ema9_trend_risk.example.yaml")
     assert cfg.universe == ["AAPL", "MSFT"]
-    assert [r.id for r in cfg.rules] == ["ema9_trend", "ema9_trend_short"]
+    assert [r.id for r in cfg.rules] == ["ema9_trend"]
     rule = cfg.rules[0]
-    assert rule.action.exit == "fixed_bracket"
-    assert rule.action.stop_mode == "lock_plus"
-    assert rule.action.stop_loss_pct == 1.0
+    assert rule.action.exit == "ma_cross_close"
+    assert rule.action.exit_ema_period == 9
+    assert rule.action.exit_sma_period == 20
+    assert rule.action.stop_loss_pct is None
     assert rule.action.take_profit_pct is None
     assert rule.action.size is not None
     assert rule.action.size.type == "risk_pct"
@@ -104,32 +96,19 @@ def test_ema9_trend_risk_config_loads():
     assert rule.action.size.stop_pct == 1.0
     assert rule.action.breakeven_after_bars == 0
     assert has_noon_stack(rule.when)
-    assert cfg.rules[1].action.type == "sell"
-    assert has_noon_short_stack(cfg.rules[1].when)
-    assert find_rsi_condition(cfg.rules[1].when) is None
-    assert cfg.rules[1].action.exit == "ma_cross"
-    assert cfg.rules[1].action.stop_loss_pct is None
-    assert cfg.rules[1].action.size is not None
-    assert cfg.rules[1].action.size.type == "shares"
-    assert cfg.rules[1].action.size.value == 10
+    assert not has_volume_gt_prev(rule.when)
     assert cfg.settings.entry_cutoff == "12:00"
     assert cfg.settings.flatten_by == "15:55"
     assert cfg.all_symbol_timeframes() == {("AAPL", "15Min"), ("MSFT", "15Min")}
     five = load_config("config/ema9_trend_risk_5m.example.yaml")
     assert five.settings.timeframe == "5Min"
-    assert five.rules[0].action.stop_mode == "lock_plus"
+    assert [r.id for r in five.rules] == ["ema9_trend"]
+    assert five.rules[0].action.exit == "ma_cross_close"
+    assert five.rules[0].action.stop_loss_pct is None
     assert five.rules[0].action.size is not None
     assert five.rules[0].action.size.type == "risk_pct"
     assert five.rules[0].action.size.stop_pct == 1.0
     assert has_noon_stack(five.rules[0].when)
-    assert [r.id for r in five.rules] == ["ema9_trend", "ema9_trend_short"]
-    assert five.rules[1].action.type == "sell"
-    assert has_noon_short_stack(five.rules[1].when)
-    assert find_rsi_condition(five.rules[1].when) is None
-    assert five.rules[1].action.exit == "ma_cross"
-    assert five.rules[1].action.stop_loss_pct is None
-    assert five.rules[1].action.size is not None
-    assert five.rules[1].action.size.type == "shares"
     assert five.all_symbol_timeframes() == {("AAPL", "5Min"), ("MSFT", "5Min")}
 
 
@@ -138,9 +117,10 @@ def test_ema9_trend_bracket_config_keeps_ten_shares():
     assert cfg.universe == ["AAPL", "MSFT"]
     assert cfg.rules[0].action.size and cfg.rules[0].action.size.type == "shares"
     assert cfg.rules[0].action.size.value == 10
-    assert cfg.rules[0].action.exit == "fixed_bracket"
-    assert cfg.rules[0].action.stop_mode == "lock_plus"
-    assert cfg.rules[0].action.stop_loss_pct == 1.0
+    assert cfg.rules[0].action.exit == "ma_cross_close"
+    assert cfg.rules[0].action.exit_ema_period == 9
+    assert cfg.rules[0].action.exit_sma_period == 20
+    assert cfg.rules[0].action.stop_loss_pct is None
     assert cfg.rules[0].action.take_profit_pct is None
     assert cfg.rules[0].action.breakeven_after_bars == 0
     assert has_noon_stack(cfg.rules[0].when)
@@ -382,17 +362,14 @@ def test_ema9_trend_overnight_config_disables_session_gates():
 
 def test_ema9_trend_5m_config_loads():
     cfg = load_config("config/ema9_trend_5m.example.yaml")
-    assert [r.id for r in cfg.rules] == ["ema9_trend", "ema9_trend_short"]
+    assert [r.id for r in cfg.rules] == ["ema9_trend"]
     assert cfg.rules[0].cooldown_minutes == 60
-    assert cfg.rules[0].action.exit == "fixed_bracket"
-    assert cfg.rules[0].action.stop_mode == "lock_plus"
-    assert cfg.rules[0].action.stop_loss_pct == 1.0
+    assert cfg.rules[0].action.exit == "ma_cross_close"
+    assert cfg.rules[0].action.exit_ema_period == 9
+    assert cfg.rules[0].action.exit_sma_period == 20
+    assert cfg.rules[0].action.stop_loss_pct is None
     assert cfg.rules[0].action.take_profit_pct is None
     assert has_noon_stack(cfg.rules[0].when)
-    assert cfg.rules[1].action.type == "sell"
-    assert has_noon_short_stack(cfg.rules[1].when)
-    assert find_rsi_condition(cfg.rules[1].when) is None
-    assert cfg.rules[1].action.exit == "ma_cross"
     assert cfg.settings.timeframe == "5Min"
     assert cfg.settings.entry_cutoff == "12:00"
     assert cfg.settings.flatten_by == "15:55"
@@ -408,17 +385,15 @@ def test_with_timeframe_rewrites_ema9_conditions_and_keeps_cooldown():
     assert five.settings.entry_cutoff == cfg.settings.entry_cutoff
     assert five.settings.flatten_by == cfg.settings.flatten_by
     assert five.all_symbol_timeframes() == {("AAPL", "5Min"), ("MSFT", "5Min")}
-    assert [r.cooldown_minutes for r in five.rules] == [60, 60]
+    assert [r.cooldown_minutes for r in five.rules] == [60]
     assert [r.id for r in five.rules] == [r.id for r in cfg.rules]
     assert has_noon_stack(five.rules[0].when)
-    assert has_noon_short_stack(five.rules[1].when)
-    assert find_rsi_condition(five.rules[1].when) is None
-    assert five.rules[1].action.exit == "ma_cross"
+    assert five.rules[0].action.exit == "ma_cross_close"
     assert condition_timeframes(five.rules[0].when) == {"5Min"}
-    assert condition_timeframes(five.rules[1].when) == {"5Min"}
     loaded_5m = load_config("config/ema9_trend.example.yaml", timeframe="5m")
     assert loaded_5m.all_symbol_timeframes() == five.all_symbol_timeframes()
-    assert loaded_5m.rules[0].action.stop_mode == "lock_plus"
+    assert loaded_5m.rules[0].action.exit == "ma_cross_close"
+    assert loaded_5m.rules[0].action.stop_loss_pct is None
 
 
 def test_restrict_universe_keeps_soxl_only():
@@ -559,6 +534,383 @@ def test_ema9_trend_stop_manage_configs_load():
         assert cfg.rules[0].action.take_profit_pct is None
 
 
+def test_ema9_trend_lock1_add05_configs_load():
+    ten = load_config("config/ema9_trend_bracket_nobe_lock1_add05.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.exit == "fixed_bracket"
+    assert rule.action.stop_mode == "lock_plus"
+    assert rule.action.resolved_lock_trigger_pct() == 1.0
+    assert rule.action.resolved_lock_stop_pct() == 1.0
+    assert rule.action.pyramid_add_pct == 0.5
+    assert rule.action.pyramid_on_lock is False
+    assert rule.action.take_profit_pct is None
+    assert rule.action.has_pyramid_add() is True
+    assert rule.action.resolved_pyramid_add_pct() == 0.5
+    assert rule.action.size and rule.action.size.value == 10
+    assert has_noon_stack(rule.when)
+    assert not has_volume_gt_prev(rule.when)
+    assert ten.settings.entry_cutoff == "12:00"
+    assert ten.settings.flatten_by == "15:55"
+    risk = load_config("config/ema9_trend_risk_nobe_lock1_add05.example.yaml")
+    assert risk.rules[0].action.pyramid_add_pct == 0.5
+    assert risk.rules[0].action.take_profit_pct is None
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+
+
+def test_ema9_trend_lock1_pyramid2_configs_load():
+    ten = load_config("config/ema9_trend_bracket_nobe_lock1_pyramid2.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.exit == "fixed_bracket"
+    assert rule.action.stop_mode == "lock_plus"
+    assert rule.action.resolved_lock_trigger_pct() == 1.0
+    assert rule.action.resolved_lock_stop_pct() == 1.0
+    assert rule.action.stop_loss_pct == 1.0
+    assert rule.action.pyramid_on_lock is True
+    assert rule.action.take_anchor == "entry"
+    assert rule.action.take_profit_pct == 2.0
+    assert rule.action.size and rule.action.size.type == "shares"
+    assert rule.action.size.value == 10
+    assert has_noon_stack(rule.when)
+    assert not has_volume_gt_prev(rule.when)
+    assert ten.settings.entry_cutoff == "12:00"
+    assert ten.settings.flatten_by == "15:55"
+    risk = load_config("config/ema9_trend_risk_nobe_lock1_pyramid2.example.yaml")
+    assert risk.rules[0].action.stop_mode == "lock_plus"
+    assert risk.rules[0].action.pyramid_on_lock is True
+    assert risk.rules[0].action.take_anchor == "entry"
+    assert risk.rules[0].action.take_profit_pct == 2.0
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+    assert risk.rules[0].action.size.stop_pct == 1.0
+
+
+def test_ema9_trend_lock1_half_configs_load():
+    ten = load_config("config/ema9_trend_bracket_nobe_lock1_half.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.exit == "fixed_bracket"
+    assert rule.action.stop_mode == "lock_plus"
+    assert rule.action.resolved_lock_trigger_pct() == 1.0
+    assert rule.action.resolved_lock_stop_pct() == 1.0
+    assert rule.action.stop_loss_pct == 1.0
+    assert rule.action.partial_take_on_lock is True
+    assert rule.action.pyramid_on_lock is False
+    assert rule.action.pyramid_add_pct is None
+    assert rule.action.take_profit_pct is None
+    assert rule.action.has_pyramid_add() is False
+    assert rule.action.size and rule.action.size.value == 10
+    assert has_noon_stack(rule.when)
+    assert not has_volume_gt_prev(rule.when)
+    assert ten.settings.entry_cutoff == "12:00"
+    assert ten.settings.flatten_by == "15:55"
+    risk = load_config("config/ema9_trend_risk_nobe_lock1_half.example.yaml")
+    assert risk.rules[0].action.partial_take_on_lock is True
+    assert risk.rules[0].action.pyramid_on_lock is False
+    assert risk.rules[0].action.take_profit_pct is None
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+    assert risk.rules[0].action.size.stop_pct == 1.0
+
+
+def test_ema9_trend_lock1_half_be_configs_load():
+    ten = load_config("config/ema9_trend_bracket_nobe_lock1_half_be.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.exit == "fixed_bracket"
+    assert rule.action.stop_mode == "lock_plus"
+    assert rule.action.resolved_lock_trigger_pct() == 1.0
+    assert rule.action.partial_take_be is True
+    assert rule.action.partial_take_on_lock is False
+    assert rule.action.pyramid_on_lock is False
+    assert rule.action.pyramid_add_pct is None
+    assert rule.action.take_profit_pct is None
+    assert rule.action.size and rule.action.size.value == 10
+    assert has_noon_stack(rule.when)
+    assert not has_volume_gt_prev(rule.when)
+    assert ten.settings.entry_cutoff == "12:00"
+    assert ten.settings.flatten_by == "15:55"
+    risk = load_config("config/ema9_trend_risk_nobe_lock1_half_be.example.yaml")
+    assert risk.rules[0].action.partial_take_be is True
+    assert risk.rules[0].action.partial_take_on_lock is False
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+
+
+def test_partial_take_be_requires_lock_plus_and_rejects_combos(tmp_path: Path):
+    bad_mode = tmp_path / "bad_be_mode.yaml"
+    bad_mode.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action:
+      type: buy
+      size: {type: shares, value: 10}
+      stop_mode: entry_pct
+      stop_loss_pct: 1.0
+      partial_take_be: true
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="partial_take_be"):
+        load_config(bad_mode)
+    bad_lock = tmp_path / "bad_be_lock.yaml"
+    bad_lock.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action:
+      type: buy
+      size: {type: shares, value: 10}
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      partial_take_be: true
+      partial_take_on_lock: true
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="cannot combine"):
+        load_config(bad_lock)
+    bad_pyr = tmp_path / "bad_be_pyr.yaml"
+    bad_pyr.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action:
+      type: buy
+      size: {type: shares, value: 10}
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      partial_take_be: true
+      pyramid_add_pct: 0.5
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="cannot combine"):
+        load_config(bad_pyr)
+
+
+def test_partial_take_on_lock_requires_lock_plus_and_rejects_pyramid(tmp_path: Path):
+    bad_mode = tmp_path / "bad_half_mode.yaml"
+    bad_mode.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action:
+      type: buy
+      size: {type: shares, value: 10}
+      stop_mode: entry_pct
+      stop_loss_pct: 1.0
+      partial_take_on_lock: true
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="partial_take_on_lock"):
+        load_config(bad_mode)
+    bad_pyr = tmp_path / "bad_half_pyr.yaml"
+    bad_pyr.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action:
+      type: buy
+      size: {type: shares, value: 10}
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      partial_take_on_lock: true
+      pyramid_on_lock: true
+      take_profit_pct: 2.0
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="cannot combine"):
+        load_config(bad_pyr)
+    bad_add = tmp_path / "bad_half_add.yaml"
+    bad_add.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action:
+      type: buy
+      size: {type: shares, value: 10}
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      partial_take_on_lock: true
+      pyramid_add_pct: 0.5
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="cannot combine"):
+        load_config(bad_add)
+
+
+def test_pyramid_on_lock_requires_lock_plus_and_take(tmp_path: Path):
+    bad_mode = tmp_path / "bad_pyr_mode.yaml"
+    bad_mode.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action:
+      type: buy
+      size: {type: shares, value: 1}
+      stop_mode: entry_pct
+      stop_loss_pct: 1.0
+      pyramid_on_lock: true
+      take_profit_pct: 2.0
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="pyramid_on_lock"):
+        load_config(bad_mode)
+    bad_take = tmp_path / "bad_pyr_take.yaml"
+    bad_take.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action:
+      type: buy
+      size: {type: shares, value: 1}
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      pyramid_on_lock: true
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="take_profit_pct"):
+        load_config(bad_take)
+
+
+def test_ema9_trend_lock1_vol_configs_load():
+    ten = load_config("config/ema9_trend_bracket_nobe_lock1_vol.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.exit == "fixed_bracket"
+    assert rule.action.stop_mode == "lock_plus"
+    assert rule.action.resolved_lock_trigger_pct() == 1.0
+    assert rule.action.resolved_lock_stop_pct() == 1.0
+    assert rule.action.stop_loss_pct == 1.0
+    assert rule.action.take_profit_pct is None
+    assert rule.action.size and rule.action.size.type == "shares"
+    assert rule.action.size.value == 10
+    assert has_noon_stack(rule.when)
+    assert has_volume_gt_prev(rule.when)
+    assert ten.settings.entry_cutoff == "12:00"
+    assert ten.settings.flatten_by == "15:55"
+    risk = load_config("config/ema9_trend_risk_nobe_lock1_vol.example.yaml")
+    assert risk.rules[0].action.stop_mode == "lock_plus"
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+    assert risk.rules[0].action.size.stop_pct == 1.0
+    assert risk.rules[0].action.stop_loss_pct == 1.0
+    assert has_volume_gt_prev(risk.rules[0].when)
+
+
+def test_ema9_trend_lock1_macross_combo_configs_load():
+    ten = load_config("config/ema9_trend_bracket_nobe_lock1_macross.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.exit == "ma_cross_close"
+    assert rule.action.stop_mode == "lock_plus"
+    assert rule.action.stop_loss_pct == 1.0
+    assert rule.action.lock_trigger_pct == 1.0
+    assert rule.action.lock_stop_pct == 1.0
+    assert rule.action.partial_take_on_lock is False
+    assert rule.action.pyramid_on_lock is False
+    assert rule.action.size and rule.action.size.value == 10
+    assert has_noon_stack(rule.when)
+    assert not has_volume_gt_prev(rule.when)
+    risk = load_config("config/ema9_trend_risk_nobe_lock1_macross.example.yaml")
+    assert risk.rules[0].action.exit == "ma_cross_close"
+    assert risk.rules[0].action.stop_mode == "lock_plus"
+    assert risk.rules[0].action.stop_loss_pct == 1.0
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+    assert risk.rules[0].action.size.stop_pct == 1.0
+
+
+def test_ema9_trend_macross_close_configs_load():
+    ten = load_config("config/ema9_trend_bracket_nobe_macross.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.exit == "ma_cross_close"
+    assert rule.action.exit_ema_period == 9
+    assert rule.action.exit_sma_period == 20
+    assert rule.action.stop_loss_pct is None
+    assert rule.action.take_profit_pct is None
+    assert rule.action.size and rule.action.size.type == "shares"
+    assert rule.action.size.value == 10
+    assert has_noon_stack(rule.when)
+    assert not has_volume_gt_prev(rule.when)
+    assert ten.settings.entry_cutoff == "12:00"
+    assert ten.settings.flatten_by == "15:55"
+    risk = load_config("config/ema9_trend_risk_nobe_macross.example.yaml")
+    assert risk.rules[0].action.exit == "ma_cross_close"
+    assert risk.rules[0].action.stop_loss_pct is None
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+    assert risk.rules[0].action.size.stop_pct == 1.0
+    assert not has_volume_gt_prev(risk.rules[0].when)
+
+
+def test_ema9_trend_lower_high_vol_configs_load():
+    ten = load_config("config/ema9_trend_bracket_nobe_lh_vol.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.exit == "lower_high"
+    assert rule.action.stop_loss_pct is None
+    assert rule.action.take_profit_pct is None
+    assert rule.action.size and rule.action.size.type == "shares"
+    assert rule.action.size.value == 10
+    assert has_noon_stack(rule.when)
+    assert has_volume_gt_prev(rule.when)
+    leaves = rule.when.conditions
+    assert any(isinstance(c, VolumePrevCond) and c.compare == "above" for c in leaves)
+    assert ten.settings.entry_cutoff == "12:00"
+    assert ten.settings.flatten_by == "15:55"
+    risk = load_config("config/ema9_trend_risk_nobe_lh_vol.example.yaml")
+    assert risk.rules[0].action.exit == "lower_high"
+    assert risk.rules[0].action.stop_loss_pct is None
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+    assert risk.rules[0].action.size.stop_pct == 1.0
+    assert has_volume_gt_prev(risk.rules[0].when)
+
+
+def test_volume_gt_prev_yaml_shapes():
+    named = parse_condition({"volume_gt_prev": {"timeframe": "15m"}})
+    assert isinstance(named, VolumePrevCond)
+    assert named.compare == "above"
+    vs = parse_condition({"volume": {"vs": "prev", "timeframe": "5m"}})
+    assert isinstance(vs, VolumePrevCond)
+    assert vs.timeframe == "5Min"
+
+
 def test_stop_mode_aliases_and_defaults():
     lock = load_config("config/ema9_trend_bracket_nobe_lock1.example.yaml")
     # Explicit lock fields resolve to 1.0; omitting them falls back to stop_loss_pct.
@@ -600,6 +952,34 @@ rules:
     )
     cfg = load_config(path)
     assert cfg.rules[0].action.exit == "ema_invalid"
+    lh_path = tmp_path / "lh.yaml"
+    lh_path.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action: {type: buy, size: {type: shares, value: 1}, exit: lowerhigh}
+""",
+        encoding="utf-8",
+    )
+    lh = load_config(lh_path)
+    assert lh.rules[0].action.exit == "lower_high"
+    close_path = tmp_path / "maclose.yaml"
+    close_path.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action: {type: buy, size: {type: shares, value: 1}, exit: ma_cross_at_close}
+""",
+        encoding="utf-8",
+    )
+    close_cfg = load_config(close_path)
+    assert close_cfg.rules[0].action.exit == "ma_cross_close"
     bad = tmp_path / "bad_exit.yaml"
     bad.write_text(
         """
@@ -626,16 +1006,14 @@ def test_cli_validate_timeframe_override(capsys):
     out = capsys.readouterr().out
     assert "tf=5Min" in out
     assert "cooldown=60m" in out
-    assert "exit=fixed_bracket" in out
-    assert "exit=ma_cross" in out
+    assert "exit=ma_cross_close" in out
     assert "ema_period=9" in out
     assert "sma_period=20" in out
-    assert "stop_mode=lock_plus" in out
     assert "stop=off" in out
-    assert "lock_trigger_pct=1" in out
+    assert "stop_mode=lock_plus" not in out
     assert "rsi=RSI14 < 70" in out
     assert "rsi=RSI14 > 30" not in out
-    assert "action=sell" in out
+    assert "action=sell" not in out
     assert "entry_cutoff=12:00" in out
     assert "flatten_by=15:55" in out
     pair_rc = main(["validate", "--config", "config/ema9_trend_pair.example.yaml"])
@@ -658,6 +1036,60 @@ def test_cli_validate_timeframe_override(capsys):
     lock_out = capsys.readouterr().out
     assert "stop_mode=lock_plus" in lock_out
     assert "lock_trigger_pct=1" in lock_out
+    add05_rc = main(["validate", "--config", "config/ema9_trend_bracket_nobe_lock1_add05.example.yaml"])
+    assert add05_rc == 0
+    add05_out = capsys.readouterr().out
+    assert "stop_mode=lock_plus" in add05_out
+    assert "pyramid_add_pct=0.5" in add05_out
+    half_rc = main(["validate", "--config", "config/ema9_trend_bracket_nobe_lock1_half.example.yaml"])
+    assert half_rc == 0
+    half_out = capsys.readouterr().out
+    assert "stop_mode=lock_plus" in half_out
+    assert "partial_take_on_lock" in half_out
+    assert "pyramid_on_lock" not in half_out
+    half_be_rc = main(["validate", "--config", "config/ema9_trend_bracket_nobe_lock1_half_be.example.yaml"])
+    assert half_be_rc == 0
+    half_be_out = capsys.readouterr().out
+    assert "stop_mode=lock_plus" in half_be_out
+    assert "partial_take_be" in half_be_out
+    assert "partial_take_on_lock" not in half_be_out
+    pyr_rc = main(["validate", "--config", "config/ema9_trend_bracket_nobe_lock1_pyramid2.example.yaml"])
+    assert pyr_rc == 0
+    pyr_out = capsys.readouterr().out
+    assert "stop_mode=lock_plus" in pyr_out
+    assert "pyramid_on_lock" in pyr_out
+    assert "take_profit_pct=2" in pyr_out
+    assert "take_anchor=entry" in pyr_out
+    lock_vol_rc = main(["validate", "--config", "config/ema9_trend_bracket_nobe_lock1_vol.example.yaml"])
+    assert lock_vol_rc == 0
+    lock_vol_out = capsys.readouterr().out
+    assert "stop_mode=lock_plus" in lock_vol_out
+    assert "volume_gt_prev" in lock_vol_out
+    lh_rc = main(["validate", "--config", "config/ema9_trend_bracket_nobe_lh_vol.example.yaml"])
+    assert lh_rc == 0
+    lh_out = capsys.readouterr().out
+    assert "exit=lower_high" in lh_out
+    assert "volume_gt_prev" in lh_out
+    assert "stop=off" in lh_out
+    macross_rc = main(["validate", "--config", "config/ema9_trend_bracket_nobe_macross.example.yaml"])
+    assert macross_rc == 0
+    macross_out = capsys.readouterr().out
+    assert "exit=ma_cross_close" in macross_out
+    assert "ema_period=9" in macross_out
+    assert "sma_period=20" in macross_out
+    assert "stop=off" in macross_out
+    assert "volume_gt_prev" not in macross_out
+    combo_rc = main(
+        ["validate", "--config", "config/ema9_trend_bracket_nobe_lock1_macross.example.yaml"]
+    )
+    assert combo_rc == 0
+    combo_out = capsys.readouterr().out
+    assert "exit=ma_cross_close" in combo_out
+    assert "stop_mode=lock_plus" in combo_out
+    assert "lock_trigger_pct=1" in combo_out
+    assert "ema_period=9" in combo_out
+    assert "partial_take_on_lock" not in combo_out
+    assert "volume_gt_prev" not in combo_out
 
 
 def test_ema_cross_yaml_parses_and_does_not_steal_level_ema():

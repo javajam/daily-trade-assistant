@@ -13,6 +13,7 @@ from dta_bot.config import (
     BotConfig,
     condition_timeframes,
     find_rsi_condition,
+    has_volume_gt_prev,
     load_config,
     restrict_universe,
     timeframe_label,
@@ -221,6 +222,18 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 stop_txt += f" lock_trigger_pct={trig:g}"
             if lock is not None:
                 stop_txt += f" lock_stop_pct={lock:g}"
+            if rule.action.pyramid_on_lock:
+                stop_txt += " pyramid_on_lock"
+            if rule.action.pyramid_add_pct is not None:
+                stop_txt += f" pyramid_add_pct={rule.action.pyramid_add_pct:g}"
+            if rule.action.partial_take_on_lock:
+                stop_txt += " partial_take_on_lock"
+            if rule.action.partial_take_be:
+                stop_txt += " partial_take_be"
+            if rule.action.take_profit_pct is not None:
+                stop_txt += f" take_profit_pct={rule.action.take_profit_pct:g}"
+            if rule.action.take_anchor == "entry":
+                stop_txt += " take_anchor=entry"
         elif rule.action.stop_mode == "trail":
             trail = rule.action.resolved_trail_pct()
             if trail is not None:
@@ -235,7 +248,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 f" valid={rule.action.breakeven_valid}"
             )
         ma_txt = ""
-        if rule.action.exit == "ma_cross":
+        if rule.action.exit in {"ma_cross", "ma_cross_close"}:
             ma_txt = (
                 f" ema_period={rule.action.exit_ema_period}"
                 f" sma_period={rule.action.exit_sma_period}"
@@ -249,10 +262,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
             if rsi_cond.above is not None:
                 bits.append(f"> {rsi_cond.above:g}")
             rsi_txt = f" rsi=RSI{rsi_cond.period} {' '.join(bits)}" if bits else f" rsi=RSI{rsi_cond.period}"
+        vol_txt = " volume_gt_prev" if has_volume_gt_prev(rule.when) else ""
         print(
             f"    - {rule.id}: enabled={rule.enabled} symbols={syms} "
             f"action={rule.action.type} exit={rule.action.exit} "
-            f"cooldown={rule.cooldown_minutes}m tf={tfs}{size_txt}{stop_txt}{be_txt}{ma_txt}{rsi_txt}"
+            f"cooldown={rule.cooldown_minutes}m tf={tfs}{size_txt}{stop_txt}{be_txt}{ma_txt}{rsi_txt}{vol_txt}"
         )
     return 0
 

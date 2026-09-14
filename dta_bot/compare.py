@@ -21,6 +21,7 @@ from dta_bot.config import (
     find_rsi_condition,
     has_noon_short_stack,
     has_noon_stack,
+    has_volume_gt_prev,
     restrict_universe,
     rsi_filter_label,
     timeframe_label,
@@ -273,11 +274,75 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         if rule.action.exit == "ema_invalid"
     }
     period = next(iter(periods), 9)
+    ma_close_rules = [
+        rule
+        for rule in (config.rules if config is not None else [])
+        if rule.action.type != "close" and rule.action.exit == "ma_cross_close"
+    ]
     ma_rules = [
         rule
         for rule in (config.rules if config is not None else [])
         if rule.action.type != "close" and rule.action.exit == "ma_cross"
     ]
+    if modes == {"lower_high"} or (
+        config is not None
+        and "lower_high" in modes
+        and "fixed_bracket" not in modes
+        and "ma_cross" not in modes
+        and "ma_cross_close" not in modes
+        and "ema_invalid" not in modes
+    ):
+        return (
+            "Exit is lower-high (action.exit: lower_high): after entry, on each completed "
+            "signal-timeframe bar, leave the long when that bar's high is strictly below "
+            "the previous bar's high and exit at that bar's close — the same fill "
+            "convention as ema_invalid. Equal highs stay valid. Shorts use the symmetric "
+            "higher low (current low > previous low). Optional stop_loss_pct is a "
+            "catastrophic stop only (off when omitted). Percent take-profit is ignored. "
+            "Same-bar stop + lower-high → stop. If the lower-high bar is also the flatten "
+            "bar, lower_high at that close wins over session_flatten."
+        )
+    if modes == {"ma_cross_close"} and ma_close_rules:
+        action = ma_close_rules[0].action
+        lock_txt = ""
+        if action.stop_mode == "lock_plus" and action.stop_loss_pct:
+            trig = action.resolved_lock_trigger_pct()
+            lock = action.resolved_lock_stop_pct()
+            lock_txt = (
+                f" Lock-plus is also live (stop_mode: lock_plus): initial stop is "
+                f"{action.stop_loss_pct:g}% from the fill. First trade/touch of "
+                f"entry×(1+{(trig or 0):g}/100) (bar high ≥ that print) moves the stop "
+                f"to entry×(1+{(lock or 0):g}/100); the locked stop is live from the "
+                "next bar. Whichever hits first wins: stop / lock_stop on this bar "
+                "beats the pair-cross (stop is checked first). A same-bar lock-arm "
+                "touch + pair-cross (low stays above the live stop) exits as ma_cross "
+                "at that close and does not arm the lock. "
+            )
+            return (
+                f"Exit is lock-+1% plus MA-cross at close (stop_mode: lock_plus and "
+                f"action.exit: ma_cross_close): after entry, leave when EMA({action.exit_ema_period}) "
+                f"crosses SMA({action.exit_sma_period}) against the position and fill at that "
+                "bar's close — the same fill convention as ema_invalid / lower_high. "
+                "Cross is EMA vs SMA close-to-close (not price vs MA). "
+                "Long: prev EMA >= prev SMA and curr EMA < curr SMA (cross-under)."
+                + lock_txt
+                + "Percent take-profit is ignored. If the cross bar is also the flatten "
+                "bar and the stop did not hit, ma_cross at that close wins over "
+                "session_flatten. No half-take. No pyramid."
+            )
+        return (
+            f"Exit is MA-cross at close (action.exit: ma_cross_close): after entry, on "
+            f"each completed signal-timeframe bar, leave when EMA({action.exit_ema_period}) "
+            f"crosses SMA({action.exit_sma_period}) against the position and fill at that "
+            "bar's close — the same fill convention as ema_invalid / lower_high. "
+            "Cross is EMA vs SMA close-to-close (not price vs MA). "
+            "Long: prev EMA >= prev SMA and curr EMA < curr SMA (cross-under). "
+            "Short: prev EMA <= prev SMA and curr EMA > curr SMA (cross-over / cover). "
+            "Optional stop_loss_pct is a catastrophic stop only (off when omitted). "
+            "Percent take-profit is ignored. Same-bar stop + cross → stop. "
+            "If the cross bar is also the flatten bar, ma_cross at that close wins "
+            "over session_flatten."
+        )
     if modes == {"ma_cross"} and ma_rules:
         action = ma_rules[0].action
         return (
@@ -326,7 +391,13 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
             "ema_invalid holds until a signal-timeframe close < EMA (exit at that close)."
             + lock_txt
         )
-    if modes == {"ema_invalid"} or (config is not None and "ema_invalid" in modes and "fixed_bracket" not in modes and "ma_cross" not in modes):
+    if modes == {"ema_invalid"} or (
+        config is not None
+        and "ema_invalid" in modes
+        and "fixed_bracket" not in modes
+        and "ma_cross" not in modes
+        and "ma_cross_close" not in modes
+    ):
         return (
             f"Exit is EMA-invalidation (action.exit: ema_invalid): hold the long until a "
             f"signal-timeframe bar closes < EMA({period}) and exit at that close. "
@@ -368,11 +439,17 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         action = manage_rules[0].action
         stop_pct = action.stop_loss_pct
         stop_txt = f"{stop_pct:g}%" if stop_pct is not None else "n/a"
-        take_txt = (
-            f" Optional take_profit_pct {action.take_profit_pct:g}% is still from the signal-bar close."
-            if action.take_profit_pct
-            else " take_profit_pct is omitted (stop variant or session_flatten only; no % take)."
-        )
+        if action.take_profit_pct and action.take_anchor == "entry":
+            take_txt = (
+                f" take_profit_pct {action.take_profit_pct:g}% is from the *fill* "
+                "(take_anchor: entry), not the signal-bar close."
+            )
+        elif action.take_profit_pct:
+            take_txt = (
+                f" Optional take_profit_pct {action.take_profit_pct:g}% is still from the signal-bar close."
+            )
+        else:
+            take_txt = " take_profit_pct is omitted (stop variant or session_flatten only; no % take)."
         if action.stop_mode == "entry_pct":
             return (
                 f"Stop is a fixed {stop_txt} below the *fill* (next-bar open; "
@@ -382,6 +459,48 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         if action.stop_mode == "lock_plus":
             trig = action.resolved_lock_trigger_pct()
             lock = action.resolved_lock_stop_pct()
+            pyramid_txt = ""
+            if action.pyramid_add_pct is not None:
+                add_pct = action.pyramid_add_pct
+                pyramid_txt = (
+                    f" pyramid_add_pct {add_pct:g} adds the same share count on first "
+                    f"touch of fill×(1+{add_pct:g}/100) (gap-through: add at open if the "
+                    "bar opens through that print, else at the trigger). The +lock still "
+                    f"arms at fill×(1+{(trig or 0):g}/100) and rests the stop at original "
+                    f"fill × (1+{(lock or 0):g}/100) on the full position. A bar that gaps "
+                    "through both prints adds first, then locks; locked stop is live next "
+                    "bar. Cash for the add is not reserved. Live does not auto-add."
+                )
+            elif action.partial_take_be:
+                pyramid_txt = (
+                    f" partial_take_be sells floor(half) the open shares at the "
+                    f"+{(trig or 0):g}% print (gap-through: open if the bar opens "
+                    f"through fill×(1+{(trig or 0):g}/100), else the trigger) and "
+                    "rests the remainder stop at original fill × 1.00 (break-even), "
+                    f"not at fill × (1+{(lock or 0):g}/100). Size 1 skips the partial "
+                    "and still arms BE. The BE stop is live from the next bar. No "
+                    "pyramid. No hard full take. Live does not auto scale-out."
+                )
+            elif action.partial_take_on_lock:
+                pyramid_txt = (
+                    f" partial_take_on_lock sells floor(half) the open shares at the "
+                    f"lock-arm print (gap-through: open if the bar opens through "
+                    f"fill×(1+{(trig or 0):g}/100), else the trigger) and locks the "
+                    f"remainder at original fill × (1+{(lock or 0):g}/100). Size 1 skips "
+                    "the partial and still locks. No pyramid. No hard full take. Live "
+                    "does not auto scale-out."
+                )
+            elif action.pyramid_on_lock:
+                pyramid_txt = (
+                    f" pyramid_on_lock adds the same share count at the lock-arm print "
+                    f"(gap-through: add at open if the bar opens through the trigger, else "
+                    f"at fill×(1+{(trig or 0):g}/100)). Stop stays at original fill × "
+                    f"(1+{(lock or 0):g}/100) on the full position. Cash for the add is "
+                    "not reserved at entry; if cash cannot cover it the lock still arms "
+                    "and the add is skipped. On the arm bar, take is checked after the add "
+                    "(locked stop is live next bar). A 2% fill-anchored take exits as "
+                    "take_2pct. Live runner does not auto-add on lock."
+                )
             return (
                 f"Lock-plus stop (stop_mode: lock_plus): initial stop is {stop_txt} from "
                 f"the fill (long: below; short: above). First trade/touch of "
@@ -389,7 +508,7 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
                 f"entry×(1−{(trig or 0):g}/100) for a short (bar low ≤ that print) moves "
                 f"the stop to that same print and leaves it. The locked stop is live "
                 f"from the next bar; same-bar pullback after the tag uses the initial stop. "
-                f"A later hit of the locked stop is lock_stop.{take_txt}"
+                f"A later hit of the locked stop is lock_stop.{take_txt}{pyramid_txt}"
             )
         trail = action.resolved_trail_pct()
         return (
@@ -407,9 +526,12 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         "to +stop_loss_pct after the first touch of that print. Set action.stop_mode: trail to "
         "ratchet the stop to peak×(1−stop_loss_pct/100). Set action.exit: ma_cross "
         "to flatten at the next bar open after EMA crosses SMA against the position "
-        "(long: under; short: over). Set action.exit: ema_invalid "
+        "(long: under; short: over). Set action.exit: ma_cross_close for the same "
+        "EMA-vs-SMA close-to-close pair-cross filled at that bar's close. "
+        "Set action.exit: ema_invalid "
         "to hold until a signal-timeframe close is on the wrong side of EMA (long: close < EMA; "
-        "exit at that close)."
+        "exit at that close). Set action.exit: lower_high to leave a long when a completed "
+        "bar's high is strictly below the previous bar's high (exit at that close)."
     )
 
 
@@ -499,9 +621,14 @@ def _noon_entry_assumption(config: Optional[BotConfig]) -> Optional[str]:
         period = rsi_cond.period if rsi_cond is not None else 14
         if has_noon_stack(rule.when):
             below = rsi_cond.below if rsi_cond is not None and rsi_cond.below is not None else 70
+            vol_txt = (
+                " AND signal-bar volume > previous-bar volume"
+                if has_volume_gt_prev(rule.when)
+                else ""
+            )
             long_txt = (
                 f"Long: close crosses above EMA(9) AND close > SMA(20) AND "
-                f"RSI({period}) < {below:g}"
+                f"RSI({period}) < {below:g}{vol_txt}"
             )
         if has_noon_short_stack(rule.when):
             if rsi_cond is not None and rsi_cond.above is not None:
@@ -542,8 +669,10 @@ def _session_gate_assumption(config: Optional[BotConfig]) -> Optional[str]:
         "15m RTH bars opening :00,:15,:30,:45 flatten on the 15:45 ET bar close when "
         "flatten_by is 15:55 (last regular 15m bar, aligned with “by 15:55”); "
         "5m flattens on the 15:50 ET bar close (last 5m bar that completes at/before 15:55). "
-        "Stop/take/ema_invalid/ma_cross-on-this-bar still win if they hit first "
-        "(ma_cross fills at the next open, so a same-bar flatten_by close wins). "
+        "Stop/take/ema_invalid/lower_high/ma_cross_close/ma_cross-on-this-bar still win "
+        "if they hit first (ma_cross fills at the next open, so a same-bar flatten_by "
+        "close wins; ema_invalid, lower_high, and ma_cross_close fill at that close, "
+        "so the signal exit wins over session_flatten). "
         "Set entry_cutoff / flatten_by to null / off to restore overnight holds."
     )
 
@@ -578,6 +707,16 @@ def _fixed_bracket_tag(config: BotConfig) -> Optional[str]:
         trig = action.resolved_lock_trigger_pct() or stop
         if trig is None:
             return "lock+"
+        if action.pyramid_add_pct is not None:
+            return f"lock +{trig:.1f}% add@{action.pyramid_add_pct:.1f}%"
+        if action.partial_take_be:
+            return f"lock +{trig:.1f}% half-take BE"
+        if action.partial_take_on_lock:
+            return f"lock +{trig:.1f}% half-take"
+        if action.pyramid_on_lock:
+            if take is not None:
+                return f"lock +{trig:.1f}% pyramid/{take:.1f}"
+            return f"lock +{trig:.1f}% pyramid"
         return f"lock +{trig:.1f}%"
     if action.stop_mode == "trail":
         trail = action.resolved_trail_pct() or stop
@@ -674,10 +813,19 @@ def session_gate_suffix(config: BotConfig) -> str:
         bits.append("short MA-cross")
     elif exits == {"ma_cross"}:
         bits.append("MA-cross")
+    elif exits == {"ma_cross_close"}:
+        bits.append("MA-cross close")
+    elif exits == {"lower_high"}:
+        bits.append("lower-high")
     if bracket:
         bits.append(bracket)
     if rsi_tag:
         bits.append(rsi_tag)
+    if any(
+        r.enabled and r.action.type != "close" and has_volume_gt_prev(r.when)
+        for r in config.rules
+    ):
+        bits.append("vol>prev")
     return " (" + ", ".join(bits) + ")"
 
 
@@ -694,9 +842,12 @@ def assumptions_rules(
         _rules_exit_assumption(config),
         _breakeven_assumption(config),
         "If stop and take (or EMA-invalidation) both trade in the fill bar, the stop is assumed to fill first.",
-        "A gap through stop/take fills at that bar's open. EMA-invalidation fills at the invalidating close. "
-        "MA-cross exits fill at the next bar open after the opposing EMA/SMA pair-cross "
-        "(long: EMA under SMA; short: EMA over SMA).",
+        "A gap through stop/take fills at that bar's open. EMA-invalidation, lower-high, "
+        "and ma_cross_close exits fill at that completed bar's close. "
+        "MA-cross (action.exit: ma_cross) exits fill at the next bar open after the "
+        "opposing EMA/SMA pair-cross (long: EMA under SMA; short: EMA over SMA). "
+        "ma_cross_close uses the same close-to-close EMA-vs-SMA pair-cross but fills "
+        "at that bar's close.",
         "One open lot per symbol (no pyramiding; long or short, not both). "
         "A second signal while that symbol is already open is skipped "
         "(already_in_position, or opposite_signal_in_trade when the new side is the other way).",
@@ -1030,10 +1181,12 @@ def _side_mix(report: dict[str, Any]) -> str:
 def exit_mix(report: dict[str, Any]) -> str:
     reasons = report.get("exit_reasons") or {}
     take = int(reasons.get("take") or 0)
+    take_2pct = int(reasons.get("take_2pct") or 0)
     stop = int(reasons.get("stop") or 0)
     eod = int(reasons.get("eod") or 0)
     ema_inv = int(reasons.get("ema_invalid") or 0)
     ma_x = int(reasons.get("ma_cross") or 0)
+    lh = int(reasons.get("lower_high") or 0)
     sess = int(reasons.get("session_flatten") or 0)
     be_stop = int(reasons.get("breakeven_stop") or 0)
     lock_stop = int(reasons.get("lock_stop") or 0)
@@ -1043,7 +1196,11 @@ def exit_mix(report: dict[str, Any]) -> str:
         parts.append(f"ema_invalid {ema_inv}")
     if ma_x:
         parts.append(f"ma_cross {ma_x}")
+    if lh:
+        parts.append(f"lower_high {lh}")
     parts.extend([f"take {take}", f"stop {stop}"])
+    if take_2pct:
+        parts.append(f"take_2pct {take_2pct}")
     if be_stop:
         parts.append(f"breakeven_stop {be_stop}")
     if lock_stop:
@@ -1060,10 +1217,12 @@ def exit_mix(report: dict[str, Any]) -> str:
         if key
         not in {
             "take",
+            "take_2pct",
             "stop",
             "eod",
             "ema_invalid",
             "ma_cross",
+            "lower_high",
             "session_flatten",
             "breakeven_stop",
             "lock_stop",
@@ -1147,6 +1306,15 @@ def format_side_by_side_table(columns: list[tuple[str, dict[str, Any]]]) -> list
         ("Takes vs stops", lambda r: exit_mix(r)),
         ("BE armed", lambda r: str(int(r.get("breakeven_armed") or 0))),
         ("Lock armed", lambda r: str(int(r.get("lock_armed") or 0))),
+        ("Pyramid added", lambda r: str(int(r.get("pyramid_added") or 0))),
+        ("Pyramid add skipped", lambda r: str(int(r.get("pyramid_add_skipped") or 0))),
+        (
+            "Partial take",
+            lambda r: (
+                f"{int(r.get('partial_take') or 0)} "
+                f"({_fmt_money(r.get('partial_take_pnl'))})"
+            ),
+        ),
         ("Trail ratcheted", lambda r: str(int(r.get("trail_ratcheted") or 0))),
         ("By side", lambda r: _side_mix(r)),
     ]

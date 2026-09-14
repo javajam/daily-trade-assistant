@@ -1,8 +1,11 @@
-# Same as the default product (config/ema9_trend.example.yaml) — lock-+1%.
+# Prior default / comparison — lock-+1% (not the locked day-trade book).
+#
+# Default product is now MA-cross at close: config/ema9_trend.example.yaml
+# Writeup: artifacts/ema9_macross_adopted.md
 #
 # Named sibling so A/B/C stop-manage compares stay explicit:
 #   A fixed 1%: config/ema9_trend_bracket_nobe_fixed1.example.yaml
-#   B lock +1% (default): this file / ema9_trend.example.yaml
+#   B lock +1% (this file; prior default)
 #   C trail 1%: config/ema9_trend_bracket_nobe_trail1.example.yaml
 # Stop (stop_mode: lock_plus):
 #   initial stop = fill × 0.99
@@ -16,6 +19,25 @@
 #     --source yahoo --combined-only --symbols AAPL,MSFT \
 #     --output artifacts/ema9_stop_manage.json \
 #     --report artifacts/ema9_stop_manage.md
+#
+# Lower-high + vol>prev sibling (no lock-+1%): 
+#   config/ema9_trend_bracket_nobe_lh_vol.example.yaml
+#   writeup: artifacts/ema9_lh_vol.md
+# Lock-+1% + vol>prev only (same exit): 
+#   config/ema9_trend_bracket_nobe_lock1_vol.example.yaml
+#   writeup: artifacts/ema9_lock1_vol.md
+# Lock-+1% + pyramid + 2% fill take:
+#   config/ema9_trend_bracket_nobe_lock1_pyramid2.example.yaml
+#   writeup: artifacts/ema9_lock1_pyramid2.md
+# Lock-+1% + add at +0.5% (no take):
+#   config/ema9_trend_bracket_nobe_lock1_add05.example.yaml
+#   writeup: artifacts/ema9_lock1_add05.md
+# MA-cross at close (no lock-+1% / no % stop; EMA9×below SMA20 at that close):
+#   config/ema9_trend_bracket_nobe_macross.example.yaml
+#   writeup: artifacts/ema9_lock1_macross.md
+# Lock-+1% + MA-cross at close (both exits live; first hit wins):
+#   config/ema9_trend_bracket_nobe_lock1_macross.example.yaml
+#   writeup: artifacts/ema9_lock1_plus_macross.md
 
 settings:
   paper: true

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,7 +22,7 @@ from dta_bot.config import (
     GroupCond,
     RuleSpec,
 )
-from dta_bot.engine import BarMap, cooldown_key, evaluate_rule, fire_key
+from dta_bot.engine import BarMap, cooldown_key, evaluate_rule, fire_key, lower_high_exit
 from dta_bot.models import Account, Bar
 from dta_bot.indicators import ma_pair_cross, sma
 from dta_bot.orb import ema_cross_exit, ema_through
@@ -86,6 +87,13 @@ class Trade:
     breakeven_armed: bool = False
     lock_armed: bool = False
     trail_ratcheted: bool = False
+    pyramid_added: bool = False
+    pyramid_add_skipped: bool = False
+    partial_take: bool = False
+    partial_take_qty: float = 0.0
+    partial_take_price: Optional[float] = None
+    partial_take_pnl: float = 0.0
+    partial_take_skipped_size: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -149,6 +157,21 @@ class OpenLot:
     peak_price: Optional[float] = None
     lock_armed: bool = False
     trail_ratcheted: bool = False
+    pyramid_on_lock: bool = False
+    pyramid_add_pct: Optional[float] = None
+    pyramid_added: bool = False
+    pyramid_add_skipped: bool = False
+    base_qty: float = 0.0
+    cost_basis: float = 0.0
+    take_anchor: str = "signal"
+    take_profit_pct: Optional[float] = None
+    partial_take_on_lock: bool = False
+    partial_take_be: bool = False
+    partial_take: bool = False
+    partial_take_skipped_size: bool = False
+    partial_take_qty: float = 0.0
+    partial_take_price: Optional[float] = None
+    partial_take_pnl: float = 0.0
 
 
 @dataclass
@@ -178,6 +201,12 @@ class PendingOrder:
     breakeven_requires_valid: bool = True
     breakeven_valid: str = "above_ema"
     breakeven_ema_period: int = 9
+    pyramid_on_lock: bool = False
+    pyramid_add_pct: Optional[float] = None
+    take_anchor: str = "signal"
+    take_profit_pct: Optional[float] = None
+    partial_take_on_lock: bool = False
+    partial_take_be: bool = False
 
 
 @dataclass
@@ -209,6 +238,11 @@ class RuleReport:
     breakeven_armed: int = 0
     lock_armed: int = 0
     trail_ratcheted: int = 0
+    pyramid_added: int = 0
+    pyramid_add_skipped: int = 0
+    partial_take: int = 0
+    partial_take_pnl: float = 0.0
+    partial_take_skipped_size: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -244,6 +278,16 @@ def _next_bar(series: list[Bar], after_ts: datetime) -> Optional[Bar]:
     return None
 
 
+def _prev_bar(series: list[Bar], ts: datetime) -> Optional[Bar]:
+    ts = _aware(ts)
+    prev: Optional[Bar] = None
+    for bar in series:
+        if _aware(bar.timestamp) >= ts:
+            return prev
+        prev = bar
+    return prev
+
+
 def _mark_to_market(cash: float, lots: list[OpenLot], last_price: dict[str, float]) -> float:
     """Cash plus long inventory minus short liabilities.
 
@@ -269,39 +313,79 @@ def _apply_slippage(price: float, side: str, slippage_pct: float, *, is_entry: b
     return price * (1.0 + frac) if buying else price * (1.0 - frac)
 
 
+def _effective_take(lot: OpenLot) -> Optional[float]:
+    """Take is live only after lock when pyramid_on_lock is on.
+
+    Before the lock arms, a bar that tags fill×1.02 must add first, then
+    take the full (doubled) position — not flatten the original lot at 1.02.
+    """
+    if lot.pyramid_on_lock and not lot.lock_armed:
+        return None
+    return lot.take
+
+
 def _stop_take_hit(bar: Bar, lot: OpenLot) -> Optional[tuple[str, float]]:
     """Return (reason, fill_price) if stop/take is touched on this bar.
 
     Conservative same-bar rule: if both levels trade, assume stop fills first.
     Gaps through a level fill at the open.
     """
+    take = _effective_take(lot)
     if lot.side == "buy":
         if lot.stop is not None and bar.open <= lot.stop:
             return "stop", bar.open
-        if lot.take is not None and bar.open >= lot.take:
+        if take is not None and bar.open >= take:
             return "take", bar.open
         stop_hit = lot.stop is not None and bar.low <= lot.stop
-        take_hit = lot.take is not None and bar.high >= lot.take
+        take_hit = take is not None and bar.high >= take
         if stop_hit and take_hit:
             return "stop", lot.stop
         if stop_hit:
             return "stop", lot.stop
         if take_hit:
-            return "take", lot.take
+            return "take", take
         return None
     if lot.stop is not None and bar.open >= lot.stop:
         return "stop", bar.open
-    if lot.take is not None and bar.open <= lot.take:
+    if take is not None and bar.open <= take:
         return "take", bar.open
     stop_hit = lot.stop is not None and bar.high >= lot.stop
-    take_hit = lot.take is not None and bar.low <= lot.take
+    take_hit = take is not None and bar.low <= take
     if stop_hit and take_hit:
         return "stop", lot.stop
     if stop_hit:
         return "stop", lot.stop
     if take_hit:
+        return "take", take
+    return None
+
+
+def _take_only_hit(bar: Bar, lot: OpenLot) -> Optional[tuple[str, float]]:
+    """Take check used on the lock-arm bar after the add (do not re-check stop).
+
+    The locked stop is live from the *next* bar. Re-running the full stop/take
+    check after arming would lock_stop the doubled lot on the same bar's low.
+    """
+    if lot.take is None:
+        return None
+    if lot.side == "buy":
+        if bar.open >= lot.take:
+            return "take", bar.open
+        if bar.high >= lot.take:
+            return "take", lot.take
+        return None
+    if bar.open <= lot.take:
+        return "take", bar.open
+    if bar.low <= lot.take:
         return "take", lot.take
     return None
+
+
+def _take_exit_reason(lot: OpenLot) -> str:
+    if lot.take_anchor == "entry" and lot.take_profit_pct is not None:
+        if abs(lot.take_profit_pct - 2.0) < 1e-9:
+            return "take_2pct"
+    return "take"
 
 
 def _breakeven_fields(action: ActionSpec) -> dict[str, Any]:
@@ -320,7 +404,21 @@ def _stop_manage_fields(action: ActionSpec) -> dict[str, Any]:
         "lock_trigger_pct": action.resolved_lock_trigger_pct(),
         "lock_stop_pct": action.resolved_lock_stop_pct(),
         "trail_pct": action.resolved_trail_pct(),
+        "pyramid_on_lock": action.pyramid_on_lock,
+        "pyramid_add_pct": action.pyramid_add_pct,
+        "take_anchor": action.take_anchor,
+        "take_profit_pct": action.take_profit_pct,
+        "partial_take_on_lock": action.partial_take_on_lock,
+        "partial_take_be": action.partial_take_be,
     }
+
+
+def _entry_anchored_take(side: str, entry_price: float, pct: Optional[float]) -> Optional[float]:
+    if pct is None or entry_price <= 0:
+        return None
+    if side == "buy":
+        return _pct_level(entry_price, pct, above=True)
+    return _pct_level(entry_price, pct, above=False)
 
 
 def _pct_level(price: float, pct: float, *, above: bool) -> float:
@@ -335,18 +433,22 @@ def _entry_anchored_stop(side: str, entry_price: float, pct: Optional[float]) ->
     return _pct_level(entry_price, pct, above=True)
 
 
-def _maybe_arm_lock(lot: OpenLot, bar: Bar) -> None:
+def _maybe_arm_lock(lot: OpenLot, bar: Bar) -> bool:
     """Arm lock_plus on first trade/touch of entry × (1 + lock_trigger_pct/100).
 
     The locked stop is live from the *next* bar. Same-bar pullback after the
     tag still uses the initial entry×(1 − stop_loss_pct/100) stop.
+    Returns True when the lock newly armed on this bar.
     """
     if lot.lock_armed or lot.stop_mode != "lock_plus":
-        return
+        return False
+    # Variant C already converted the +1% event to a BE remainder stop.
+    if lot.partial_take_be and lot.breakeven_armed:
+        return False
     trigger_pct = lot.lock_trigger_pct
     lock_pct = lot.lock_stop_pct
     if trigger_pct is None or lock_pct is None:
-        return
+        return False
     if lot.side == "buy":
         trigger = _pct_level(lot.entry_price, trigger_pct, above=True)
         touched = bar.high >= trigger
@@ -356,9 +458,89 @@ def _maybe_arm_lock(lot: OpenLot, bar: Bar) -> None:
         touched = bar.low <= trigger
         new_stop = _pct_level(lot.entry_price, lock_pct, above=False)
     if not touched:
-        return
+        return False
     lot.stop = new_stop
     lot.lock_armed = True
+    return True
+
+
+def _pyramid_add_trigger_pct(lot: OpenLot) -> Optional[float]:
+    """Percent from original fill that arms the intra-lot add.
+
+    Explicit ``pyramid_add_pct`` (e.g. 0.5) wins. ``pyramid_on_lock`` falls
+    back to the lock trigger so the add and lock share a print.
+    """
+    if lot.pyramid_add_pct is not None:
+        return lot.pyramid_add_pct
+    if lot.pyramid_on_lock:
+        return lot.lock_trigger_pct
+    return None
+
+
+def _pyramid_add_touched(lot: OpenLot, bar: Bar) -> bool:
+    pct = _pyramid_add_trigger_pct(lot)
+    if pct is None or lot.entry_price <= 0:
+        return False
+    if lot.side == "buy":
+        return bar.high >= _pct_level(lot.entry_price, pct, above=True)
+    return bar.low <= _pct_level(lot.entry_price, pct, above=False)
+
+
+def _pyramid_add_price(lot: OpenLot, bar: Bar) -> Optional[float]:
+    """Fill the add at the same gap-through convention as stops.
+
+    Trigger = original fill × (1 ± add_pct/100). If the bar opens through
+    the trigger, the add fills at the open; otherwise at the trigger
+    (the high/low tagged it).
+    """
+    trigger_pct = _pyramid_add_trigger_pct(lot)
+    if trigger_pct is None or lot.entry_price <= 0:
+        return None
+    if lot.side == "buy":
+        trigger = _pct_level(lot.entry_price, trigger_pct, above=True)
+        return bar.open if bar.open >= trigger else trigger
+    trigger = _pct_level(lot.entry_price, trigger_pct, above=False)
+    return bar.open if bar.open <= trigger else trigger
+
+
+def _try_pyramid_add(
+    lot: OpenLot,
+    bar: Bar,
+    cash: float,
+    commission: float,
+    slippage_pct: float,
+) -> tuple[float, bool]:
+    """Add ``base_qty`` at the add-trigger print. Returns (cash, skipped_for_cash).
+
+    Does not pre-reserve cash at entry. A cash skip is attempted once; lock
+    can still arm later. Not a second EMA signal.
+    """
+    if lot.pyramid_added or lot.pyramid_add_skipped:
+        return cash, False
+    if _pyramid_add_trigger_pct(lot) is None:
+        return cash, False
+    if not _pyramid_add_touched(lot, bar):
+        return cash, False
+    add_qty = lot.base_qty if lot.base_qty >= 1 else lot.qty
+    if add_qty < 1:
+        return cash, False
+    raw_px = _pyramid_add_price(lot, bar)
+    if raw_px is None:
+        return cash, False
+    add_px = _apply_slippage(raw_px, lot.side, slippage_pct, is_entry=True)
+    if lot.side == "buy":
+        cost = buy_notional(add_qty, add_px, commission)
+        if cost > cash + 1e-9:
+            lot.pyramid_add_skipped = True
+            return cash, True
+        cash -= cost
+        lot.cost_basis += add_qty * add_px
+    else:
+        cash += add_qty * add_px - commission
+        lot.cost_basis += add_qty * add_px
+    lot.qty += add_qty
+    lot.pyramid_added = True
+    return cash, False
 
 
 def _maybe_ratchet_trail(lot: OpenLot, bar: Bar) -> None:
@@ -390,9 +572,96 @@ def _maybe_ratchet_trail(lot: OpenLot, bar: Bar) -> None:
     lot.peak_price = peak
 
 
-def _maybe_manage_stop(lot: OpenLot, bar: Bar) -> None:
-    _maybe_arm_lock(lot, bar)
+def _maybe_manage_stop(lot: OpenLot, bar: Bar) -> bool:
+    just_armed = _maybe_arm_lock(lot, bar)
     _maybe_ratchet_trail(lot, bar)
+    return just_armed
+
+
+def _partial_take_qty(qty: float) -> float:
+    """Shares to scale out: floor(half), leaving ≥1 when size ≥ 2. Size 1 → 0."""
+    if qty < 2:
+        return 0.0
+    return float(math.floor(qty / 2.0))
+
+
+def _lock_trigger_fill_price(lot: OpenLot, bar: Bar) -> Optional[float]:
+    """Gap-through fill at the lock trigger (same convention as stops/adds)."""
+    trigger_pct = lot.lock_trigger_pct
+    if trigger_pct is None or lot.entry_price <= 0:
+        return None
+    if lot.side == "buy":
+        trigger = _pct_level(lot.entry_price, trigger_pct, above=True)
+        return bar.open if bar.open >= trigger else trigger
+    trigger = _pct_level(lot.entry_price, trigger_pct, above=False)
+    return bar.open if bar.open <= trigger else trigger
+
+
+def _try_partial_take_on_lock(
+    lot: OpenLot,
+    bar: Bar,
+    cash: float,
+    commission: float,
+    slippage_pct: float,
+) -> float:
+    """Sell half at the lock-arm print; lock already rests on the remainder.
+
+    Size 1 skips the scale-out and keeps the single share (still locked).
+    Locked stop is live next bar — do not re-check stop after this.
+    """
+    if not (lot.partial_take_on_lock or lot.partial_take_be) or lot.partial_take or not lot.lock_armed:
+        return cash
+    take_qty = _partial_take_qty(lot.qty)
+    if take_qty < 1:
+        lot.partial_take_skipped_size = True
+        return cash
+    raw_px = _lock_trigger_fill_price(lot, bar)
+    if raw_px is None:
+        return cash
+    take_px = _apply_slippage(raw_px, lot.side, slippage_pct, is_entry=False)
+    if lot.side == "buy":
+        cash += take_qty * take_px - commission
+        pnl = take_qty * (take_px - lot.entry_price) - commission
+    else:
+        cash -= take_qty * take_px + commission
+        pnl = take_qty * (lot.entry_price - take_px) - commission
+    if lot.cost_basis:
+        frac = take_qty / lot.qty if lot.qty else 0.0
+        lot.cost_basis -= lot.cost_basis * frac
+    lot.qty -= take_qty
+    lot.partial_take = True
+    lot.partial_take_qty = take_qty
+    lot.partial_take_price = take_px
+    lot.partial_take_pnl = pnl
+    return cash
+
+
+def _lock_arm_pyramid_then_take(
+    lot: OpenLot,
+    bar: Bar,
+    cash: float,
+    commission: float,
+    slippage_pct: float,
+) -> tuple[float, bool, Optional[tuple[str, float]]]:
+    """After stop/take miss: add if the add print tagged, then lock, then take.
+
+    Add-before-lock so a bar that gaps through +0.5% and +1% (no earlier
+    +0.5% bar) still doubles first, then arms the lock on the full lot.
+    Locked stop is live next bar; take is checked only on the arm bar.
+    partial_take_on_lock scales out half at the lock print after the lock arms.
+    partial_take_be then rests the remainder stop at original fill (BE),
+    live next bar — not lock at +1%.
+    """
+    cash, skipped = _try_pyramid_add(lot, bar, cash, commission, slippage_pct)
+    just_armed = _maybe_manage_stop(lot, bar)
+    if just_armed:
+        cash = _try_partial_take_on_lock(lot, bar, cash, commission, slippage_pct)
+        if lot.partial_take_be:
+            lot.stop = lot.entry_price
+            lot.breakeven_armed = True
+            lot.lock_armed = False
+    take_hit = _take_only_hit(bar, lot) if just_armed else None
+    return cash, skipped, take_hit
 
 
 def _stop_exit_reason(lot: OpenLot) -> str:
@@ -563,12 +832,26 @@ def _close_lot(
     if lot.side == "buy":
         proceeds = lot.qty * fill
         cash += proceeds - commission
-        pnl = lot.qty * (fill - lot.entry_price) - commission
+        if lot.pyramid_added:
+            basis = lot.cost_basis if lot.cost_basis else lot.qty * lot.entry_price
+            remainder_pnl = proceeds - basis - commission
+        else:
+            remainder_pnl = lot.qty * (fill - lot.entry_price) - commission
     else:
         cost = lot.qty * fill
         cash -= cost + commission
-        pnl = lot.qty * (lot.entry_price - fill) - commission
-    notional = lot.qty * lot.entry_price
+        if lot.pyramid_added:
+            basis = lot.cost_basis if lot.cost_basis else lot.qty * lot.entry_price
+            remainder_pnl = basis - cost - commission
+        else:
+            remainder_pnl = lot.qty * (lot.entry_price - fill) - commission
+    pnl = remainder_pnl + lot.partial_take_pnl
+    orig_qty = (lot.qty + lot.partial_take_qty) if lot.partial_take else lot.qty
+    notional = orig_qty * lot.entry_price
+    if lot.pyramid_added and lot.cost_basis:
+        notional = lot.cost_basis + (
+            lot.partial_take_qty * lot.entry_price if lot.partial_take else 0.0
+        )
     pnl_pct = (pnl / notional * 100.0) if notional else 0.0
     trade = Trade(
         rule_id=lot.rule_id,
@@ -587,6 +870,13 @@ def _close_lot(
         breakeven_armed=lot.breakeven_armed,
         lock_armed=lot.lock_armed,
         trail_ratcheted=lot.trail_ratcheted,
+        pyramid_added=lot.pyramid_added,
+        pyramid_add_skipped=lot.pyramid_add_skipped,
+        partial_take=lot.partial_take,
+        partial_take_qty=lot.partial_take_qty,
+        partial_take_price=lot.partial_take_price,
+        partial_take_pnl=lot.partial_take_pnl,
+        partial_take_skipped_size=lot.partial_take_skipped_size,
     )
     return trade, cash
 
@@ -667,6 +957,11 @@ def summarize(
         sides=_side_stats(trades, starting_equity),
         breakeven_armed=sum(1 for t in trades if t.breakeven_armed),
         lock_armed=sum(1 for t in trades if t.lock_armed),
+        pyramid_added=sum(1 for t in trades if t.pyramid_added),
+        pyramid_add_skipped=sum(1 for t in trades if t.pyramid_add_skipped),
+        partial_take=sum(1 for t in trades if t.partial_take),
+        partial_take_pnl=sum(t.partial_take_pnl for t in trades if t.partial_take),
+        partial_take_skipped_size=sum(1 for t in trades if t.partial_take_skipped_size),
         trail_ratcheted=sum(1 for t in trades if t.trail_ratcheted),
     )
 
@@ -719,6 +1014,7 @@ def run_backtest(
     equity_curve: list[tuple[datetime, float]] = []
     last_price: dict[str, float] = {}
     cash_skips = 0
+    pyramid_add_skips = 0
     sma20_fill_skips = 0
     max_concurrent = 0
     both_open_ticks = 0
@@ -827,6 +1123,9 @@ def run_backtest(
             fill_stop = order.stop
             if order.stop_mode in ENTRY_STOP_MODES:
                 fill_stop = _entry_anchored_stop(order.side, fill_px, order.stop_loss_pct)
+            fill_take = order.take
+            if order.take_anchor == "entry":
+                fill_take = _entry_anchored_take(order.side, fill_px, order.take_profit_pct)
             if order.side == "buy":
                 cost = buy_notional(order.qty, fill_px, commission)
                 if cost > cash + 1e-9:
@@ -844,7 +1143,7 @@ def run_backtest(
                     entry_time=_aware(fill_bar.timestamp),
                     entry_price=fill_px,
                     stop=fill_stop,
-                    take=order.take,
+                    take=fill_take,
                     signal_time=order.signal_time,
                     tf=order.tf,
                     exit_mode=order.exit_mode,
@@ -860,6 +1159,14 @@ def run_backtest(
                     lock_stop_pct=order.lock_stop_pct,
                     trail_pct=order.trail_pct,
                     peak_price=fill_px,
+                    pyramid_on_lock=order.pyramid_on_lock,
+                    pyramid_add_pct=order.pyramid_add_pct,
+                    partial_take_on_lock=order.partial_take_on_lock,
+                    partial_take_be=order.partial_take_be,
+                    base_qty=order.qty,
+                    cost_basis=order.qty * fill_px,
+                    take_anchor=order.take_anchor,
+                    take_profit_pct=order.take_profit_pct,
                 )
             )
             note_open_book()
@@ -868,6 +1175,11 @@ def run_backtest(
         # 2) Stop / take on the bar that just completed (after any fill at its open).
         #    ema_invalid then exits at this bar's close when the close is on the
         #    wrong side of EMA (long: close < EMA). Same-bar stop + invalid → stop.
+        #    lower_high exits at this bar's close when the completed bar's high is
+        #    strictly below the previous bar's high (long). Same fill as ema_invalid.
+        #    ma_cross_close uses the same EMA-vs-SMA close-to-close pair-cross as
+        #    ma_cross (long: prev EMA >= prev SMA and curr EMA < curr SMA) but
+        #    fills at this bar's close. Same-bar stop + cross → stop.
         #    ma_cross schedules flatten at the *next* bar open (same fill as entries).
         for symbol, tf, bar in closing:
             last_price[symbol] = bar.close
@@ -882,6 +1194,14 @@ def run_backtest(
                     ema_val = ema_through(series, bar, lot.exit_ema_period)
                     if ema_cross_exit(side=lot.side, close=bar.close, ema_value=ema_val):
                         hit = ("ema_invalid", bar.close)
+                if hit is None and lot.exit_mode == "lower_high":
+                    prev = _prev_bar(series, bar.timestamp)
+                    if prev is not None and lower_high_exit(lot.side, bar, prev):
+                        hit = ("lower_high", bar.close)
+                if hit is None and lot.exit_mode == "ma_cross_close" and _ma_pair_cross_exit(
+                    lot, bar, series
+                ):
+                    hit = ("ma_cross", bar.close)
                 if hit is None and lot.exit_mode == "ma_cross" and _ma_pair_cross_exit(lot, bar, series):
                     nxt = _next_bar(series, bar.timestamp)
                     already = any(
@@ -890,6 +1210,25 @@ def run_backtest(
                         and order.tf == lot.tf
                         for order in pending
                     )
+                    _maybe_arm_breakeven(lot, bar, series)
+                    cash, skipped, take_hit = _lock_arm_pyramid_then_take(
+                        lot, bar, cash, commission, slippage_pct
+                    )
+                    if skipped:
+                        pyramid_add_skips += 1
+                    if take_hit is not None:
+                        _reason, px = take_hit
+                        trade, cash = _close_lot(
+                            lot,
+                            when=now,
+                            price=px,
+                            reason=_take_exit_reason(lot),
+                            cash=cash,
+                            commission=commission,
+                            slippage_pct=slippage_pct,
+                        )
+                        trades.append(trade)
+                        continue
                     if nxt is not None and not already:
                         pending.append(
                             PendingOrder(
@@ -910,18 +1249,35 @@ def run_backtest(
                                 close_reason="ma_cross",
                             )
                         )
-                    _maybe_arm_breakeven(lot, bar, series)
-                    _maybe_manage_stop(lot, bar)
                     survivors.append(lot)
                     continue
                 if hit is None:
                     _maybe_arm_breakeven(lot, bar, series)
-                    _maybe_manage_stop(lot, bar)
+                    cash, skipped, take_hit = _lock_arm_pyramid_then_take(
+                        lot, bar, cash, commission, slippage_pct
+                    )
+                    if skipped:
+                        pyramid_add_skips += 1
+                    if take_hit is not None:
+                        _reason, px = take_hit
+                        trade, cash = _close_lot(
+                            lot,
+                            when=now,
+                            price=px,
+                            reason=_take_exit_reason(lot),
+                            cash=cash,
+                            commission=commission,
+                            slippage_pct=slippage_pct,
+                        )
+                        trades.append(trade)
+                        continue
                     survivors.append(lot)
                     continue
                 reason, px = hit
                 if reason == "stop":
                     reason = _stop_exit_reason(lot)
+                elif reason == "take":
+                    reason = _take_exit_reason(lot)
                 trade, cash = _close_lot(
                     lot,
                     when=now,
@@ -936,7 +1292,9 @@ def run_backtest(
 
         # 2b) Session flatten at the close of the bar that contains flatten_by.
         #     15m + 15:55 → 15:45 ET bar close. 5m + 15:55 → 15:50 ET bar close.
-        #     Stop/take/ema_invalid on this bar already ran; they win if they hit.
+        #     Stop/take/ema_invalid/lower_high/ma_cross_close on this bar already
+        #     ran; they win if they hit. Next-open ma_cross is still pending, so
+        #     flatten at this close wins over that scheduled next-open fill.
         if flatten_by:
             for symbol, tf, bar in closing:
                 if not is_flatten_bar(bar.timestamp, tf, flatten_by, session_tz):
@@ -1215,6 +1573,32 @@ def run_backtest(
         extra_notes.append(
             f"Downloaded tape span {_iso(tape_start)} → {_iso(tape_end)}."
         )
+    ma_close_rules = [
+        r
+        for r in config.rules
+        if r.enabled and r.action.type != "close" and r.action.exit == "ma_cross_close"
+    ]
+    if ma_close_rules:
+        sample = ma_close_rules[0].action
+        extra_notes.append(
+            f"MA-cross-at-close exit (action.exit: ma_cross_close): after entry, on each "
+            f"completed signal-timeframe bar, leave when EMA({sample.exit_ema_period}) "
+            f"crosses SMA({sample.exit_sma_period}) against the position and fill at "
+            "that bar's close (same convention as ema_invalid / lower_high). "
+            "Cross is EMA vs SMA close-to-close, not price vs MA. "
+            "Long: prev EMA >= prev SMA and curr EMA < curr SMA (cross-under). "
+            "Short: prev EMA <= prev SMA and curr EMA > curr SMA (cross-over / cover). "
+            "Same-bar stop / lock_stop + cross → stop (stop is checked first). "
+            "A same-bar lock-arm touch + pair-cross (low stays above the live stop) "
+            "exits as ma_cross at that close and does not arm the lock. "
+            "If the cross bar is also the flatten bar, ma_cross at that close wins "
+            "over session_flatten."
+        )
+        ma_close_exits = sum(1 for t in trades if t.exit_reason == "ma_cross")
+        extra_notes.append(
+            f"{ma_close_exits} trade(s) exited as ma_cross "
+            "(EMA/SMA pair-cross against the position, fill at that bar's close)."
+        )
     ma_rules = [
         r
         for r in config.rules
@@ -1234,6 +1618,25 @@ def run_backtest(
         extra_notes.append(
             f"{ma_exits} trade(s) exited as ma_cross "
             "(EMA/SMA pair-cross against the position)."
+        )
+    lh_rules = [
+        r
+        for r in config.rules
+        if r.enabled and r.action.type != "close" and r.action.exit == "lower_high"
+    ]
+    if lh_rules:
+        extra_notes.append(
+            "Lower-high exit (action.exit: lower_high): after entry, on each completed "
+            "signal-timeframe bar, leave the long when that bar's high is strictly below "
+            "the previous bar's high and exit at that bar's close (same fill convention "
+            "as ema_invalid). Equal highs stay valid. Shorts use the symmetric higher low "
+            "(current low > previous low). Same-bar stop + lower-high → stop. "
+            "If the lower-high bar is also the flatten bar, lower_high at that close wins."
+        )
+        lh_exits = sum(1 for t in trades if t.exit_reason == "lower_high")
+        extra_notes.append(
+            f"{lh_exits} trade(s) exited as lower_high "
+            "(completed bar high < previous bar high)."
         )
     pnl_note = _exit_pnl_note(trades)
     if pnl_note:
@@ -1328,6 +1731,113 @@ def run_backtest(
                 f"{sum(1 for t in trades if t.lock_armed)} trade(s) armed the +lock; "
                 f"{sum(1 for t in trades if t.exit_reason == 'lock_stop')} exited as lock_stop."
             )
+            if sample.pyramid_add_pct is not None:
+                add_pct = sample.pyramid_add_pct
+                extra_notes.append(
+                    f"Pyramid add (pyramid_add_pct: {add_pct:g}): when price first reaches "
+                    f"original fill × (1+{add_pct:g}/100) (long: bar high ≥ that print), "
+                    "add the same share count as the open lot (double total shares). "
+                    "Add fill: if the bar opens through that trigger the add fills at the "
+                    "open (gapped buy-stop); otherwise at the trigger (high tagged it). "
+                    f"The +{(trig or 0):g}% lock still arms separately on first touch of "
+                    f"original fill × (1+{(trig or 0):g}/100) and rests the stop there on "
+                    "the full position. If a bar gaps through both prints with no earlier "
+                    "+add bar, the engine adds first, then locks; the locked stop is live "
+                    "from the next bar. No hard take-profit when take_profit_pct is omitted. "
+                    "Cash for the add is not reserved at entry; a cash skip is attempted "
+                    "once and the lock can still arm. Session flatten still applies. "
+                    "This add is intra-lot, not a second EMA signal. Live does not auto-add."
+                )
+                extra_notes.append(
+                    f"{sum(1 for t in trades if t.pyramid_added)} trade(s) added at "
+                    f"+{add_pct:g}%; "
+                    f"{sum(1 for t in trades if t.pyramid_add_skipped)} skipped the add "
+                    f"(insufficient cash); "
+                    f"{sum(1 for t in trades if t.pyramid_added and t.lock_armed)} "
+                    f"added then armed the +lock; "
+                    f"{sum(1 for t in trades if t.lock_armed and not t.pyramid_added)} "
+                    f"locked without an add."
+                )
+            elif sample.pyramid_on_lock:
+                take_pct = sample.take_profit_pct
+                extra_notes.append(
+                    f"Pyramid-on-lock (pyramid_on_lock): when the +{(trig or 0):g}% lock arms, "
+                    "add the same share count as the open lot (double total shares). "
+                    "Add fill: if the bar opens through original fill × "
+                    f"(1+{(trig or 0):g}/100) the add fills at that open (gapped buy-stop); "
+                    "otherwise at the trigger (high tagged it). After the add, the stop stays "
+                    f"at original fill × (1+{(sample.resolved_lock_stop_pct() or 0):g}/100) on "
+                    "the full position. Take is fill-anchored "
+                    f"(take_anchor: entry, {take_pct:g}% → original fill × "
+                    f"(1+{(take_pct or 0):g}/100)); a hit is take_2pct when that percent is 2. "
+                    "The locked stop is still live from the next bar — the arm bar checks "
+                    "take only after the add (same-bar pullback does not lock_stop the add). "
+                    "If stop and take both trade on a later bar, stop wins. "
+                    "Cash for the add is not reserved at entry; if cash cannot cover the add, "
+                    "the lock still arms and the add is skipped. Session flatten still applies. "
+                    "This add is intra-lot, not a second EMA signal (allow_pyramid stays off). "
+                    "Live runner does not auto-add on lock."
+                )
+                extra_notes.append(
+                    f"{sum(1 for t in trades if t.pyramid_added)} trade(s) added at the lock; "
+                    f"{sum(1 for t in trades if t.pyramid_add_skipped)} armed the lock but "
+                    f"skipped the add (insufficient cash). "
+                    f"{sum(1 for t in trades if t.exit_reason == 'take_2pct')} exited as take_2pct; "
+                    f"{sum(1 for t in trades if t.exit_reason == 'take')} exited as take."
+                )
+            elif sample.take_anchor == "entry" and sample.take_profit_pct:
+                extra_notes.append(
+                    f"Take is fill-anchored (take_anchor: entry): "
+                    f"take_profit_pct {sample.take_profit_pct:g}% from the fill, not the "
+                    "signal-bar close."
+                )
+            if sample.partial_take_be:
+                extra_notes.append(
+                    f"Partial take then BE (partial_take_be): when price first reaches "
+                    f"original fill × (1+{(trig or 0):g}/100), sell floor(half) of the "
+                    "open shares at the lock-trigger print (gap-through: fill at open "
+                    "if the bar opens through that trigger, else at the trigger) and "
+                    "rest the remainder stop at original fill × 1.00 (break-even), "
+                    "not at fill × "
+                    f"(1+{(sample.resolved_lock_stop_pct() or 0):g}/100). Odd lots "
+                    "round the take down so at least 1 share remains when size ≥ 2. "
+                    "Size 1 skips the partial and still arms BE. The BE stop is live "
+                    "from the next bar; same-bar pullback after the tag still uses "
+                    "the initial 1% stop. Remainder exits as breakeven_stop / "
+                    "session_flatten / stop (if never +1%). No hard full take. No "
+                    "pyramid. Live does not auto scale-out."
+                )
+                extra_notes.append(
+                    f"{sum(1 for t in trades if t.partial_take)} trade(s) scaled out half "
+                    f"at +{(trig or 0):g}% "
+                    f"(${sum(t.partial_take_pnl for t in trades if t.partial_take):,.2f}); "
+                    f"{sum(1 for t in trades if t.partial_take_skipped_size)} skipped "
+                    "the partial (size < 2); "
+                    f"{sum(1 for t in trades if t.breakeven_armed)} armed BE on the "
+                    f"remainder; "
+                    f"{sum(1 for t in trades if t.exit_reason == 'breakeven_stop')} "
+                    "exited as breakeven_stop."
+                )
+            elif sample.partial_take_on_lock:
+                extra_notes.append(
+                    f"Partial take on lock (partial_take_on_lock): when the "
+                    f"+{(trig or 0):g}% lock arms, sell floor(half) of the open shares "
+                    "at the lock-trigger print (gap-through: fill at open if the bar "
+                    "opens through original fill × "
+                    f"(1+{(trig or 0):g}/100), else at the trigger) and lock the "
+                    "remainder at that same print. Odd lots round the take down so at "
+                    "least 1 share remains when size ≥ 2. Size 1 skips the partial and "
+                    "still locks. No hard full take. No pyramid add. The locked stop is "
+                    "live from the next bar. Remainder exits as lock_stop / "
+                    "session_flatten / stop. Live does not auto scale-out."
+                )
+                extra_notes.append(
+                    f"{sum(1 for t in trades if t.partial_take)} trade(s) scaled out half "
+                    f"at +{(trig or 0):g}% "
+                    f"(${sum(t.partial_take_pnl for t in trades if t.partial_take):,.2f}); "
+                    f"{sum(1 for t in trades if t.partial_take_skipped_size)} skipped "
+                    "the partial (size < 2)."
+                )
         if sample.stop_mode == "trail":
             trail = sample.resolved_trail_pct()
             extra_notes.append(
@@ -1346,6 +1856,11 @@ def run_backtest(
     if cash_skips:
         extra_notes.append(
             f"{cash_skips} accepted signal(s) skipped at fill for insufficient cash."
+        )
+    if pyramid_add_skips:
+        extra_notes.append(
+            f"{pyramid_add_skips} pyramid add(s) skipped for insufficient cash "
+            "(lock can still arm; cash is not reserved for the add at entry)."
         )
     cash_signal_skips = sum(1 for s in signals if s.skip_reason == "insufficient_cash")
     if cash_signal_skips:
@@ -1427,6 +1942,16 @@ def format_report_md(payload: dict[str, Any]) -> str:
                 f"- Lock armed: {r.get('lock_armed', 0)}"
                 if r.get("lock_armed") or (r.get("exit_reasons") or {}).get("lock_stop")
                 else "",
+                f"- Pyramid added: {r.get('pyramid_added', 0)}"
+                if r.get("pyramid_added") or r.get("pyramid_add_skipped")
+                else "",
+                f"- Pyramid add skipped (cash): {r.get('pyramid_add_skipped', 0)}"
+                if r.get("pyramid_add_skipped")
+                else "",
+                f"- Partial take (half at +lock): {r.get('partial_take', 0)} "
+                f"(${float(r.get('partial_take_pnl') or 0):,.2f})"
+                if r.get("partial_take") or r.get("partial_take_pnl")
+                else "",
                 f"- Trail ratcheted: {r.get('trail_ratcheted', 0)}"
                 if r.get("trail_ratcheted") or (r.get("exit_reasons") or {}).get("trail_stop")
                 else "",
@@ -1441,10 +1966,15 @@ def format_report_md(payload: dict[str, Any]) -> str:
             or n.startswith("Session gates")
             or n.startswith("Break-even")
             or n.startswith("MA-cross exit")
+            or n.startswith("Lower-high exit")
             or n.startswith("SMA20 stop")
             or n.startswith("Entry-anchored stop")
             or n.startswith("Fixed entry stop")
             or n.startswith("Lock-plus")
+            or n.startswith("Pyramid-on-lock")
+            or n.startswith("Pyramid add")
+            or n.startswith("Partial take")
+            or n.startswith("Take is fill-anchored")
             or n.startswith("Trailing stop")
             or n.startswith("Exit P&L")
             or n.startswith("RSI filter")
@@ -1454,10 +1984,16 @@ def format_report_md(payload: dict[str, Any]) -> str:
             or "SMA20" in n
             or "session_flatten" in n
             or "armed break-even" in n
+            or "armed BE" in n
+            or "breakeven_stop" in n
             or "exited as ma_cross" in n
+            or "exited as lower_high" in n
             or "lock_stop" in n
             or "trail_stop" in n
             or "armed the +lock" in n
+            or "added at the lock" in n
+            or "scaled out half" in n
+            or "lock-arm add" in n
             or "ratcheted the trail" in n
             or "opposite_signal_in_trade" in n
             or n.startswith("One lot per symbol")

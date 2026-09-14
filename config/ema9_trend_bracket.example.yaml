@@ -1,14 +1,17 @@
 # Refined EMA9 day-trade — 10-share book (same as ema9_trend.example.yaml).
 #
 # Default product: price crosses EMA(9) while close > SMA(20) and RSI14 < 70,
-# lock-+1% stop from the fill, no take-profit, session gates on.
+# EMA9×below SMA20 exit at that bar's close, no lock / no percent stop,
+# session gates on. Writeup: artifacts/ema9_macross_adopted.md
+#
+# Prior lock-+1% comparison: config/ema9_trend_bracket_nobe_lock1.example.yaml
 # Optional stop siblings: fixed 1% / trail 1% (nobe_fixed1 / nobe_trail1).
 # Prior pair-cross 10-share: config/ema9_trend_pair.example.yaml
 #
 # AAPL / MSFT / META 10-share add-on: config/ema9_trend_aapl_msft_meta.example.yaml
 #
-#   python -m dta_bot backtest --config config/ema9_trend_bracket.example.yaml \
-#     --compare-config config/ema9_trend_bracket_nobe_fixed1.example.yaml \
+#   python -m dta_bot backtest --config config/ema9_trend_bracket_nobe_fixed1.example.yaml \
+#     --compare-config config/ema9_trend_bracket_nobe_lock1.example.yaml \
 #     --compare-config config/ema9_trend_bracket_nobe_trail1.example.yaml \
 #     --source yahoo --combined-only --symbols AAPL,MSFT \
 #     --output artifacts/ema9_stop_manage.json \
@@ -38,7 +41,7 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "Noon book: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 10 shares, lock stop to +1% on first touch of entry×1.01, no take."
+    notes: "Noon book: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 10 shares, EMA9×below SMA20 exit at that bar's close, no percent stop."
     when:
       all:
         - ema_cross:
@@ -59,8 +62,6 @@ rules:
         type: shares
         value: 10
       order: market
-      exit: fixed_bracket
-      stop_mode: lock_plus
-      stop_loss_pct: 1.0
-      lock_trigger_pct: 1.0
-      lock_stop_pct: 1.0
+      exit: ma_cross_close
+      exit_ema_period: 9
+      exit_sma_period: 20

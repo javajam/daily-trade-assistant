@@ -45,7 +45,7 @@ class SizeSpec(BaseModel):
         return self
 
 
-EXIT_MODES = ("fixed_bracket", "ema_invalid", "ma_cross")
+EXIT_MODES = ("fixed_bracket", "ema_invalid", "ma_cross", "ma_cross_close", "lower_high")
 EXIT_ALIASES = {
     "ema_invalid": "ema_invalid",
     "ema_invalidation": "ema_invalid",
@@ -60,10 +60,28 @@ EXIT_ALIASES = {
     "ma_pair_cross": "ma_cross",
     "cross_under": "ma_cross",
     "ma_cross_under": "ma_cross",
+    "ma_cross_close": "ma_cross_close",
+    "ma_cross_at_close": "ma_cross_close",
+    "ema_sma_cross_close": "ma_cross_close",
+    "cross_under_close": "ma_cross_close",
+    "ema_cross_close": "ma_cross_close",
+    "lower_high": "lower_high",
+    "lowerhigh": "lower_high",
+    "lh": "lower_high",
+    "lower_high_exit": "lower_high",
 }
 
 
 BREAKEVEN_VALID_MODES = ("above_ema", "always")
+TAKE_ANCHORS = ("signal", "entry")
+TAKE_ANCHOR_ALIASES = {
+    "signal": "signal",
+    "signal_close": "signal",
+    "close": "signal",
+    "entry": "entry",
+    "fill": "entry",
+    "entry_fill": "entry",
+}
 STOP_MODES = ("percent", "sma20", "entry_pct", "lock_plus", "trail")
 # entry_pct / lock_plus / trail rebase the protective stop to the fill
 # (next-bar open). percent stays on the signal-bar close (legacy).
@@ -117,6 +135,34 @@ class ActionSpec(BaseModel):
     lock_stop_pct: Optional[float] = Field(default=None, gt=0)
     # trail: distance in percent from the peak (omit to use stop_loss_pct).
     trail_pct: Optional[float] = Field(default=None, gt=0)
+    # When true (lock_plus only): on the lock-arm bar, add the same share
+    # count as the open lot. Stop stays at original fill × (1+lock_stop/100)
+    # on the full (doubled) position. Take is fill-anchored. Cash for the
+    # add is not reserved at entry — if cash cannot cover it, lock still
+    # arms and the add is skipped. Backtest-only (live does not auto-add).
+    pyramid_on_lock: bool = False
+    # lock_plus only: add the same share count on first trade/touch of
+    # original fill × (1 + pyramid_add_pct/100), which may be *before* the
+    # +lock (e.g. 0.5 then lock at 1.0). No take required. Cash is not
+    # reserved. If a bar gaps through both prints, add first then lock;
+    # the locked stop is live next bar. Backtest-only.
+    pyramid_add_pct: Optional[float] = Field(default=None, gt=0)
+    # lock_plus only: on the lock-arm print, sell half the open shares
+    # (floor; leave ≥1 when size ≥ 2) at the lock-trigger fill convention
+    # and lock the remainder at original fill × (1+lock_stop/100). Size 1
+    # skips the partial and still locks. No pyramid. No hard full take.
+    # Backtest-only (live does not auto scale-out).
+    partial_take_on_lock: bool = False
+    # lock_plus only: same half-take as partial_take_on_lock, but the
+    # remainder stop rests at original fill × 1.00 (break-even), not at
+    # fill × (1+lock_stop/100). Size 1 skips the partial and still arms
+    # BE. BE stop is live next bar. Cannot combine with partial_take_on_lock
+    # or pyramid. Backtest-only.
+    partial_take_be: bool = False
+    # signal = take_profit_pct from the signal-bar close (legacy).
+    # entry = take_profit_pct from the fill (next-bar open). Forced to
+    # entry when pyramid_on_lock is true.
+    take_anchor: Literal["signal", "entry"] = "signal"
     # fixed_bracket = optional % stop/take. ema_invalid = hold until a
     # signal-timeframe close is on the wrong side of EMA (long: close < EMA).
     # Optional stop_loss_pct is then a catastrophic stop only; take is ignored.
@@ -124,7 +170,18 @@ class ActionSpec(BaseModel):
     # at the next bar open. Long: EMA under SMA. Short: EMA above SMA (cover).
     # Optional stop_loss_pct is a catastrophic stop only (off when omitted).
     # The default noon short omits it. Percent take-profit is ignored.
-    exit: Literal["fixed_bracket", "ema_invalid", "ma_cross"] = "fixed_bracket"
+    # ma_cross_close = same EMA-vs-SMA close-to-close pair-cross as ma_cross
+    # (long: prev EMA >= prev SMA and curr EMA < curr SMA) but fill at that
+    # completed bar's close — same convention as ema_invalid / lower_high.
+    # If that bar is also the flatten bar, the close-fill wins over
+    # session_flatten. Optional stop is catastrophic only (off when omitted).
+    # Percent take is ignored. Do not change ma_cross next-open fill.
+    # lower_high = hold until a completed signal-timeframe bar after entry
+    # prints a lower high (long: curr high < prev high) and exit at that
+    # close — same fill convention as ema_invalid. Shorts use the symmetric
+    # higher low (curr low > prev low). Optional stop_loss_pct is
+    # catastrophic only (off when omitted). Percent take is ignored.
+    exit: Literal["fixed_bracket", "ema_invalid", "ma_cross", "ma_cross_close", "lower_high"] = "fixed_bracket"
     exit_ema_period: int = Field(default=9, ge=2)
     exit_sma_period: int = Field(default=20, ge=2)
     # After this many complete signal-timeframe bars *after the entry bar*,
@@ -145,7 +202,10 @@ class ActionSpec(BaseModel):
             return "fixed_bracket"
         key = str(v).strip().lower().replace("-", "_").replace(" ", "_")
         if key not in EXIT_ALIASES:
-            raise ValueError("exit must be 'ema_invalid', 'ma_cross', or 'fixed_bracket'")
+            raise ValueError(
+                "exit must be 'ema_invalid', 'ma_cross', 'ma_cross_close', "
+                "'lower_high', or 'fixed_bracket'"
+            )
         return EXIT_ALIASES[key]
 
     @field_validator("breakeven_after_bars", mode="before")
@@ -177,11 +237,52 @@ class ActionSpec(BaseModel):
             )
         return STOP_MODE_ALIASES[key]
 
+    @field_validator("take_anchor", mode="before")
+    @classmethod
+    def _take_anchor(cls, v: Any) -> str:
+        if v is None or str(v).strip() == "":
+            return "signal"
+        key = str(v).strip().lower().replace("-", "_").replace(" ", "_")
+        if key not in TAKE_ANCHOR_ALIASES:
+            raise ValueError("take_anchor must be 'signal' or 'entry'")
+        return TAKE_ANCHOR_ALIASES[key]
+
     @model_validator(mode="after")
     def _size_required(self) -> "ActionSpec":
         if self.type in {"buy", "sell"} and self.size is None:
             raise ValueError("buy/sell actions require size (shares, percent_equity, or risk_pct)")
+        if self.pyramid_on_lock:
+            if self.stop_mode != "lock_plus":
+                raise ValueError("pyramid_on_lock requires stop_mode: lock_plus")
+            if self.take_profit_pct is None:
+                raise ValueError("pyramid_on_lock requires take_profit_pct")
+            self.take_anchor = "entry"
+        if self.pyramid_add_pct is not None:
+            if self.stop_mode != "lock_plus":
+                raise ValueError("pyramid_add_pct requires stop_mode: lock_plus")
+        if self.partial_take_on_lock:
+            if self.stop_mode != "lock_plus":
+                raise ValueError("partial_take_on_lock requires stop_mode: lock_plus")
+            if self.pyramid_on_lock or self.pyramid_add_pct is not None:
+                raise ValueError("partial_take_on_lock cannot combine with pyramid adds")
+        if self.partial_take_be:
+            if self.stop_mode != "lock_plus":
+                raise ValueError("partial_take_be requires stop_mode: lock_plus")
+            if self.pyramid_on_lock or self.pyramid_add_pct is not None:
+                raise ValueError("partial_take_be cannot combine with pyramid adds")
+            if self.partial_take_on_lock:
+                raise ValueError("partial_take_be cannot combine with partial_take_on_lock")
         return self
+
+    def has_pyramid_add(self) -> bool:
+        return self.pyramid_on_lock or self.pyramid_add_pct is not None
+
+    def resolved_pyramid_add_pct(self) -> Optional[float]:
+        if self.pyramid_add_pct is not None:
+            return self.pyramid_add_pct
+        if self.pyramid_on_lock:
+            return self.resolved_lock_trigger_pct()
+        return None
 
     def resolved_lock_trigger_pct(self) -> Optional[float]:
         if self.lock_trigger_pct is not None:
@@ -263,6 +364,19 @@ class VolumeCond(BaseModel):
         return normalize(v)
 
 
+class VolumePrevCond(BaseModel):
+    """Last (signal) bar volume vs the immediately previous bar."""
+
+    kind: Literal["volume_prev"] = "volume_prev"
+    timeframe: str
+    compare: Literal["above", "below"] = "above"
+
+    @field_validator("timeframe")
+    @classmethod
+    def _tf(cls, v: str) -> str:
+        return normalize(v)
+
+
 class MaCrossCond(BaseModel):
     """Close crossing an SMA/EMA: prev close vs prev MA, curr close vs curr MA."""
 
@@ -293,7 +407,9 @@ class MaPairCrossCond(BaseModel):
         return normalize(v)
 
 
-LeafCondition = Union[PatternCond, MaCond, RsiCond, VolumeCond, MaCrossCond, MaPairCrossCond]
+LeafCondition = Union[
+    PatternCond, MaCond, RsiCond, VolumeCond, VolumePrevCond, MaCrossCond, MaPairCrossCond
+]
 
 
 class GroupCond(BaseModel):
@@ -479,6 +595,58 @@ def _normalize_cross_direction(raw: Any, default: str = "bullish") -> str:
 
 _PAIR_CROSS_KEYS = ("ema_sma_cross", "ma_pair_cross", "ema_cross_sma")
 _RSI_LEAF_KEYS = ("rsi", "rsi_below", "rsi_above")
+_VOLUME_PREV_KEYS = ("volume_gt_prev", "volume_vs_prev", "volume_above_prev")
+_VOLUME_PREV_VS = frozenset({"prev", "previous", "prior", "last"})
+
+
+def _volume_prev_compare(raw: dict[str, Any], default: str = "above") -> str:
+    compare = str(raw.get("compare") or default).strip().lower()
+    if compare in {"above", "gt", "greater", "over"}:
+        return "above"
+    if compare in {"below", "lt", "less", "under"}:
+        return "below"
+    return default
+
+
+def _is_volume_prev(raw: dict[str, Any]) -> bool:
+    if any(key in raw for key in _VOLUME_PREV_KEYS):
+        return True
+    block = raw.get("volume") if isinstance(raw.get("volume"), dict) else {}
+    vs = str(block.get("vs") or raw.get("vs") or "").strip().lower()
+    return vs in _VOLUME_PREV_VS
+
+
+def _parse_volume_prev(raw: dict[str, Any], default_timeframe: Optional[str] = None) -> VolumePrevCond:
+    block: dict[str, Any] = {}
+    for key in _VOLUME_PREV_KEYS:
+        val = raw.get(key)
+        if isinstance(val, dict):
+            block = val
+            break
+    volume_block = raw.get("volume") if isinstance(raw.get("volume"), dict) else {}
+    merged = {**volume_block, **block, **{k: v for k, v in raw.items() if k not in {"volume", *_VOLUME_PREV_KEYS}}}
+    return VolumePrevCond(
+        timeframe=_condition_timeframe(merged, raw, default=default_timeframe),
+        compare=_volume_prev_compare(merged),
+    )
+
+
+def find_volume_prev_condition(cond: AnyCondition) -> Optional[VolumePrevCond]:
+    """First previous-bar volume leaf in a condition tree, if any."""
+    if isinstance(cond, VolumePrevCond):
+        return cond
+    if isinstance(cond, GroupCond):
+        for child in cond.conditions:
+            found = find_volume_prev_condition(child)
+            if found is not None:
+                return found
+    return None
+
+
+def has_volume_gt_prev(cond: AnyCondition) -> bool:
+    """True when the tree requires signal-bar volume > previous-bar volume."""
+    found = find_volume_prev_condition(cond)
+    return found is not None and found.compare == "above"
 
 
 def find_rsi_condition(cond: AnyCondition) -> Optional[RsiCond]:
@@ -689,6 +857,8 @@ def _parse_leaf(raw: dict[str, Any], default_timeframe: Optional[str] = None) ->
             below=below,
             above=above,
         )
+    if _is_volume_prev(raw):
+        return _parse_volume_prev(raw, default_timeframe=default_timeframe)
     if "volume" in raw or "volume_above_avg" in raw:
         block = raw.get("volume") if isinstance(raw.get("volume"), dict) else {}
         merged = {**block, **{k: v for k, v in raw.items() if k != "volume"}}
@@ -765,6 +935,11 @@ def _parse_action(raw: dict[str, Any]) -> ActionSpec:
         lock_trigger_pct=raw.get("lock_trigger_pct"),
         lock_stop_pct=raw.get("lock_stop_pct"),
         trail_pct=raw.get("trail_pct"),
+        pyramid_on_lock=raw.get("pyramid_on_lock", False),
+        pyramid_add_pct=raw.get("pyramid_add_pct"),
+        partial_take_on_lock=raw.get("partial_take_on_lock", False),
+        partial_take_be=raw.get("partial_take_be", False),
+        take_anchor=raw.get("take_anchor", "signal"),
         exit=raw.get("exit", "fixed_bracket"),
         exit_ema_period=raw.get("exit_ema_period", raw.get("ema_period", 9)),
         exit_sma_period=raw.get("exit_sma_period", raw.get("sma_period", 20)),

@@ -1,0 +1,71 @@
+# Same as the 10-share lock-+1% + MA-cross-at-close book, 1% equity-risk sizing.
+#
+# Live 1% fill stop is on (lock_plus). Share count uses a matching 1.0% R:
+#   shares = floor((0.01 * equity) / (0.01 * price)).
+# Exit is whichever hits first: stop / lock_stop / ma_cross at close / flatten.
+#
+# Named sibling:
+#   A lock +1%: config/ema9_trend_risk_nobe_lock1.example.yaml
+#   B MA-cross at close only: config/ema9_trend_risk_nobe_macross.example.yaml
+#   C this book: lock +1% + MA-cross at close
+#
+#   python -m dta_bot backtest --config config/ema9_trend_risk_nobe_lock1.example.yaml \
+#     --compare-config config/ema9_trend_risk_nobe_macross.example.yaml \
+#     --compare-config config/ema9_trend_risk_nobe_lock1_macross.example.yaml \
+#     --source yahoo --start 2026-08-01 --end 2026-08-31 --combined-only --symbols AAPL,MSFT \
+#     --output artifacts/ema9_aug2026_risk_lock1_plus_macross.json \
+#     --report artifacts/ema9_aug2026_risk_lock1_plus_macross.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"
+  flatten_by: "15:55"
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Noon book risk: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 1% equity risk at a 1.0% fill stop; lock to +1% on first touch; also exit at EMA9×below SMA20 close."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: risk_pct
+        equity_risk: 0.01
+        stop_pct: 1.0
+      order: market
+      exit: ma_cross_close
+      exit_ema_period: 9
+      exit_sma_period: 20
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      lock_trigger_pct: 1.0
+      lock_stop_pct: 1.0
