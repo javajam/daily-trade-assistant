@@ -1,0 +1,79 @@
+# Noon EMA9 long-only AAPL+MSFT: lock-+1% PLUS EMA9×below SMA20 at close.
+#
+# Same entry as lock-+1% (price×EMA9 + SMA20 + RSI14<70, cutoff 12:00).
+# No volume filter. No half-take. No pyramid.
+# Both exits are live:
+#   1. lock_plus: initial stop fill × 0.99; first touch of fill × 1.01 locks
+#      the stop there (locked stop live next bar). Hits are stop / lock_stop.
+#   2. ma_cross_close: after entry, on each completed 15m bar, leave when
+#      EMA(9) crosses below SMA(20) close-to-close; fill at that bar's close.
+#   3. session flatten 15:55 (15:45 ET bar close on 15m).
+# Whichever hits first wins. Same-bar stop / lock_stop + pair-cross → stop
+# (stop is checked first). Same-bar lock-arm + pair-cross (low above the live
+# stop) → ma_cross at that close; lock does not arm. Flatten-bar pair-cross
+# → ma_cross at that close over session_flatten.
+#
+# Named sibling:
+#   A lock +1%: config/ema9_trend_bracket_nobe_lock1.example.yaml
+#   B MA-cross at close only: config/ema9_trend_bracket_nobe_macross.example.yaml
+#   C this book: lock +1% + MA-cross at close
+#
+#   python -m dta_bot backtest --config config/ema9_trend_bracket_nobe_lock1.example.yaml \
+#     --compare-config config/ema9_trend_bracket_nobe_macross.example.yaml \
+#     --compare-config config/ema9_trend_bracket_nobe_lock1_macross.example.yaml \
+#     --source yahoo --combined-only --symbols AAPL,MSFT \
+#     --output artifacts/ema9_lock1_plus_macross.json \
+#     --report artifacts/ema9_lock1_plus_macross.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"
+  flatten_by: "15:55"
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Noon book: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 10 shares, lock-+1% and EMA9×below SMA20 exit at that bar's close. No half-take, no pyramid."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      exit: ma_cross_close
+      exit_ema_period: 9
+      exit_sma_period: 20
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      lock_trigger_pct: 1.0
+      lock_stop_pct: 1.0

@@ -897,6 +897,80 @@ def test_ema_sma_cross_close_wins_over_flatten_on_same_bar():
     assert next_open.trades[0].exit_price == 98.0
 
 
+def test_lock_plus_and_ma_cross_close_stop_beats_cross_on_same_bar():
+    # 1% lock_plus + ma_cross_close: bar 22 low tags fill×0.99 and the close
+    # is also a pair-cross. Stop is checked first.
+    warmup = _pair_cross_warmup()
+    fill = Bar(bar(21, 100.5, 100.7, 100.4, 100.5).timestamp, 100.5, 100.7, 100.4, 100.5, 1000)
+    drop = Bar(bar(22, 100.5, 100.6, 99.2, 99.2).timestamp, 100.5, 100.6, 99.2, 99.2, 1000)
+    after = Bar(bar(23, 99.2, 99.3, 99.1, 99.2).timestamp, 99.2, 99.3, 99.1, 99.2, 1000)
+    result = run_backtest(
+        _cfg(
+            _ma_cross_rule(
+                exit="ma_cross_close",
+                stop_mode="lock_plus",
+                stop_loss_pct=1.0,
+                lock_trigger_pct=1.0,
+                lock_stop_pct=1.0,
+            )
+        ),
+        {("AAPL", "15Min"): warmup + [fill, drop, after]},
+    )
+    assert result.trades[0].exit_reason == "stop"
+    assert result.trades[0].exit_price == pytest.approx(100.5 * 0.99)
+    assert result.trades[0].lock_armed is False
+
+
+def test_lock_plus_and_ma_cross_close_cross_when_stop_not_hit():
+    # Wider 3% initial stop so the 99.2 pair-cross stays above it. Lock
+    # trigger is +3% and is not tagged. Exit is ma_cross at that close.
+    warmup = _pair_cross_warmup()
+    fill = Bar(bar(21, 100.5, 100.7, 100.4, 100.5).timestamp, 100.5, 100.7, 100.4, 100.5, 1000)
+    cross_under = Bar(bar(22, 100.5, 100.6, 99.2, 99.2).timestamp, 100.5, 100.6, 99.2, 99.2, 1000)
+    after = Bar(bar(23, 99.15, 99.3, 99.1, 99.2).timestamp, 99.15, 99.3, 99.1, 99.2, 1000)
+    result = run_backtest(
+        _cfg(
+            _ma_cross_rule(
+                exit="ma_cross_close",
+                stop_mode="lock_plus",
+                stop_loss_pct=3.0,
+                lock_trigger_pct=3.0,
+                lock_stop_pct=3.0,
+            )
+        ),
+        {("AAPL", "15Min"): warmup + [fill, cross_under, after]},
+    )
+    trade = result.trades[0]
+    assert trade.exit_reason == "ma_cross"
+    assert trade.exit_price == 99.2
+    assert trade.lock_armed is False
+
+
+def test_lock_plus_and_ma_cross_close_lock_stop_beats_later_cross():
+    # Rally arms the +1% lock. Next bar tags the locked stop and would also
+    # be a pair-cross — lock_stop wins (stop checked first).
+    warmup = _pair_cross_warmup()
+    fill = Bar(bar(21, 100.5, 100.7, 100.4, 100.5).timestamp, 100.5, 100.7, 100.4, 100.5, 1000)
+    arm = Bar(bar(22, 100.5, 101.7, 100.4, 101.2).timestamp, 100.5, 101.7, 100.4, 101.2, 1000)
+    drop = Bar(bar(23, 101.6, 101.7, 99.0, 99.0).timestamp, 101.6, 101.7, 99.0, 99.0, 1000)
+    result = run_backtest(
+        _cfg(
+            _ma_cross_rule(
+                exit="ma_cross_close",
+                stop_mode="lock_plus",
+                stop_loss_pct=1.0,
+                lock_trigger_pct=1.0,
+                lock_stop_pct=1.0,
+            )
+        ),
+        {("AAPL", "15Min"): warmup + [fill, arm, drop]},
+    )
+    trade = result.trades[0]
+    assert trade.lock_armed is True
+    assert trade.exit_reason == "lock_stop"
+    assert trade.exit_price == pytest.approx(100.5 * 1.01)
+
+
 def test_ema_sma_cross_close_optional_stop_still_fires_first():
     warmup = _pair_cross_warmup()
     fill = Bar(bar(21, 100.5, 100.7, 100.4, 100.5).timestamp, 100.5, 100.7, 100.4, 100.5, 1000)

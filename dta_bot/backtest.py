@@ -1588,8 +1588,11 @@ def run_backtest(
             "Cross is EMA vs SMA close-to-close, not price vs MA. "
             "Long: prev EMA >= prev SMA and curr EMA < curr SMA (cross-under). "
             "Short: prev EMA <= prev SMA and curr EMA > curr SMA (cross-over / cover). "
-            "Same-bar stop + cross → stop. If the cross bar is also the flatten bar, "
-            "ma_cross at that close wins over session_flatten."
+            "Same-bar stop / lock_stop + cross → stop (stop is checked first). "
+            "A same-bar lock-arm touch + pair-cross (low stays above the live stop) "
+            "exits as ma_cross at that close and does not arm the lock. "
+            "If the cross bar is also the flatten bar, ma_cross at that close wins "
+            "over session_flatten."
         )
         ma_close_exits = sum(1 for t in trades if t.exit_reason == "ma_cross")
         extra_notes.append(

@@ -858,6 +858,29 @@ def test_ema9_trend_lock1_vol_configs_load():
     assert has_volume_gt_prev(risk.rules[0].when)
 
 
+def test_ema9_trend_lock1_macross_combo_configs_load():
+    ten = load_config("config/ema9_trend_bracket_nobe_lock1_macross.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.exit == "ma_cross_close"
+    assert rule.action.stop_mode == "lock_plus"
+    assert rule.action.stop_loss_pct == 1.0
+    assert rule.action.lock_trigger_pct == 1.0
+    assert rule.action.lock_stop_pct == 1.0
+    assert rule.action.partial_take_on_lock is False
+    assert rule.action.pyramid_on_lock is False
+    assert rule.action.size and rule.action.size.value == 10
+    assert has_noon_stack(rule.when)
+    assert not has_volume_gt_prev(rule.when)
+    risk = load_config("config/ema9_trend_risk_nobe_lock1_macross.example.yaml")
+    assert risk.rules[0].action.exit == "ma_cross_close"
+    assert risk.rules[0].action.stop_mode == "lock_plus"
+    assert risk.rules[0].action.stop_loss_pct == 1.0
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+    assert risk.rules[0].action.size.stop_pct == 1.0
+
+
 def test_ema9_trend_macross_close_configs_load():
     ten = load_config("config/ema9_trend_bracket_nobe_macross.example.yaml")
     rule = ten.rules[0]
@@ -1085,6 +1108,17 @@ def test_cli_validate_timeframe_override(capsys):
     assert "sma_period=20" in macross_out
     assert "stop=off" in macross_out
     assert "volume_gt_prev" not in macross_out
+    combo_rc = main(
+        ["validate", "--config", "config/ema9_trend_bracket_nobe_lock1_macross.example.yaml"]
+    )
+    assert combo_rc == 0
+    combo_out = capsys.readouterr().out
+    assert "exit=ma_cross_close" in combo_out
+    assert "stop_mode=lock_plus" in combo_out
+    assert "lock_trigger_pct=1" in combo_out
+    assert "ema_period=9" in combo_out
+    assert "partial_take_on_lock" not in combo_out
+    assert "volume_gt_prev" not in combo_out
 
 
 def test_ema_cross_yaml_parses_and_does_not_steal_level_ema():

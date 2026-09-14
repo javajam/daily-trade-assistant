@@ -304,6 +304,32 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         )
     if modes == {"ma_cross_close"} and ma_close_rules:
         action = ma_close_rules[0].action
+        lock_txt = ""
+        if action.stop_mode == "lock_plus" and action.stop_loss_pct:
+            trig = action.resolved_lock_trigger_pct()
+            lock = action.resolved_lock_stop_pct()
+            lock_txt = (
+                f" Lock-plus is also live (stop_mode: lock_plus): initial stop is "
+                f"{action.stop_loss_pct:g}% from the fill. First trade/touch of "
+                f"entry×(1+{(trig or 0):g}/100) (bar high ≥ that print) moves the stop "
+                f"to entry×(1+{(lock or 0):g}/100); the locked stop is live from the "
+                "next bar. Whichever hits first wins: stop / lock_stop on this bar "
+                "beats the pair-cross (stop is checked first). A same-bar lock-arm "
+                "touch + pair-cross (low stays above the live stop) exits as ma_cross "
+                "at that close and does not arm the lock. "
+            )
+            return (
+                f"Exit is lock-+1% plus MA-cross at close (stop_mode: lock_plus and "
+                f"action.exit: ma_cross_close): after entry, leave when EMA({action.exit_ema_period}) "
+                f"crosses SMA({action.exit_sma_period}) against the position and fill at that "
+                "bar's close — the same fill convention as ema_invalid / lower_high. "
+                "Cross is EMA vs SMA close-to-close (not price vs MA). "
+                "Long: prev EMA >= prev SMA and curr EMA < curr SMA (cross-under)."
+                + lock_txt
+                + "Percent take-profit is ignored. If the cross bar is also the flatten "
+                "bar and the stop did not hit, ma_cross at that close wins over "
+                "session_flatten. No half-take. No pyramid."
+            )
         return (
             f"Exit is MA-cross at close (action.exit: ma_cross_close): after entry, on "
             f"each completed signal-timeframe bar, leave when EMA({action.exit_ema_period}) "

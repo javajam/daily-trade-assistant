@@ -32,6 +32,9 @@
 # MA-cross at close (no lock-+1% / no % stop; EMA9×below SMA20 at that close):
 #   config/ema9_trend_bracket_nobe_macross.example.yaml
 #   writeup: artifacts/ema9_lock1_macross.md
+# Lock-+1% + MA-cross at close (both exits live; first hit wins):
+#   config/ema9_trend_bracket_nobe_lock1_macross.example.yaml
+#   writeup: artifacts/ema9_lock1_plus_macross.md
 
 settings:
   paper: true
