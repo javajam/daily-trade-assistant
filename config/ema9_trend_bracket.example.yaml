@@ -5,6 +5,8 @@
 # Optional stop siblings: fixed 1% / trail 1% (nobe_fixed1 / nobe_trail1).
 # Prior pair-cross 10-share: config/ema9_trend_pair.example.yaml
 #
+# AAPL / MSFT / META 10-share add-on: config/ema9_trend_aapl_msft_meta.example.yaml
+#
 #   python -m dta_bot backtest --config config/ema9_trend_bracket.example.yaml \
 #     --compare-config config/ema9_trend_bracket_nobe_fixed1.example.yaml \
 #     --compare-config config/ema9_trend_bracket_nobe_trail1.example.yaml \
