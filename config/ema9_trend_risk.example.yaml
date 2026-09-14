@@ -12,6 +12,7 @@
 # Optional stop siblings: config/ema9_trend_risk_nobe_fixed1.example.yaml
 # and config/ema9_trend_risk_nobe_trail1.example.yaml.
 # TSLA / MU 1% sibling: config/ema9_trend_risk_tsla_mu.example.yaml
+# SPY / QQQ long-only 1% sibling: config/ema9_trend_risk_spy_qqq.example.yaml
 # Prior pair-cross 1% book: config/ema9_trend_risk_pair.example.yaml
 #
 #   python -m dta_bot validate --config config/ema9_trend_risk.example.yaml
