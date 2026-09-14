@@ -1,0 +1,67 @@
+# Noon EMA9 long-only AAPL+MSFT: lower-high exit + signal volume > previous.
+#
+# Same entry as lock-+1% (price×EMA9 + SMA20 + RSI14<70, cutoff 12:00) plus
+# volume of the signal candle > previous candle volume.
+# No lock-+1% / percent stop. Primary exit is lower-high: after entry, on each
+# completed 15m bar, leave when that bar's high < previous bar's high; fill at
+# that bar's close (same convention as ema_invalid). Session flatten 15:55 still
+# applies (15:45 ET bar close on 15m).
+#
+# Named sibling of the 10-share lock-+1% default:
+#   lock +1%: config/ema9_trend_bracket_nobe_lock1.example.yaml
+#   this book: lower-high + vol>prev
+#
+#   python -m dta_bot backtest --config config/ema9_trend_bracket_nobe_lock1.example.yaml \
+#     --compare-config config/ema9_trend_bracket_nobe_lh_vol.example.yaml \
+#     --source yahoo --combined-only --symbols AAPL,MSFT \
+#     --output artifacts/ema9_lh_vol.json \
+#     --report artifacts/ema9_lh_vol.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"
+  flatten_by: "15:55"
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Noon book: 15m price crosses EMA(9) while above SMA20, RSI < 70, and signal volume > previous bar. 10 shares, lower-high exit at that bar's close, no percent stop."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+        - volume_gt_prev:
+            timeframe: 15m
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      exit: lower_high

@@ -45,7 +45,7 @@ class SizeSpec(BaseModel):
         return self
 
 
-EXIT_MODES = ("fixed_bracket", "ema_invalid", "ma_cross")
+EXIT_MODES = ("fixed_bracket", "ema_invalid", "ma_cross", "lower_high")
 EXIT_ALIASES = {
     "ema_invalid": "ema_invalid",
     "ema_invalidation": "ema_invalid",
@@ -60,6 +60,10 @@ EXIT_ALIASES = {
     "ma_pair_cross": "ma_cross",
     "cross_under": "ma_cross",
     "ma_cross_under": "ma_cross",
+    "lower_high": "lower_high",
+    "lowerhigh": "lower_high",
+    "lh": "lower_high",
+    "lower_high_exit": "lower_high",
 }
 
 
@@ -124,7 +128,12 @@ class ActionSpec(BaseModel):
     # at the next bar open. Long: EMA under SMA. Short: EMA above SMA (cover).
     # Optional stop_loss_pct is a catastrophic stop only (off when omitted).
     # The default noon short omits it. Percent take-profit is ignored.
-    exit: Literal["fixed_bracket", "ema_invalid", "ma_cross"] = "fixed_bracket"
+    # lower_high = hold until a completed signal-timeframe bar after entry
+    # prints a lower high (long: curr high < prev high) and exit at that
+    # close — same fill convention as ema_invalid. Shorts use the symmetric
+    # higher low (curr low > prev low). Optional stop_loss_pct is
+    # catastrophic only (off when omitted). Percent take is ignored.
+    exit: Literal["fixed_bracket", "ema_invalid", "ma_cross", "lower_high"] = "fixed_bracket"
     exit_ema_period: int = Field(default=9, ge=2)
     exit_sma_period: int = Field(default=20, ge=2)
     # After this many complete signal-timeframe bars *after the entry bar*,
@@ -145,7 +154,9 @@ class ActionSpec(BaseModel):
             return "fixed_bracket"
         key = str(v).strip().lower().replace("-", "_").replace(" ", "_")
         if key not in EXIT_ALIASES:
-            raise ValueError("exit must be 'ema_invalid', 'ma_cross', or 'fixed_bracket'")
+            raise ValueError(
+                "exit must be 'ema_invalid', 'ma_cross', 'lower_high', or 'fixed_bracket'"
+            )
         return EXIT_ALIASES[key]
 
     @field_validator("breakeven_after_bars", mode="before")
@@ -263,6 +274,19 @@ class VolumeCond(BaseModel):
         return normalize(v)
 
 
+class VolumePrevCond(BaseModel):
+    """Last (signal) bar volume vs the immediately previous bar."""
+
+    kind: Literal["volume_prev"] = "volume_prev"
+    timeframe: str
+    compare: Literal["above", "below"] = "above"
+
+    @field_validator("timeframe")
+    @classmethod
+    def _tf(cls, v: str) -> str:
+        return normalize(v)
+
+
 class MaCrossCond(BaseModel):
     """Close crossing an SMA/EMA: prev close vs prev MA, curr close vs curr MA."""
 
@@ -293,7 +317,9 @@ class MaPairCrossCond(BaseModel):
         return normalize(v)
 
 
-LeafCondition = Union[PatternCond, MaCond, RsiCond, VolumeCond, MaCrossCond, MaPairCrossCond]
+LeafCondition = Union[
+    PatternCond, MaCond, RsiCond, VolumeCond, VolumePrevCond, MaCrossCond, MaPairCrossCond
+]
 
 
 class GroupCond(BaseModel):
@@ -479,6 +505,58 @@ def _normalize_cross_direction(raw: Any, default: str = "bullish") -> str:
 
 _PAIR_CROSS_KEYS = ("ema_sma_cross", "ma_pair_cross", "ema_cross_sma")
 _RSI_LEAF_KEYS = ("rsi", "rsi_below", "rsi_above")
+_VOLUME_PREV_KEYS = ("volume_gt_prev", "volume_vs_prev", "volume_above_prev")
+_VOLUME_PREV_VS = frozenset({"prev", "previous", "prior", "last"})
+
+
+def _volume_prev_compare(raw: dict[str, Any], default: str = "above") -> str:
+    compare = str(raw.get("compare") or default).strip().lower()
+    if compare in {"above", "gt", "greater", "over"}:
+        return "above"
+    if compare in {"below", "lt", "less", "under"}:
+        return "below"
+    return default
+
+
+def _is_volume_prev(raw: dict[str, Any]) -> bool:
+    if any(key in raw for key in _VOLUME_PREV_KEYS):
+        return True
+    block = raw.get("volume") if isinstance(raw.get("volume"), dict) else {}
+    vs = str(block.get("vs") or raw.get("vs") or "").strip().lower()
+    return vs in _VOLUME_PREV_VS
+
+
+def _parse_volume_prev(raw: dict[str, Any], default_timeframe: Optional[str] = None) -> VolumePrevCond:
+    block: dict[str, Any] = {}
+    for key in _VOLUME_PREV_KEYS:
+        val = raw.get(key)
+        if isinstance(val, dict):
+            block = val
+            break
+    volume_block = raw.get("volume") if isinstance(raw.get("volume"), dict) else {}
+    merged = {**volume_block, **block, **{k: v for k, v in raw.items() if k not in {"volume", *_VOLUME_PREV_KEYS}}}
+    return VolumePrevCond(
+        timeframe=_condition_timeframe(merged, raw, default=default_timeframe),
+        compare=_volume_prev_compare(merged),
+    )
+
+
+def find_volume_prev_condition(cond: AnyCondition) -> Optional[VolumePrevCond]:
+    """First previous-bar volume leaf in a condition tree, if any."""
+    if isinstance(cond, VolumePrevCond):
+        return cond
+    if isinstance(cond, GroupCond):
+        for child in cond.conditions:
+            found = find_volume_prev_condition(child)
+            if found is not None:
+                return found
+    return None
+
+
+def has_volume_gt_prev(cond: AnyCondition) -> bool:
+    """True when the tree requires signal-bar volume > previous-bar volume."""
+    found = find_volume_prev_condition(cond)
+    return found is not None and found.compare == "above"
 
 
 def find_rsi_condition(cond: AnyCondition) -> Optional[RsiCond]:
@@ -689,6 +767,8 @@ def _parse_leaf(raw: dict[str, Any], default_timeframe: Optional[str] = None) ->
             below=below,
             above=above,
         )
+    if _is_volume_prev(raw):
+        return _parse_volume_prev(raw, default_timeframe=default_timeframe)
     if "volume" in raw or "volume_above_avg" in raw:
         block = raw.get("volume") if isinstance(raw.get("volume"), dict) else {}
         merged = {**block, **{k: v for k, v in raw.items() if k != "volume"}}

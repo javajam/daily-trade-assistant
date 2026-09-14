@@ -188,6 +188,7 @@ rules:
         - ema_sma_cross: { ema_period: 9, sma_period: 20, timeframe: 15m, direction: bullish }
         - rsi: { period: 14, timeframe: 15m, below: 70 }        # above and/or below
         - volume: { period: 20, timeframe: 15m, multiplier: 1.2 }
+        - volume_gt_prev: { timeframe: 15m }  # signal vol > previous bar (alias: volume: { vs: prev })
       # any: [ ... ]         # OR; groups nest
     action:
       type: buy | sell | close
@@ -197,7 +198,7 @@ rules:
       #   stop_mode sma20: R = signal-close − SMA20; shares = floor( (equity_risk * equity) / R )
       order: market | limit
       limit_offset_pct: 0.05
-      exit: ema_invalid | ma_cross | fixed_bracket   # default fixed_bracket
+      exit: ema_invalid | ma_cross | lower_high | fixed_bracket   # default fixed_bracket
       exit_ema_period: 9                  # ema_invalid / ma_cross (alias: ema_period)
       exit_sma_period: 20                 # ma_cross (alias: sma_period)
       stop_mode: percent | sma20 | entry_pct | lock_plus | trail
@@ -212,7 +213,7 @@ rules:
       lock_trigger_pct: 1.0  # lock_plus; omit to use stop_loss_pct
       lock_stop_pct: 1.0     # lock_plus; omit to use stop_loss_pct
       trail_pct: 1.0         # trail; omit to use stop_loss_pct
-      take_profit_pct: 3.0   # ignored when exit is ema_invalid or ma_cross; omit for stop-only
+      take_profit_pct: 3.0   # ignored when exit is ema_invalid, ma_cross, or lower_high; omit for stop-only
       breakeven_after_bars: 1            # 0/omit = off; 1 = next full candle after fill
       breakeven_requires_valid: true     # only arm if evaluation bar is still valid
       breakeven_valid: above_ema         # long: close > EMA(9); or always
@@ -233,7 +234,7 @@ rules:
 3. **Long stop** — `stop_mode: lock_plus` (default on the long). Initial **fill × 0.99**; first touch of **fill × 1.01** (bar high ≥ that print) locks the stop there. The locked stop is live from the **next** bar; a same-bar pullback after the tag still uses the initial 1% stop. A later hit is `lock_stop`.
 4. **Short cover / exits** — no `lock_plus` and no percent stop on shorts (`stop_loss_pct` omitted; optional catastrophic stop is off). Cover when **EMA(9) crosses above SMA(20)** (`action.exit: ma_cross`) and flatten at the **next bar open**, or `session_flatten`. Longs have no take-profit: stop / `lock_stop` / `session_flatten`.
 5. **Break-even is off** (`breakeven_after_bars` omitted / 0).
-6. **Optional stop siblings** (same entry / session): fixed 1% from the fill (`stop_mode: entry_pct`, `config/ema9_trend_bracket_nobe_fixed1.example.yaml`); trail 1% from peak since entry (`stop_mode: trail`, `config/ema9_trend_bracket_nobe_trail1.example.yaml`). Matching 1% risk YAMLs: `config/ema9_trend_risk_nobe_fixed1.example.yaml`, `config/ema9_trend_risk_nobe_trail1.example.yaml` (lock risk is the default `config/ema9_trend_risk.example.yaml`).
+6. **Optional stop siblings** (same entry / session): fixed 1% from the fill (`stop_mode: entry_pct`, `config/ema9_trend_bracket_nobe_fixed1.example.yaml`); trail 1% from peak since entry (`stop_mode: trail`, `config/ema9_trend_bracket_nobe_trail1.example.yaml`). Matching 1% risk YAMLs: `config/ema9_trend_risk_nobe_fixed1.example.yaml`, `config/ema9_trend_risk_nobe_trail1.example.yaml` (lock risk is the default `config/ema9_trend_risk.example.yaml`). **Lower-high + vol>prev** (no lock-+1% / percent stop; signal volume > previous bar; exit at the completed bar close on a lower high): `config/ema9_trend_bracket_nobe_lh_vol.example.yaml` / `config/ema9_trend_risk_nobe_lh_vol.example.yaml`. Risk sizing uses `stop_pct: 1.0` as a reference R only (1% of entry). Writeup: `artifacts/ema9_lh_vol.md`.
 7. **Prior pair-cross product** — EMA(9) crosses over SMA(20), flatten next open on cross-under, 1.5% stop: `config/ema9_trend_pair.example.yaml`. 1% risk / 5m siblings: `config/ema9_trend_risk_pair.example.yaml`, `config/ema9_trend_5m_pair.example.yaml`. Optional RSI on that pair-cross: `config/ema9_trend_bracket_rsi.example.yaml` / `config/ema9_trend_bracket_rsi60.example.yaml`. Older noon 1.5/3.0 brackets: `config/ema9_trend_bracket_nobe.example.yaml`. Tight 1.0/2.0 (`stop_mode: percent`): `config/ema9_trend_bracket_nobe_12.example.yaml`. **SMA20 stop** (`stop_mode: sma20`): `config/ema9_trend_bracket_sma20.example.yaml` / `config/ema9_trend_bracket_sma20_notake.example.yaml`. Writeups: `artifacts/ema9_stop_manage.md`, `artifacts/ema9_lock_5m_vs_15m.md`, `artifacts/ema9_aug2026_risk_stop_manage.md`.
 
 YAML fields (long): `stop_mode: lock_plus`, `stop_loss_pct: 1.0`, `lock_trigger_pct: 1.0`, `lock_stop_pct: 1.0`. Shorts omit those and set `exit: ma_cross`. Paper / `dry_run` defaults; no live. 60-minute wall-clock cooldown.

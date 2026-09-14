@@ -115,8 +115,8 @@ def bracket_prices(
             stop = last_price * (1.0 - action.stop_loss_pct / 100.0)
         else:
             stop = last_price * (1.0 + action.stop_loss_pct / 100.0)
-    # ema_invalid / ma_cross hold until the MA signal; ignore % take.
-    if action.exit not in {"ema_invalid", "ma_cross"} and action.take_profit_pct:
+    # ema_invalid / ma_cross / lower_high hold until the signal; ignore % take.
+    if action.exit not in {"ema_invalid", "ma_cross", "lower_high"} and action.take_profit_pct:
         if side == "buy":
             take = last_price * (1.0 + action.take_profit_pct / 100.0)
         else:

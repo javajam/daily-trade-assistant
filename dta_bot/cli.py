@@ -13,6 +13,7 @@ from dta_bot.config import (
     BotConfig,
     condition_timeframes,
     find_rsi_condition,
+    has_volume_gt_prev,
     load_config,
     restrict_universe,
     timeframe_label,
@@ -249,10 +250,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
             if rsi_cond.above is not None:
                 bits.append(f"> {rsi_cond.above:g}")
             rsi_txt = f" rsi=RSI{rsi_cond.period} {' '.join(bits)}" if bits else f" rsi=RSI{rsi_cond.period}"
+        vol_txt = " volume_gt_prev" if has_volume_gt_prev(rule.when) else ""
         print(
             f"    - {rule.id}: enabled={rule.enabled} symbols={syms} "
             f"action={rule.action.type} exit={rule.action.exit} "
-            f"cooldown={rule.cooldown_minutes}m tf={tfs}{size_txt}{stop_txt}{be_txt}{ma_txt}{rsi_txt}"
+            f"cooldown={rule.cooldown_minutes}m tf={tfs}{size_txt}{stop_txt}{be_txt}{ma_txt}{rsi_txt}{vol_txt}"
         )
     return 0
 

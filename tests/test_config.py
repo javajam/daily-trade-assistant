@@ -9,10 +9,12 @@ from dta_bot.config import (
     MaCrossCond,
     MaPairCrossCond,
     RsiCond,
+    VolumePrevCond,
     condition_timeframes,
     find_rsi_condition,
     has_noon_short_stack,
     has_noon_stack,
+    has_volume_gt_prev,
     load_config,
     parse_condition,
     restrict_universe,
@@ -559,6 +561,39 @@ def test_ema9_trend_stop_manage_configs_load():
         assert cfg.rules[0].action.take_profit_pct is None
 
 
+def test_ema9_trend_lower_high_vol_configs_load():
+    ten = load_config("config/ema9_trend_bracket_nobe_lh_vol.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.exit == "lower_high"
+    assert rule.action.stop_loss_pct is None
+    assert rule.action.take_profit_pct is None
+    assert rule.action.size and rule.action.size.type == "shares"
+    assert rule.action.size.value == 10
+    assert has_noon_stack(rule.when)
+    assert has_volume_gt_prev(rule.when)
+    leaves = rule.when.conditions
+    assert any(isinstance(c, VolumePrevCond) and c.compare == "above" for c in leaves)
+    assert ten.settings.entry_cutoff == "12:00"
+    assert ten.settings.flatten_by == "15:55"
+    risk = load_config("config/ema9_trend_risk_nobe_lh_vol.example.yaml")
+    assert risk.rules[0].action.exit == "lower_high"
+    assert risk.rules[0].action.stop_loss_pct is None
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+    assert risk.rules[0].action.size.stop_pct == 1.0
+    assert has_volume_gt_prev(risk.rules[0].when)
+
+
+def test_volume_gt_prev_yaml_shapes():
+    named = parse_condition({"volume_gt_prev": {"timeframe": "15m"}})
+    assert isinstance(named, VolumePrevCond)
+    assert named.compare == "above"
+    vs = parse_condition({"volume": {"vs": "prev", "timeframe": "5m"}})
+    assert isinstance(vs, VolumePrevCond)
+    assert vs.timeframe == "5Min"
+
+
 def test_stop_mode_aliases_and_defaults():
     lock = load_config("config/ema9_trend_bracket_nobe_lock1.example.yaml")
     # Explicit lock fields resolve to 1.0; omitting them falls back to stop_loss_pct.
@@ -600,6 +635,20 @@ rules:
     )
     cfg = load_config(path)
     assert cfg.rules[0].action.exit == "ema_invalid"
+    lh_path = tmp_path / "lh.yaml"
+    lh_path.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action: {type: buy, size: {type: shares, value: 1}, exit: lowerhigh}
+""",
+        encoding="utf-8",
+    )
+    lh = load_config(lh_path)
+    assert lh.rules[0].action.exit == "lower_high"
     bad = tmp_path / "bad_exit.yaml"
     bad.write_text(
         """
@@ -658,6 +707,12 @@ def test_cli_validate_timeframe_override(capsys):
     lock_out = capsys.readouterr().out
     assert "stop_mode=lock_plus" in lock_out
     assert "lock_trigger_pct=1" in lock_out
+    lh_rc = main(["validate", "--config", "config/ema9_trend_bracket_nobe_lh_vol.example.yaml"])
+    assert lh_rc == 0
+    lh_out = capsys.readouterr().out
+    assert "exit=lower_high" in lh_out
+    assert "volume_gt_prev" in lh_out
+    assert "stop=off" in lh_out
 
 
 def test_ema_cross_yaml_parses_and_does_not_steal_level_ema():

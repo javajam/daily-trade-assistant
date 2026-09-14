@@ -21,6 +21,7 @@ from dta_bot.config import (
     find_rsi_condition,
     has_noon_short_stack,
     has_noon_stack,
+    has_volume_gt_prev,
     restrict_universe,
     rsi_filter_label,
     timeframe_label,
@@ -278,6 +279,23 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         for rule in (config.rules if config is not None else [])
         if rule.action.type != "close" and rule.action.exit == "ma_cross"
     ]
+    if modes == {"lower_high"} or (
+        config is not None
+        and "lower_high" in modes
+        and "fixed_bracket" not in modes
+        and "ma_cross" not in modes
+        and "ema_invalid" not in modes
+    ):
+        return (
+            "Exit is lower-high (action.exit: lower_high): after entry, on each completed "
+            "signal-timeframe bar, leave the long when that bar's high is strictly below "
+            "the previous bar's high and exit at that bar's close — the same fill "
+            "convention as ema_invalid. Equal highs stay valid. Shorts use the symmetric "
+            "higher low (current low > previous low). Optional stop_loss_pct is a "
+            "catastrophic stop only (off when omitted). Percent take-profit is ignored. "
+            "Same-bar stop + lower-high → stop. If the lower-high bar is also the flatten "
+            "bar, lower_high at that close wins over session_flatten."
+        )
     if modes == {"ma_cross"} and ma_rules:
         action = ma_rules[0].action
         return (
@@ -409,7 +427,8 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         "to flatten at the next bar open after EMA crosses SMA against the position "
         "(long: under; short: over). Set action.exit: ema_invalid "
         "to hold until a signal-timeframe close is on the wrong side of EMA (long: close < EMA; "
-        "exit at that close)."
+        "exit at that close). Set action.exit: lower_high to leave a long when a completed "
+        "bar's high is strictly below the previous bar's high (exit at that close)."
     )
 
 
@@ -499,9 +518,14 @@ def _noon_entry_assumption(config: Optional[BotConfig]) -> Optional[str]:
         period = rsi_cond.period if rsi_cond is not None else 14
         if has_noon_stack(rule.when):
             below = rsi_cond.below if rsi_cond is not None and rsi_cond.below is not None else 70
+            vol_txt = (
+                " AND signal-bar volume > previous-bar volume"
+                if has_volume_gt_prev(rule.when)
+                else ""
+            )
             long_txt = (
                 f"Long: close crosses above EMA(9) AND close > SMA(20) AND "
-                f"RSI({period}) < {below:g}"
+                f"RSI({period}) < {below:g}{vol_txt}"
             )
         if has_noon_short_stack(rule.when):
             if rsi_cond is not None and rsi_cond.above is not None:
@@ -542,8 +566,9 @@ def _session_gate_assumption(config: Optional[BotConfig]) -> Optional[str]:
         "15m RTH bars opening :00,:15,:30,:45 flatten on the 15:45 ET bar close when "
         "flatten_by is 15:55 (last regular 15m bar, aligned with “by 15:55”); "
         "5m flattens on the 15:50 ET bar close (last 5m bar that completes at/before 15:55). "
-        "Stop/take/ema_invalid/ma_cross-on-this-bar still win if they hit first "
-        "(ma_cross fills at the next open, so a same-bar flatten_by close wins). "
+        "Stop/take/ema_invalid/lower_high/ma_cross-on-this-bar still win if they hit first "
+        "(ma_cross fills at the next open, so a same-bar flatten_by close wins; "
+        "ema_invalid and lower_high fill at that close). "
         "Set entry_cutoff / flatten_by to null / off to restore overnight holds."
     )
 
@@ -674,10 +699,17 @@ def session_gate_suffix(config: BotConfig) -> str:
         bits.append("short MA-cross")
     elif exits == {"ma_cross"}:
         bits.append("MA-cross")
+    elif exits == {"lower_high"}:
+        bits.append("lower-high")
     if bracket:
         bits.append(bracket)
     if rsi_tag:
         bits.append(rsi_tag)
+    if any(
+        r.enabled and r.action.type != "close" and has_volume_gt_prev(r.when)
+        for r in config.rules
+    ):
+        bits.append("vol>prev")
     return " (" + ", ".join(bits) + ")"
 
 
@@ -694,7 +726,8 @@ def assumptions_rules(
         _rules_exit_assumption(config),
         _breakeven_assumption(config),
         "If stop and take (or EMA-invalidation) both trade in the fill bar, the stop is assumed to fill first.",
-        "A gap through stop/take fills at that bar's open. EMA-invalidation fills at the invalidating close. "
+        "A gap through stop/take fills at that bar's open. EMA-invalidation and lower-high "
+        "exits fill at that completed bar's close. "
         "MA-cross exits fill at the next bar open after the opposing EMA/SMA pair-cross "
         "(long: EMA under SMA; short: EMA over SMA).",
         "One open lot per symbol (no pyramiding; long or short, not both). "
@@ -1034,6 +1067,7 @@ def exit_mix(report: dict[str, Any]) -> str:
     eod = int(reasons.get("eod") or 0)
     ema_inv = int(reasons.get("ema_invalid") or 0)
     ma_x = int(reasons.get("ma_cross") or 0)
+    lh = int(reasons.get("lower_high") or 0)
     sess = int(reasons.get("session_flatten") or 0)
     be_stop = int(reasons.get("breakeven_stop") or 0)
     lock_stop = int(reasons.get("lock_stop") or 0)
@@ -1043,6 +1077,8 @@ def exit_mix(report: dict[str, Any]) -> str:
         parts.append(f"ema_invalid {ema_inv}")
     if ma_x:
         parts.append(f"ma_cross {ma_x}")
+    if lh:
+        parts.append(f"lower_high {lh}")
     parts.extend([f"take {take}", f"stop {stop}"])
     if be_stop:
         parts.append(f"breakeven_stop {be_stop}")
@@ -1064,6 +1100,7 @@ def exit_mix(report: dict[str, Any]) -> str:
             "eod",
             "ema_invalid",
             "ma_cross",
+            "lower_high",
             "session_flatten",
             "breakeven_stop",
             "lock_stop",

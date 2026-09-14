@@ -231,6 +231,66 @@ def test_ema_invalid_does_not_exit_when_close_equals_or_holds_above_ema():
     assert result.trades[0].exit_price == 12.05
 
 
+def test_lower_high_exits_at_completed_bar_close():
+    bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(12)]
+    bars[-2] = Bar(bars[-2].timestamp, 10.0, 10.1, 9.9, 10.0, 1000)
+    bars[-1] = Bar(bars[-1].timestamp, 10.0, 12.5, 9.9, 12.0, 1000)
+    fill = Bar(bar(12, 12.0, 12.8, 11.8, 12.1).timestamp, 12.0, 12.8, 11.8, 12.1, 1000)
+    drop = Bar(bar(13, 12.1, 12.4, 11.9, 12.0).timestamp, 12.1, 12.4, 11.9, 12.0, 1000)
+    rule = _buy_rule(
+        id="ema9",
+        when=parse_condition({"ema_cross": {"period": 9, "timeframe": "15m", "direction": "bullish"}}),
+        action=ActionSpec(type="buy", size=SizeSpec(type="shares", value=10), exit="lower_high"),
+    )
+    result = run_backtest(_cfg(rule), {("AAPL", "15Min"): bars + [fill, drop]}, starting_equity=100_000)
+    assert result.report.signals == 1
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.exit_reason == "lower_high"
+    assert trade.entry_price == 12.0
+    assert trade.exit_price == 12.0
+    assert result.report.exit_reasons == {"lower_high": 1}
+
+
+def test_lower_high_equal_high_stays_open():
+    bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(12)]
+    bars[-2] = Bar(bars[-2].timestamp, 10.0, 10.1, 9.9, 10.0, 1000)
+    bars[-1] = Bar(bars[-1].timestamp, 10.0, 12.5, 9.9, 12.0, 1000)
+    hold = [
+        Bar(bar(12 + i, 12.0, 12.5, 11.9, 12.1).timestamp, 12.0, 12.5, 11.9, 12.1, 1000)
+        for i in range(3)
+    ]
+    rule = _buy_rule(
+        id="ema9",
+        when=parse_condition({"ema_cross": {"period": 9, "timeframe": "15m", "direction": "bullish"}}),
+        action=ActionSpec(type="buy", size=SizeSpec(type="shares", value=10), exit="lower_high"),
+    )
+    result = run_backtest(_cfg(rule), {("AAPL", "15Min"): bars + hold}, starting_equity=100_000)
+    assert result.report.trades == 1
+    assert result.trades[0].exit_reason == "eod"
+
+
+def test_lower_high_optional_stop_still_fires_first():
+    bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(12)]
+    bars[-2] = Bar(bars[-2].timestamp, 10.0, 10.1, 9.9, 10.0, 1000)
+    bars[-1] = Bar(bars[-1].timestamp, 10.0, 12.5, 9.9, 12.0, 1000)
+    # Fill bar high is below the signal high (lower high) AND tags the 2% stop.
+    fill = Bar(bar(12, 12.0, 12.1, 11.5, 11.6).timestamp, 12.0, 12.1, 11.5, 11.6, 1000)
+    rule = _buy_rule(
+        id="ema9",
+        when=parse_condition({"ema_cross": {"period": 9, "timeframe": "15m", "direction": "bullish"}}),
+        action=ActionSpec(
+            type="buy",
+            size=SizeSpec(type="shares", value=10),
+            exit="lower_high",
+            stop_loss_pct=2.0,
+        ),
+    )
+    result = run_backtest(_cfg(rule), {("AAPL", "15Min"): bars + [fill]}, starting_equity=100_000)
+    assert result.trades[0].exit_reason == "stop"
+    assert result.trades[0].exit_price == pytest.approx(12.0 * 0.98)
+
+
 def test_ema_invalid_optional_stop_still_fires_first():
     bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(12)]
     bars[-2] = Bar(bars[-2].timestamp, 10.0, 10.1, 9.9, 10.0, 1000)

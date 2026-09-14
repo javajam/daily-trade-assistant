@@ -17,6 +17,7 @@ from dta_bot.config import (
     RsiCond,
     RuleSpec,
     VolumeCond,
+    VolumePrevCond,
 )
 from dta_bot.indicators import average_volume, ema, last_two_ma, last_two_ma_pair, ma_pair_cross, rsi, sma
 from dta_bot.models import Bar, ConditionResult, EvalResult, Position
@@ -166,6 +167,23 @@ def eval_leaf(cond: AnyCondition, symbol: str, bars_by_key: BarMap) -> Condition
             {"volume": last, "avg": avg},
         )
 
+    if isinstance(cond, VolumePrevCond):
+        bars = bars_by_key.get((symbol, cond.timeframe), [])
+        if len(bars) < 2:
+            return ConditionResult(
+                False,
+                f"volume_vs_prev @{cond.timeframe}: need 2 bars, have {len(bars)}",
+            )
+        last = bars[-1].volume
+        prev = bars[-2].volume
+        ok = last > prev if cond.compare == "above" else last < prev
+        cmp = ">" if cond.compare == "above" else "<"
+        return ConditionResult(
+            ok,
+            f"volume {last:.0f} {cmp} prev {prev:.0f} @{cond.timeframe} → {ok}",
+            {"volume": last, "prev_volume": prev},
+        )
+
     raise TypeError(f"Unknown condition type {type(cond)}")
 
 
@@ -213,6 +231,42 @@ def ma_pair_cross_flatten_bar(
     side = "buy" if str(position.side).lower() in {"buy", "long"} else "sell"
     direction = "bearish" if side == "buy" else "bullish"
     if ma_pair_cross(closes, ema_period, sma_period, direction=direction):
+        return last
+    return None
+
+
+def lower_high_exit(side: str, curr: Bar, prev: Bar) -> bool:
+    """Long: current high < previous high. Short: current low > previous low."""
+    key = "buy" if str(side).lower() in {"buy", "long"} else "sell"
+    if key == "buy":
+        return curr.high < prev.high
+    return curr.low > prev.low
+
+
+def lower_high_flatten_bar(
+    position: Position,
+    signal_bars: list[Bar],
+    *,
+    after: Optional[datetime],
+) -> Optional[Bar]:
+    """Latest closed bar after entry that prints a lower high (long) / higher low (short).
+
+    ``after`` is the signal timestamp (entry is the next bar). Exit fills at
+    that completed bar's close — the same convention as ``ema_invalid``.
+    Equal highs (or lows on shorts) stay valid.
+    """
+    if after is None or not signal_bars:
+        return None
+    later = [b for b in signal_bars if _aware_ts(b.timestamp) > _aware_ts(after)]
+    if not later:
+        return None
+    last = max(later, key=lambda b: _aware_ts(b.timestamp))
+    window = [b for b in signal_bars if _aware_ts(b.timestamp) <= _aware_ts(last.timestamp)]
+    if len(window) < 2:
+        return None
+    prev = window[-2]
+    side = "buy" if str(position.side).lower() in {"buy", "long"} else "sell"
+    if lower_high_exit(side, last, prev):
         return last
     return None
 

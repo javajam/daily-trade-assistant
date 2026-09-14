@@ -381,6 +381,11 @@ def test_run_rule_books_prefixes_and_soxl_breakout():
     assert session_gate_suffix(fixed1) == " (cutoff 12:00, flat 15:55, entry 1.0%)"
     assert session_gate_suffix(lock1) == " (cutoff 12:00, flat 15:55, lock +1.0%)"
     assert session_gate_suffix(trail1) == " (cutoff 12:00, flat 15:55, trail 1.0%)"
+    lh_vol = load_config("config/ema9_trend_bracket_nobe_lh_vol.example.yaml")
+    assert session_gate_suffix(lh_vol) == " (cutoff 12:00, flat 15:55, lower-high, vol>prev)"
+    lh_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, lh_vol)
+    assert any("lower-high" in n and "previous bar's high" in n for n in lh_notes)
+    assert any("signal-bar volume > previous-bar volume" in n for n in lh_notes)
     lock_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, lock1)
     assert any("stop_mode: lock_plus" in n and "entry×(1+1/100)" in n for n in lock_notes)
     trail_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, trail1)

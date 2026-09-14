@@ -21,7 +21,7 @@ from dta_bot.config import (
     GroupCond,
     RuleSpec,
 )
-from dta_bot.engine import BarMap, cooldown_key, evaluate_rule, fire_key
+from dta_bot.engine import BarMap, cooldown_key, evaluate_rule, fire_key, lower_high_exit
 from dta_bot.models import Account, Bar
 from dta_bot.indicators import ma_pair_cross, sma
 from dta_bot.orb import ema_cross_exit, ema_through
@@ -242,6 +242,16 @@ def _next_bar(series: list[Bar], after_ts: datetime) -> Optional[Bar]:
         if _aware(bar.timestamp) > after_ts:
             return bar
     return None
+
+
+def _prev_bar(series: list[Bar], ts: datetime) -> Optional[Bar]:
+    ts = _aware(ts)
+    prev: Optional[Bar] = None
+    for bar in series:
+        if _aware(bar.timestamp) >= ts:
+            return prev
+        prev = bar
+    return prev
 
 
 def _mark_to_market(cash: float, lots: list[OpenLot], last_price: dict[str, float]) -> float:
@@ -868,6 +878,8 @@ def run_backtest(
         # 2) Stop / take on the bar that just completed (after any fill at its open).
         #    ema_invalid then exits at this bar's close when the close is on the
         #    wrong side of EMA (long: close < EMA). Same-bar stop + invalid → stop.
+        #    lower_high exits at this bar's close when the completed bar's high is
+        #    strictly below the previous bar's high (long). Same fill as ema_invalid.
         #    ma_cross schedules flatten at the *next* bar open (same fill as entries).
         for symbol, tf, bar in closing:
             last_price[symbol] = bar.close
@@ -882,6 +894,10 @@ def run_backtest(
                     ema_val = ema_through(series, bar, lot.exit_ema_period)
                     if ema_cross_exit(side=lot.side, close=bar.close, ema_value=ema_val):
                         hit = ("ema_invalid", bar.close)
+                if hit is None and lot.exit_mode == "lower_high":
+                    prev = _prev_bar(series, bar.timestamp)
+                    if prev is not None and lower_high_exit(lot.side, bar, prev):
+                        hit = ("lower_high", bar.close)
                 if hit is None and lot.exit_mode == "ma_cross" and _ma_pair_cross_exit(lot, bar, series):
                     nxt = _next_bar(series, bar.timestamp)
                     already = any(
@@ -936,7 +952,7 @@ def run_backtest(
 
         # 2b) Session flatten at the close of the bar that contains flatten_by.
         #     15m + 15:55 → 15:45 ET bar close. 5m + 15:55 → 15:50 ET bar close.
-        #     Stop/take/ema_invalid on this bar already ran; they win if they hit.
+        #     Stop/take/ema_invalid/lower_high on this bar already ran; they win if they hit.
         if flatten_by:
             for symbol, tf, bar in closing:
                 if not is_flatten_bar(bar.timestamp, tf, flatten_by, session_tz):
@@ -1235,6 +1251,25 @@ def run_backtest(
             f"{ma_exits} trade(s) exited as ma_cross "
             "(EMA/SMA pair-cross against the position)."
         )
+    lh_rules = [
+        r
+        for r in config.rules
+        if r.enabled and r.action.type != "close" and r.action.exit == "lower_high"
+    ]
+    if lh_rules:
+        extra_notes.append(
+            "Lower-high exit (action.exit: lower_high): after entry, on each completed "
+            "signal-timeframe bar, leave the long when that bar's high is strictly below "
+            "the previous bar's high and exit at that bar's close (same fill convention "
+            "as ema_invalid). Equal highs stay valid. Shorts use the symmetric higher low "
+            "(current low > previous low). Same-bar stop + lower-high → stop. "
+            "If the lower-high bar is also the flatten bar, lower_high at that close wins."
+        )
+        lh_exits = sum(1 for t in trades if t.exit_reason == "lower_high")
+        extra_notes.append(
+            f"{lh_exits} trade(s) exited as lower_high "
+            "(completed bar high < previous bar high)."
+        )
     pnl_note = _exit_pnl_note(trades)
     if pnl_note:
         extra_notes.append(pnl_note)
@@ -1441,6 +1476,7 @@ def format_report_md(payload: dict[str, Any]) -> str:
             or n.startswith("Session gates")
             or n.startswith("Break-even")
             or n.startswith("MA-cross exit")
+            or n.startswith("Lower-high exit")
             or n.startswith("SMA20 stop")
             or n.startswith("Entry-anchored stop")
             or n.startswith("Fixed entry stop")
@@ -1455,6 +1491,7 @@ def format_report_md(payload: dict[str, Any]) -> str:
             or "session_flatten" in n
             or "armed break-even" in n
             or "exited as ma_cross" in n
+            or "exited as lower_high" in n
             or "lock_stop" in n
             or "trail_stop" in n
             or "armed the +lock" in n
