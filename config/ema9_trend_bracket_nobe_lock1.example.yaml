@@ -23,6 +23,9 @@
 # Lock-+1% + vol>prev only (same exit): 
 #   config/ema9_trend_bracket_nobe_lock1_vol.example.yaml
 #   writeup: artifacts/ema9_lock1_vol.md
+# Lock-+1% + pyramid + 2% fill take:
+#   config/ema9_trend_bracket_nobe_lock1_pyramid2.example.yaml
+#   writeup: artifacts/ema9_lock1_pyramid2.md
 
 settings:
   paper: true

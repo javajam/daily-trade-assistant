@@ -386,11 +386,17 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         action = manage_rules[0].action
         stop_pct = action.stop_loss_pct
         stop_txt = f"{stop_pct:g}%" if stop_pct is not None else "n/a"
-        take_txt = (
-            f" Optional take_profit_pct {action.take_profit_pct:g}% is still from the signal-bar close."
-            if action.take_profit_pct
-            else " take_profit_pct is omitted (stop variant or session_flatten only; no % take)."
-        )
+        if action.take_profit_pct and action.take_anchor == "entry":
+            take_txt = (
+                f" take_profit_pct {action.take_profit_pct:g}% is from the *fill* "
+                "(take_anchor: entry), not the signal-bar close."
+            )
+        elif action.take_profit_pct:
+            take_txt = (
+                f" Optional take_profit_pct {action.take_profit_pct:g}% is still from the signal-bar close."
+            )
+        else:
+            take_txt = " take_profit_pct is omitted (stop variant or session_flatten only; no % take)."
         if action.stop_mode == "entry_pct":
             return (
                 f"Stop is a fixed {stop_txt} below the *fill* (next-bar open; "
@@ -400,6 +406,18 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         if action.stop_mode == "lock_plus":
             trig = action.resolved_lock_trigger_pct()
             lock = action.resolved_lock_stop_pct()
+            pyramid_txt = ""
+            if action.pyramid_on_lock:
+                pyramid_txt = (
+                    f" pyramid_on_lock adds the same share count at the lock-arm print "
+                    f"(gap-through: add at open if the bar opens through the trigger, else "
+                    f"at fill×(1+{(trig or 0):g}/100)). Stop stays at original fill × "
+                    f"(1+{(lock or 0):g}/100) on the full position. Cash for the add is "
+                    "not reserved at entry; if cash cannot cover it the lock still arms "
+                    "and the add is skipped. On the arm bar, take is checked after the add "
+                    "(locked stop is live next bar). A 2% fill-anchored take exits as "
+                    "take_2pct. Live runner does not auto-add on lock."
+                )
             return (
                 f"Lock-plus stop (stop_mode: lock_plus): initial stop is {stop_txt} from "
                 f"the fill (long: below; short: above). First trade/touch of "
@@ -407,7 +425,7 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
                 f"entry×(1−{(trig or 0):g}/100) for a short (bar low ≤ that print) moves "
                 f"the stop to that same print and leaves it. The locked stop is live "
                 f"from the next bar; same-bar pullback after the tag uses the initial stop. "
-                f"A later hit of the locked stop is lock_stop.{take_txt}"
+                f"A later hit of the locked stop is lock_stop.{take_txt}{pyramid_txt}"
             )
         trail = action.resolved_trail_pct()
         return (
@@ -603,6 +621,10 @@ def _fixed_bracket_tag(config: BotConfig) -> Optional[str]:
         trig = action.resolved_lock_trigger_pct() or stop
         if trig is None:
             return "lock+"
+        if action.pyramid_on_lock:
+            if take is not None:
+                return f"lock +{trig:.1f}% pyramid/{take:.1f}"
+            return f"lock +{trig:.1f}% pyramid"
         return f"lock +{trig:.1f}%"
     if action.stop_mode == "trail":
         trail = action.resolved_trail_pct() or stop
@@ -1063,6 +1085,7 @@ def _side_mix(report: dict[str, Any]) -> str:
 def exit_mix(report: dict[str, Any]) -> str:
     reasons = report.get("exit_reasons") or {}
     take = int(reasons.get("take") or 0)
+    take_2pct = int(reasons.get("take_2pct") or 0)
     stop = int(reasons.get("stop") or 0)
     eod = int(reasons.get("eod") or 0)
     ema_inv = int(reasons.get("ema_invalid") or 0)
@@ -1080,6 +1103,8 @@ def exit_mix(report: dict[str, Any]) -> str:
     if lh:
         parts.append(f"lower_high {lh}")
     parts.extend([f"take {take}", f"stop {stop}"])
+    if take_2pct:
+        parts.append(f"take_2pct {take_2pct}")
     if be_stop:
         parts.append(f"breakeven_stop {be_stop}")
     if lock_stop:
@@ -1096,6 +1121,7 @@ def exit_mix(report: dict[str, Any]) -> str:
         if key
         not in {
             "take",
+            "take_2pct",
             "stop",
             "eod",
             "ema_invalid",
@@ -1184,6 +1210,8 @@ def format_side_by_side_table(columns: list[tuple[str, dict[str, Any]]]) -> list
         ("Takes vs stops", lambda r: exit_mix(r)),
         ("BE armed", lambda r: str(int(r.get("breakeven_armed") or 0))),
         ("Lock armed", lambda r: str(int(r.get("lock_armed") or 0))),
+        ("Pyramid added", lambda r: str(int(r.get("pyramid_added") or 0))),
+        ("Pyramid add skipped", lambda r: str(int(r.get("pyramid_add_skipped") or 0))),
         ("Trail ratcheted", lambda r: str(int(r.get("trail_ratcheted") or 0))),
         ("By side", lambda r: _side_mix(r)),
     ]

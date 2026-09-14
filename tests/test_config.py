@@ -561,6 +561,76 @@ def test_ema9_trend_stop_manage_configs_load():
         assert cfg.rules[0].action.take_profit_pct is None
 
 
+def test_ema9_trend_lock1_pyramid2_configs_load():
+    ten = load_config("config/ema9_trend_bracket_nobe_lock1_pyramid2.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.exit == "fixed_bracket"
+    assert rule.action.stop_mode == "lock_plus"
+    assert rule.action.resolved_lock_trigger_pct() == 1.0
+    assert rule.action.resolved_lock_stop_pct() == 1.0
+    assert rule.action.stop_loss_pct == 1.0
+    assert rule.action.pyramid_on_lock is True
+    assert rule.action.take_anchor == "entry"
+    assert rule.action.take_profit_pct == 2.0
+    assert rule.action.size and rule.action.size.type == "shares"
+    assert rule.action.size.value == 10
+    assert has_noon_stack(rule.when)
+    assert not has_volume_gt_prev(rule.when)
+    assert ten.settings.entry_cutoff == "12:00"
+    assert ten.settings.flatten_by == "15:55"
+    risk = load_config("config/ema9_trend_risk_nobe_lock1_pyramid2.example.yaml")
+    assert risk.rules[0].action.stop_mode == "lock_plus"
+    assert risk.rules[0].action.pyramid_on_lock is True
+    assert risk.rules[0].action.take_anchor == "entry"
+    assert risk.rules[0].action.take_profit_pct == 2.0
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+    assert risk.rules[0].action.size.stop_pct == 1.0
+
+
+def test_pyramid_on_lock_requires_lock_plus_and_take(tmp_path: Path):
+    bad_mode = tmp_path / "bad_pyr_mode.yaml"
+    bad_mode.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action:
+      type: buy
+      size: {type: shares, value: 1}
+      stop_mode: entry_pct
+      stop_loss_pct: 1.0
+      pyramid_on_lock: true
+      take_profit_pct: 2.0
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="pyramid_on_lock"):
+        load_config(bad_mode)
+    bad_take = tmp_path / "bad_pyr_take.yaml"
+    bad_take.write_text(
+        """
+settings: {timeframe: 15m}
+universe: [AAPL]
+rules:
+  - id: x
+    when: {ema_cross: {period: 9, direction: bullish}}
+    action:
+      type: buy
+      size: {type: shares, value: 1}
+      stop_mode: lock_plus
+      stop_loss_pct: 1.0
+      pyramid_on_lock: true
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception, match="take_profit_pct"):
+        load_config(bad_take)
+
+
 def test_ema9_trend_lock1_vol_configs_load():
     ten = load_config("config/ema9_trend_bracket_nobe_lock1_vol.example.yaml")
     rule = ten.rules[0]
@@ -732,6 +802,13 @@ def test_cli_validate_timeframe_override(capsys):
     lock_out = capsys.readouterr().out
     assert "stop_mode=lock_plus" in lock_out
     assert "lock_trigger_pct=1" in lock_out
+    pyr_rc = main(["validate", "--config", "config/ema9_trend_bracket_nobe_lock1_pyramid2.example.yaml"])
+    assert pyr_rc == 0
+    pyr_out = capsys.readouterr().out
+    assert "stop_mode=lock_plus" in pyr_out
+    assert "pyramid_on_lock" in pyr_out
+    assert "take_profit_pct=2" in pyr_out
+    assert "take_anchor=entry" in pyr_out
     lock_vol_rc = main(["validate", "--config", "config/ema9_trend_bracket_nobe_lock1_vol.example.yaml"])
     assert lock_vol_rc == 0
     lock_vol_out = capsys.readouterr().out

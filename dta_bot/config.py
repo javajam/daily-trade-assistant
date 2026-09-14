@@ -68,6 +68,15 @@ EXIT_ALIASES = {
 
 
 BREAKEVEN_VALID_MODES = ("above_ema", "always")
+TAKE_ANCHORS = ("signal", "entry")
+TAKE_ANCHOR_ALIASES = {
+    "signal": "signal",
+    "signal_close": "signal",
+    "close": "signal",
+    "entry": "entry",
+    "fill": "entry",
+    "entry_fill": "entry",
+}
 STOP_MODES = ("percent", "sma20", "entry_pct", "lock_plus", "trail")
 # entry_pct / lock_plus / trail rebase the protective stop to the fill
 # (next-bar open). percent stays on the signal-bar close (legacy).
@@ -121,6 +130,16 @@ class ActionSpec(BaseModel):
     lock_stop_pct: Optional[float] = Field(default=None, gt=0)
     # trail: distance in percent from the peak (omit to use stop_loss_pct).
     trail_pct: Optional[float] = Field(default=None, gt=0)
+    # When true (lock_plus only): on the lock-arm bar, add the same share
+    # count as the open lot. Stop stays at original fill × (1+lock_stop/100)
+    # on the full (doubled) position. Take is fill-anchored. Cash for the
+    # add is not reserved at entry — if cash cannot cover it, lock still
+    # arms and the add is skipped. Backtest-only (live does not auto-add).
+    pyramid_on_lock: bool = False
+    # signal = take_profit_pct from the signal-bar close (legacy).
+    # entry = take_profit_pct from the fill (next-bar open). Forced to
+    # entry when pyramid_on_lock is true.
+    take_anchor: Literal["signal", "entry"] = "signal"
     # fixed_bracket = optional % stop/take. ema_invalid = hold until a
     # signal-timeframe close is on the wrong side of EMA (long: close < EMA).
     # Optional stop_loss_pct is then a catastrophic stop only; take is ignored.
@@ -188,10 +207,26 @@ class ActionSpec(BaseModel):
             )
         return STOP_MODE_ALIASES[key]
 
+    @field_validator("take_anchor", mode="before")
+    @classmethod
+    def _take_anchor(cls, v: Any) -> str:
+        if v is None or str(v).strip() == "":
+            return "signal"
+        key = str(v).strip().lower().replace("-", "_").replace(" ", "_")
+        if key not in TAKE_ANCHOR_ALIASES:
+            raise ValueError("take_anchor must be 'signal' or 'entry'")
+        return TAKE_ANCHOR_ALIASES[key]
+
     @model_validator(mode="after")
     def _size_required(self) -> "ActionSpec":
         if self.type in {"buy", "sell"} and self.size is None:
             raise ValueError("buy/sell actions require size (shares, percent_equity, or risk_pct)")
+        if self.pyramid_on_lock:
+            if self.stop_mode != "lock_plus":
+                raise ValueError("pyramid_on_lock requires stop_mode: lock_plus")
+            if self.take_profit_pct is None:
+                raise ValueError("pyramid_on_lock requires take_profit_pct")
+            self.take_anchor = "entry"
         return self
 
     def resolved_lock_trigger_pct(self) -> Optional[float]:
@@ -845,6 +880,8 @@ def _parse_action(raw: dict[str, Any]) -> ActionSpec:
         lock_trigger_pct=raw.get("lock_trigger_pct"),
         lock_stop_pct=raw.get("lock_stop_pct"),
         trail_pct=raw.get("trail_pct"),
+        pyramid_on_lock=raw.get("pyramid_on_lock", False),
+        take_anchor=raw.get("take_anchor", "signal"),
         exit=raw.get("exit", "fixed_bracket"),
         exit_ema_period=raw.get("exit_ema_period", raw.get("ema_period", 9)),
         exit_sma_period=raw.get("exit_sma_period", raw.get("sma_period", 20)),

@@ -1139,6 +1139,127 @@ def test_lock_plus_same_bar_touch_does_not_fill_lock():
     assert trade.exit_price == 100.80
 
 
+def _pyramid_rule(**action_kw) -> RuleSpec:
+    defaults = dict(
+        type="buy",
+        size=SizeSpec(type="shares", value=10),
+        exit="fixed_bracket",
+        stop_mode="lock_plus",
+        stop_loss_pct=1.0,
+        lock_trigger_pct=1.0,
+        lock_stop_pct=1.0,
+        pyramid_on_lock=True,
+        take_anchor="entry",
+        take_profit_pct=2.0,
+    )
+    defaults.update(action_kw)
+    return _buy_rule(action=ActionSpec(**defaults))
+
+
+def test_pyramid_adds_on_lock_arm_and_takes_full_lot_same_bar():
+    # Fill at 100. Same bar tags 101 then 102 → add at 101, take 20 shares at 102.
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        Bar(bar(2, 100.0, 102.10, 99.80, 101.50).timestamp, 100.0, 102.10, 99.80, 101.50, 1000),
+    ]
+    result = run_backtest(_cfg(_pyramid_rule()), {("AAPL", "15Min"): bars})
+    assert result.report.trades == 1
+    trade = result.trades[0]
+    assert trade.entry_price == 100.0
+    assert trade.lock_armed is True
+    assert trade.pyramid_added is True
+    assert trade.qty == 20
+    assert trade.exit_reason == "take_2pct"
+    assert trade.exit_price == pytest.approx(102.0)
+    # original 10 * (102-100) + add 10 * (102-101) = 20 + 10 = 30
+    assert trade.pnl == pytest.approx(30.0)
+    assert result.report.pyramid_added == 1
+    assert result.report.pyramid_add_skipped == 0
+    assert any("Pyramid-on-lock" in n for n in result.report.notes)
+
+
+def test_pyramid_add_at_open_when_bar_gaps_through_trigger():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        # Fill at 100.
+        Bar(bar(2, 100.0, 100.40, 99.90, 100.20).timestamp, 100.0, 100.40, 99.90, 100.20, 1000),
+        # Next bar opens through 101 and tags 102.
+        Bar(bar(3, 101.40, 102.20, 101.20, 101.80).timestamp, 101.40, 102.20, 101.20, 101.80, 1000),
+    ]
+    result = run_backtest(_cfg(_pyramid_rule()), {("AAPL", "15Min"): bars})
+    trade = result.trades[0]
+    assert trade.pyramid_added is True
+    assert trade.qty == 20
+    assert trade.exit_reason == "take_2pct"
+    assert trade.exit_price == pytest.approx(102.0)
+    # add filled at open 101.40: 10*(102-100) + 10*(102-101.40) = 20 + 6 = 26
+    assert trade.pnl == pytest.approx(26.0)
+
+
+def test_pyramid_take_uses_fill_not_signal_close():
+    # Signal close 100; fill gaps to 101. Take is 101*1.02 = 103.02, not 102.
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        Bar(bar(2, 101.0, 101.20, 100.90, 101.10).timestamp, 101.0, 101.20, 100.90, 101.10, 1000),
+        # High 102.50 would hit a signal-close 2% take (102) but not fill×1.02 (103.02).
+        Bar(bar(3, 101.10, 102.50, 101.00, 102.20).timestamp, 101.10, 102.50, 101.00, 102.20, 1000),
+        Bar(bar(4, 102.20, 103.20, 102.10, 103.10).timestamp, 102.20, 103.20, 102.10, 103.10, 1000),
+    ]
+    result = run_backtest(_cfg(_pyramid_rule()), {("AAPL", "15Min"): bars})
+    trade = result.trades[0]
+    assert trade.entry_price == 101.0
+    assert trade.pyramid_added is True
+    assert trade.exit_reason == "take_2pct"
+    assert trade.exit_price == pytest.approx(101.0 * 1.02)
+
+
+def test_pyramid_lock_stop_next_bar_uses_full_qty():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        # Fill + lock arm. High 101.05, low 100.20 — do not lock_stop same bar.
+        Bar(bar(2, 100.0, 101.05, 100.20, 100.80).timestamp, 100.0, 101.05, 100.20, 100.80, 1000),
+        # Next bar opens above the lock, then tags 101. Add was at 101; lock_stop
+        # at 101 → add P&L 0; original lot +1%.
+        Bar(bar(3, 101.05, 101.20, 100.85, 100.90).timestamp, 101.05, 101.20, 100.85, 100.90, 1000),
+    ]
+    result = run_backtest(_cfg(_pyramid_rule()), {("AAPL", "15Min"): bars})
+    trade = result.trades[0]
+    assert trade.lock_armed is True
+    assert trade.pyramid_added is True
+    assert trade.qty == 20
+    assert trade.exit_reason == "lock_stop"
+    assert trade.exit_price == pytest.approx(101.0)
+    assert trade.pnl == pytest.approx(10.0)
+
+
+def test_pyramid_insufficient_cash_skips_add_lock_still_arms():
+    bars = [
+        Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
+        Bar(bar(1, 81.0, 110.0, 80.0, 100.0).timestamp, 81.0, 110.0, 80.0, 100.0, 1000),
+        Bar(bar(2, 100.0, 102.10, 99.80, 101.50).timestamp, 100.0, 102.10, 99.80, 101.50, 1000),
+    ]
+    # 10 shares * 100 = 1000; leftover cash cannot cover another 10 * 101.
+    result = run_backtest(
+        _cfg(_pyramid_rule()),
+        {("AAPL", "15Min"): bars},
+        starting_equity=1_050.0,
+    )
+    trade = result.trades[0]
+    assert trade.lock_armed is True
+    assert trade.pyramid_added is False
+    assert trade.pyramid_add_skipped is True
+    assert trade.qty == 10
+    assert trade.exit_reason == "take_2pct"
+    assert trade.exit_price == pytest.approx(102.0)
+    assert trade.pnl == pytest.approx(20.0)
+    assert result.report.pyramid_added == 0
+    assert result.report.pyramid_add_skipped == 1
+
+
 def test_lock_plus_initial_stop_before_touch():
     bars = [
         Bar(bar(0, 100, 100.2, 80.0, 82.0).timestamp, 100.0, 100.2, 80.0, 82.0, 1000),
