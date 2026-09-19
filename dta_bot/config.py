@@ -45,7 +45,14 @@ class SizeSpec(BaseModel):
         return self
 
 
-EXIT_MODES = ("fixed_bracket", "ema_invalid", "ma_cross", "ma_cross_close", "lower_high")
+EXIT_MODES = (
+    "fixed_bracket",
+    "ema_invalid",
+    "ma_cross",
+    "ma_cross_close",
+    "lower_high",
+    "range_expansion",
+)
 EXIT_ALIASES = {
     "ema_invalid": "ema_invalid",
     "ema_invalidation": "ema_invalid",
@@ -69,6 +76,11 @@ EXIT_ALIASES = {
     "lowerhigh": "lower_high",
     "lh": "lower_high",
     "lower_high_exit": "lower_high",
+    "range_expansion": "range_expansion",
+    "range_gt_last_3": "range_expansion",
+    "range_gt_prev": "range_expansion",
+    "bigger_than_last_3": "range_expansion",
+    "range3": "range_expansion",
 }
 
 
@@ -181,9 +193,23 @@ class ActionSpec(BaseModel):
     # close — same fill convention as ema_invalid. Shorts use the symmetric
     # higher low (curr low > prev low). Optional stop_loss_pct is
     # catastrophic only (off when omitted). Percent take is ignored.
-    exit: Literal["fixed_bracket", "ema_invalid", "ma_cross", "ma_cross_close", "lower_high"] = "fixed_bracket"
+    # range_expansion = hold until a completed signal-timeframe bar *after*
+    # the entry bar has range (high − low) strictly greater than the max
+    # range of the previous exit_range_bars bars (default 3). Fill at that
+    # bar's close. Do not arm on the entry/fill bar. Need that many prior
+    # bars in the series. Optional stop is catastrophic only. Percent take
+    # is ignored. Same-bar range expansion + flatten → range_expansion.
+    exit: Literal[
+        "fixed_bracket",
+        "ema_invalid",
+        "ma_cross",
+        "ma_cross_close",
+        "lower_high",
+        "range_expansion",
+    ] = "fixed_bracket"
     exit_ema_period: int = Field(default=9, ge=2)
     exit_sma_period: int = Field(default=20, ge=2)
+    exit_range_bars: int = Field(default=3, ge=1)
     # After this many complete signal-timeframe bars *after the entry bar*,
     # move the stop to entry (break-even). 0 / omitted = off. 1 = next full
     # candle after fill (e.g. the next 15m bar after a 15m fill).
@@ -204,7 +230,7 @@ class ActionSpec(BaseModel):
         if key not in EXIT_ALIASES:
             raise ValueError(
                 "exit must be 'ema_invalid', 'ma_cross', 'ma_cross_close', "
-                "'lower_high', or 'fixed_bracket'"
+                "'lower_high', 'range_expansion', or 'fixed_bracket'"
             )
         return EXIT_ALIASES[key]
 
@@ -943,6 +969,7 @@ def _parse_action(raw: dict[str, Any]) -> ActionSpec:
         exit=raw.get("exit", "fixed_bracket"),
         exit_ema_period=raw.get("exit_ema_period", raw.get("ema_period", 9)),
         exit_sma_period=raw.get("exit_sma_period", raw.get("sma_period", 20)),
+        exit_range_bars=raw.get("exit_range_bars", raw.get("range_bars", 3)),
         breakeven_after_bars=raw.get("breakeven_after_bars", 0),
         breakeven_requires_valid=raw.get("breakeven_requires_valid", True),
         breakeven_valid=raw.get("breakeven_valid", "above_ema"),

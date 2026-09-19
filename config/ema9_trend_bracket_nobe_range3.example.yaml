@@ -1,0 +1,66 @@
+# Noon EMA9 long-only AAPL+MSFT: range-expansion exit (bar bigger than last 3).
+#
+# Same entry, gates, and universe as the locked day-trade book
+# (config/ema9_trend.example.yaml). Replaces ma_cross_close. No percent stop.
+# No lock_plus. No half-take. No pyramid. No volume filter.
+#
+# Exit when a completed 15m bar *after the entry/fill bar* has range
+# (high − low) strictly greater than max(range of the previous 3 bars).
+# Fill at that bar's close. Need 3 prior bars in the series. Equal range
+# stays valid. Session flatten 15:55 still applies; if the expansion bar is
+# also the flatten bar, range_expansion at that close wins over session_flatten.
+# Writeup: artifacts/ema9_range3.md
+#
+#   python -m dta_bot backtest --config config/ema9_trend.example.yaml \
+#     --compare-config config/ema9_trend_bracket_nobe_range3.example.yaml \
+#     --source yahoo --combined-only --symbols AAPL,MSFT \
+#     --output artifacts/ema9_range3.json \
+#     --report artifacts/ema9_range3.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"
+  flatten_by: "15:55"
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Noon book: 15m price crosses above EMA(9) while above SMA20 and RSI < 70. 10 shares, exit when bar range > max of previous 3, fill at that close. No percent stop."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      exit: range_expansion
+      exit_range_bars: 3

@@ -1,8 +1,14 @@
 from datetime import datetime, timedelta, timezone
 
 from dta_bot.config import ActionSpec, MaCond, PatternCond, RsiCond, RuleSpec, SizeSpec, parse_condition
-from dta_bot.engine import evaluate_all, evaluate_rule, fire_key
-from dta_bot.models import Bar
+from dta_bot.engine import (
+    evaluate_all,
+    evaluate_rule,
+    fire_key,
+    range_expansion_exit,
+    range_expansion_flatten_bar,
+)
+from dta_bot.models import Bar, Position
 from dta_bot.state import BotState
 from tests.conftest import bar
 
@@ -327,3 +333,36 @@ def test_noon_short_stack_fires_without_rsi_even_when_oversold():
     )
     assert not blocked_ev.matched
     assert "RSI14" in blocked_ev.reasons[0]
+
+
+def test_range_expansion_exit_strict_gt():
+    prior = [
+        bar(0, 10.0, 10.2, 9.8, 10.0),
+        bar(1, 10.0, 10.3, 9.9, 10.1),
+        bar(2, 10.1, 10.4, 10.0, 10.2),
+    ]
+    # max prior range = 0.4
+    wide = bar(3, 10.2, 10.9, 10.0, 10.5)
+    equal = bar(3, 10.2, 10.6, 10.2, 10.4)
+    assert range_expansion_exit(wide, prior) is True
+    assert range_expansion_exit(equal, prior) is False
+    assert range_expansion_exit(wide, []) is False
+
+
+def test_range_expansion_flatten_skips_entry_bar():
+    bars = [
+        bar(0, 10.0, 10.2, 9.8, 10.0),
+        bar(1, 10.0, 10.2, 9.8, 10.1),
+        bar(2, 10.1, 12.0, 9.0, 11.0),  # entry: huge range
+    ]
+    pos = Position(symbol="AAPL", qty=10, side="long", avg_entry_price=10.1, market_value=110.0)
+    assert range_expansion_flatten_bar(pos, bars, after=bars[0].timestamp, lookback=3) is None
+    after_entry = bars + [bar(3, 11.0, 11.2, 10.9, 11.1)]
+    assert range_expansion_flatten_bar(pos, after_entry, after=bars[0].timestamp, lookback=3) is None
+    wide = bars + [
+        bar(3, 11.0, 11.1, 10.95, 11.0),
+        bar(4, 11.0, 14.0, 10.0, 12.0),
+    ]
+    hit = range_expansion_flatten_bar(pos, wide, after=bars[0].timestamp, lookback=3)
+    assert hit is not None
+    assert hit.timestamp == wide[-1].timestamp

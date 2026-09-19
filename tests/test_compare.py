@@ -419,6 +419,12 @@ def test_run_rule_books_prefixes_and_soxl_breakout():
     assert any("lock-+1%" in n and "ma_cross_close" in n for n in combo_notes)
     assert any("stop is checked first" in n for n in combo_notes)
     assert not any("signal-bar volume > previous-bar volume" in n for n in combo_notes)
+    range3 = load_config("config/ema9_trend_bracket_nobe_range3.example.yaml")
+    assert session_gate_suffix(range3) == " (cutoff 12:00, flat 15:55, range>last-3)"
+    range_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, range3)
+    assert any("range_expansion" in n and "high − low" in n for n in range_notes)
+    assert any("entry/fill bar" in n for n in range_notes)
+    assert any("range_expansion at that close wins" in n for n in range_notes)
     lock_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, lock1)
     assert any("stop_mode: lock_plus" in n and "entry×(1+1/100)" in n for n in lock_notes)
     trail_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, trail1)
