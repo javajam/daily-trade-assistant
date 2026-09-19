@@ -327,3 +327,121 @@ def test_noon_short_stack_fires_without_rsi_even_when_oversold():
     )
     assert not blocked_ev.matched
     assert "RSI14" in blocked_ev.reasons[0]
+
+
+def test_sma_slope_flat_or_rising_fires_on_flat_and_up():
+    flat = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(21)]
+    cond = parse_condition({"sma_slope": {"period": 20, "timeframe": "15m", "compare": "flat_or_rising"}})
+    ev = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): flat}, BotState())
+    assert ev.matched
+    assert "sma_slope matched (flat_or_rising)" in ev.reasons[0]
+    rising = [bar(i, 10 + i * 0.1, 10.2 + i * 0.1, 9.9 + i * 0.1, 10.1 + i * 0.1) for i in range(21)]
+    up = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): rising}, BotState())
+    assert up.matched
+
+
+def test_sma_slope_rejects_falling():
+    falling = [bar(i, 20 - i * 0.2, 20.1 - i * 0.2, 19.8 - i * 0.2, 19.9 - i * 0.2) for i in range(21)]
+    cond = parse_condition({"sma_slope": {"period": 20, "timeframe": "15m", "compare": "ge"}})
+    ev = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): falling}, BotState())
+    assert not ev.matched
+    assert "sma_slope not found (flat_or_rising)" in ev.reasons[0]
+
+
+def test_pair_cross_plus_sma_slope_fires_together():
+    bars = _flat_pair()
+    cond = parse_condition(
+        {
+            "all": [
+                {
+                    "ema_sma_cross": {
+                        "ema_period": 9,
+                        "sma_period": 20,
+                        "timeframe": "15m",
+                        "direction": "bullish",
+                    }
+                },
+                {"sma_slope": {"period": 20, "timeframe": "15m", "compare": "flat_or_rising"}},
+            ]
+        }
+    )
+    ev = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): bars}, BotState())
+    assert ev.matched
+    assert "ema_sma_cross matched (bullish)" in ev.reasons[0]
+    assert "sma_slope matched (flat_or_rising)" in ev.reasons[0]
+
+
+def test_pair_cross_plus_sma_slope_rejects_falling_sma():
+    # Grind down from 20 then bounce to 19.978: EMA9 crosses above SMA20 while
+    # the dropped-off close (20) is still higher, so SMA20 keeps falling.
+    closes = [
+        20.0, 19.527, 19.141, 19.105, 18.601, 18.789, 18.734, 18.438,
+        17.655, 17.555, 17.431, 17.517, 17.694, 17.65, 17.821, 17.916,
+        17.998, 18.183, 17.935, 17.215, 19.978,
+    ]
+    bars = [
+        bar(i, c - 0.05, max(c - 0.05, c) + 0.05, min(c - 0.05, c) - 0.05, c)
+        for i, c in enumerate(closes)
+    ]
+    pair_only = parse_condition(
+        {"ema_sma_cross": {"ema_period": 9, "sma_period": 20, "timeframe": "15m", "direction": "bullish"}}
+    )
+    both = parse_condition(
+        {
+            "all": [
+                {
+                    "ema_sma_cross": {
+                        "ema_period": 9,
+                        "sma_period": 20,
+                        "timeframe": "15m",
+                        "direction": "bullish",
+                    }
+                },
+                {"sma_slope": {"period": 20, "timeframe": "15m", "compare": "flat_or_rising"}},
+            ]
+        }
+    )
+    crossed = evaluate_rule(_rule(when=pair_only), "AAPL", {("AAPL", "15Min"): bars}, BotState())
+    gated = evaluate_rule(_rule(when=both), "AAPL", {("AAPL", "15Min"): bars}, BotState())
+    assert crossed.matched
+    assert not gated.matched
+    assert "sma_slope not found (flat_or_rising)" in gated.reasons[0]
+
+
+def test_ema_slope_flat_or_rising_fires_on_up():
+    rising = [bar(i, 10 + i * 0.1, 10.2 + i * 0.1, 9.9 + i * 0.1, 10.1 + i * 0.1) for i in range(12)]
+    cond = parse_condition({"ema_slope": {"period": 9, "timeframe": "15m", "compare": "flat_or_rising"}})
+    ev = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): rising}, BotState())
+    assert ev.matched
+    assert "ema_slope matched (flat_or_rising)" in ev.reasons[0]
+
+
+def test_ema_slope_rejects_falling():
+    falling = [bar(i, 20 - i * 0.2, 20.1 - i * 0.2, 19.8 - i * 0.2, 19.9 - i * 0.2) for i in range(12)]
+    cond = parse_condition({"ema_slope": {"period": 9, "timeframe": "15m", "compare": "ge"}})
+    ev = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): falling}, BotState())
+    assert not ev.matched
+    assert "ema_slope not found (flat_or_rising)" in ev.reasons[0]
+
+
+def test_pair_cross_plus_ema_slope_fires_together():
+    bars = _flat_pair()
+    cond = parse_condition(
+        {
+            "all": [
+                {
+                    "ema_sma_cross": {
+                        "ema_period": 9,
+                        "sma_period": 20,
+                        "timeframe": "15m",
+                        "direction": "bullish",
+                    }
+                },
+                {"ema_slope": {"period": 9, "timeframe": "15m", "compare": "flat_or_rising"}},
+            ]
+        }
+    )
+    ev = evaluate_rule(_rule(when=cond), "AAPL", {("AAPL", "15Min"): bars}, BotState())
+    assert ev.matched
+    assert "ema_sma_cross matched (bullish)" in ev.reasons[0]
+    assert "ema_slope matched (flat_or_rising)" in ev.reasons[0]

@@ -8,12 +8,17 @@ from dta_bot.config import (
     MaCond,
     MaCrossCond,
     MaPairCrossCond,
+    MaSlopeCond,
     RsiCond,
     VolumePrevCond,
     condition_timeframes,
     find_rsi_condition,
     has_noon_short_stack,
     has_noon_stack,
+    has_pair_cross_ema_slope_entry,
+    has_pair_cross_slope_entry,
+    has_sma_flat_or_rising,
+    has_ema_flat_or_rising,
     has_volume_gt_prev,
     load_config,
     parse_condition,
@@ -902,7 +907,89 @@ def test_ema9_trend_lower_high_vol_configs_load():
     assert has_volume_gt_prev(risk.rules[0].when)
 
 
-def test_volume_gt_prev_yaml_shapes():
+def test_ema9_trend_pair_slope_configs_load():
+    ten = load_config("config/ema9_trend_bracket_nobe_pair_slope.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.exit == "ma_cross_close"
+    assert rule.action.exit_ema_period == 9
+    assert rule.action.exit_sma_period == 20
+    assert rule.action.stop_loss_pct is None
+    assert rule.action.take_profit_pct is None
+    assert rule.action.size and rule.action.size.type == "shares"
+    assert rule.action.size.value == 10
+    assert not has_noon_stack(rule.when)
+    assert not has_volume_gt_prev(rule.when)
+    assert has_pair_cross_slope_entry(rule.when)
+    assert has_sma_flat_or_rising(rule.when)
+    assert find_rsi_condition(rule.when) is None
+    leaves = rule.when.conditions
+    assert any(isinstance(c, MaPairCrossCond) and c.direction == "bullish" for c in leaves)
+    assert any(
+        isinstance(c, MaSlopeCond) and c.ma == "sma" and c.compare == "flat_or_rising"
+        for c in leaves
+    )
+    assert ten.settings.entry_cutoff == "12:00"
+    assert ten.settings.flatten_by == "15:55"
+    risk = load_config("config/ema9_trend_risk_nobe_pair_slope.example.yaml")
+    assert risk.rules[0].action.exit == "ma_cross_close"
+    assert risk.rules[0].action.stop_loss_pct is None
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+    assert risk.rules[0].action.size.stop_pct == 1.0
+    assert has_pair_cross_slope_entry(risk.rules[0].when)
+    assert find_rsi_condition(risk.rules[0].when) is None
+
+
+def test_ema9_trend_pair_ema_slope_configs_load():
+    ten = load_config("config/ema9_trend_bracket_nobe_pair_ema_slope.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.exit == "ma_cross_close"
+    assert rule.action.exit_ema_period == 9
+    assert rule.action.exit_sma_period == 20
+    assert rule.action.stop_loss_pct is None
+    assert rule.action.take_profit_pct is None
+    assert rule.action.size and rule.action.size.type == "shares"
+    assert rule.action.size.value == 10
+    assert not has_noon_stack(rule.when)
+    assert not has_pair_cross_slope_entry(rule.when)
+    assert not has_sma_flat_or_rising(rule.when)
+    assert has_ema_flat_or_rising(rule.when)
+    assert has_pair_cross_ema_slope_entry(rule.when)
+    assert find_rsi_condition(rule.when) is None
+    leaves = rule.when.conditions
+    assert any(isinstance(c, MaPairCrossCond) and c.direction == "bullish" for c in leaves)
+    assert any(
+        isinstance(c, MaSlopeCond) and c.ma == "ema" and c.period == 9 and c.compare == "flat_or_rising"
+        for c in leaves
+    )
+    assert ten.settings.entry_cutoff == "12:00"
+    assert ten.settings.flatten_by == "15:55"
+    risk = load_config("config/ema9_trend_risk_nobe_pair_ema_slope.example.yaml")
+    assert risk.rules[0].action.exit == "ma_cross_close"
+    assert risk.rules[0].action.stop_loss_pct is None
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+    assert risk.rules[0].action.size.stop_pct == 1.0
+    assert has_pair_cross_ema_slope_entry(risk.rules[0].when)
+    assert not has_pair_cross_slope_entry(risk.rules[0].when)
+    assert find_rsi_condition(risk.rules[0].when) is None
+
+
+def test_sma_slope_yaml_shapes():
+    named = parse_condition({"sma_slope": {"period": 20, "timeframe": "15m", "compare": "ge"}})
+    assert isinstance(named, MaSlopeCond)
+    assert named.ma == "sma"
+    assert named.compare == "flat_or_rising"
+    ema_slope = parse_condition({"ema_slope": {"period": 9, "timeframe": "5m", "compare": "rising"}})
+    assert isinstance(ema_slope, MaSlopeCond)
+    assert ema_slope.ma == "ema"
+    assert ema_slope.compare == "rising"
+    assert ema_slope.timeframe == "5Min"
+    flat_up = parse_condition({"ema_slope": {"period": 9, "timeframe": "15m", "compare": "flat_or_rising"}})
+    assert isinstance(flat_up, MaSlopeCond)
+    assert flat_up.compare == "flat_or_rising"
     named = parse_condition({"volume_gt_prev": {"timeframe": "15m"}})
     assert isinstance(named, VolumePrevCond)
     assert named.compare == "above"

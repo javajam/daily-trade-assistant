@@ -21,6 +21,8 @@ from dta_bot.config import (
     find_rsi_condition,
     has_noon_short_stack,
     has_noon_stack,
+    has_pair_cross_ema_slope_entry,
+    has_pair_cross_slope_entry,
     has_volume_gt_prev,
     restrict_universe,
     rsi_filter_label,
@@ -619,7 +621,23 @@ def _noon_entry_assumption(config: Optional[BotConfig]) -> Optional[str]:
             continue
         rsi_cond = find_rsi_condition(rule.when)
         period = rsi_cond.period if rsi_cond is not None else 14
-        if has_noon_stack(rule.when):
+        if has_pair_cross_ema_slope_entry(rule.when):
+            long_txt = (
+                "Long: EMA(9) crosses above SMA(20) close-to-close "
+                "(prev EMA <= prev SMA and curr EMA > curr SMA — the inverse of "
+                "the ma_cross_close exit) AND EMA(9) on the signal bar is flat "
+                "or rising (EMA9[curr] >= EMA9[prev]). No SMA20 slope filter. "
+                "No RSI. No price-cross-above-EMA9 filter"
+            )
+        elif has_pair_cross_slope_entry(rule.when):
+            long_txt = (
+                "Long: EMA(9) crosses above SMA(20) close-to-close "
+                "(prev EMA <= prev SMA and curr EMA > curr SMA — the inverse of "
+                "the ma_cross_close exit) AND SMA(20) on the signal bar is flat "
+                "or rising (SMA20[curr] >= SMA20[prev]). No RSI. No price-cross-"
+                "above-EMA9 filter"
+            )
+        elif has_noon_stack(rule.when):
             below = rsi_cond.below if rsi_cond is not None and rsi_cond.below is not None else 70
             vol_txt = (
                 " AND signal-bar volume > previous-bar volume"
@@ -826,6 +844,16 @@ def session_gate_suffix(config: BotConfig) -> str:
         for r in config.rules
     ):
         bits.append("vol>prev")
+    if any(
+        r.enabled and r.action.type != "close" and has_pair_cross_slope_entry(r.when)
+        for r in config.rules
+    ):
+        bits.append("pair-cross SMA flat/rising")
+    if any(
+        r.enabled and r.action.type != "close" and has_pair_cross_ema_slope_entry(r.when)
+        for r in config.rules
+    ):
+        bits.append("pair-cross EMA flat/rising")
     return " (" + ", ".join(bits) + ")"
 
 

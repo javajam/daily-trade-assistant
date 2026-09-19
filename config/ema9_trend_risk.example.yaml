@@ -12,6 +12,8 @@
 # Prior lock-+1% 1% risk comparison:
 #   config/ema9_trend_risk_nobe_lock1.example.yaml
 # Named copy of this default: config/ema9_trend_risk_nobe_macross.example.yaml
+# Pair-cross entry + SMA20 flat/rising (same exit): config/ema9_trend_risk_nobe_pair_slope.example.yaml
+# Pair-cross entry + EMA9 flat/rising (same exit): config/ema9_trend_risk_nobe_pair_ema_slope.example.yaml
 # Optional stop siblings: config/ema9_trend_risk_nobe_fixed1.example.yaml
 # and config/ema9_trend_risk_nobe_trail1.example.yaml.
 # TSLA / MU 1% sibling: config/ema9_trend_risk_tsla_mu.example.yaml

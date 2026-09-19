@@ -804,6 +804,87 @@ def test_ema_sma_cross_up_enters_at_next_open():
     assert result.trades[0].exit_reason == "eod"
 
 
+def _pair_slope_rule(**action_kw) -> RuleSpec:
+    defaults = dict(
+        type="buy",
+        size=SizeSpec(type="shares", value=10),
+        exit="ma_cross_close",
+        exit_ema_period=9,
+        exit_sma_period=20,
+        stop_loss_pct=None,
+    )
+    defaults.update(action_kw)
+    return _buy_rule(
+        id="ema9",
+        when=parse_condition(
+            {
+                "all": [
+                    {
+                        "ema_sma_cross": {
+                            "ema_period": 9,
+                            "sma_period": 20,
+                            "timeframe": "15m",
+                            "direction": "bullish",
+                        }
+                    },
+                    {"sma_slope": {"period": 20, "timeframe": "15m", "compare": "flat_or_rising"}},
+                ]
+            }
+        ),
+        action=ActionSpec(**defaults),
+    )
+
+
+def test_pair_cross_sma_slope_enters_at_next_open():
+    warmup = _pair_cross_warmup()
+    fill = Bar(bar(21, 100.5, 100.8, 100.4, 100.5).timestamp, 100.5, 100.8, 100.4, 100.5, 1000)
+    result = run_backtest(_cfg(_pair_slope_rule()), {("AAPL", "15Min"): warmup + [fill]})
+    assert result.report.signals == 1
+    assert "ema_sma_cross matched (bullish)" in result.signals[0].reason
+    assert "sma_slope matched (flat_or_rising)" in result.signals[0].reason
+    assert result.report.trades == 1
+    assert result.trades[0].entry_price == 100.5
+    assert result.trades[0].exit_reason == "eod"
+
+
+def test_pair_cross_ema_slope_enters_at_next_open():
+    warmup = _pair_cross_warmup()
+    fill = Bar(bar(21, 100.5, 100.8, 100.4, 100.5).timestamp, 100.5, 100.8, 100.4, 100.5, 1000)
+    rule = _buy_rule(
+        id="ema9",
+        when=parse_condition(
+            {
+                "all": [
+                    {
+                        "ema_sma_cross": {
+                            "ema_period": 9,
+                            "sma_period": 20,
+                            "timeframe": "15m",
+                            "direction": "bullish",
+                        }
+                    },
+                    {"ema_slope": {"period": 9, "timeframe": "15m", "compare": "flat_or_rising"}},
+                ]
+            }
+        ),
+        action=ActionSpec(
+            type="buy",
+            size=SizeSpec(type="shares", value=10),
+            exit="ma_cross_close",
+            exit_ema_period=9,
+            exit_sma_period=20,
+            stop_loss_pct=None,
+        ),
+    )
+    result = run_backtest(_cfg(rule), {("AAPL", "15Min"): warmup + [fill]})
+    assert result.report.signals == 1
+    assert "ema_sma_cross matched (bullish)" in result.signals[0].reason
+    assert "ema_slope matched (flat_or_rising)" in result.signals[0].reason
+    assert result.report.trades == 1
+    assert result.trades[0].entry_price == 100.5
+    assert result.trades[0].exit_reason == "eod"
+
+
 def test_ema_sma_cross_close_exits_at_that_bar_close():
     # Same prices as the next-open ma_cross test: cross-under close is 99.2.
     # ma_cross_close fills at that close, not the next open (99.15).

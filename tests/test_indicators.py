@@ -1,4 +1,4 @@
-from dta_bot.indicators import ema, last_two_ma, last_two_ma_pair, ma_cross, ma_pair_cross, rsi, sma
+from dta_bot.indicators import ema, last_two_ma, last_two_ma_pair, ma_cross, ma_pair_cross, ma_slope, rsi, sma
 
 
 def test_sma():
@@ -50,6 +50,20 @@ def test_ema9_sma20_pair_cross_up_and_down():
     assert ma_pair_cross(down, 9, 20, direction="bearish") is True
     assert ma_pair_cross(down, 9, 20, direction="bullish") is False
     assert last_two_ma_pair([10.0] * 20, 9, 20) is None
+
+
+def test_sma_slope_flat_or_rising():
+    rising = [float(i) for i in range(1, 22)]
+    assert ma_slope(rising, 20, kind="sma", compare="flat_or_rising") is True
+    assert ma_slope(rising, 20, kind="sma", compare="rising") is True
+    falling = [float(i) for i in range(22, 1, -1)]
+    assert ma_slope(falling, 20, kind="sma", compare="flat_or_rising") is False
+    assert ma_slope(falling, 20, kind="sma", compare="falling") is True
+    flat = [10.0] * 21
+    assert ma_slope(flat, 20, kind="sma", compare="flat_or_rising") is True
+    assert ma_slope(flat, 20, kind="sma", compare="rising") is False
+    assert ma_slope(flat, 20, kind="sma", compare="flat") is True
+    assert ma_slope([10.0] * 20, 20, kind="sma") is None
 
 
 def test_rsi_mixed():

@@ -411,6 +411,27 @@ def test_run_rule_books_prefixes_and_soxl_breakout():
     assert any("ma_cross_close" in n and "close-to-close" in n for n in macross_notes)
     assert any("that close wins" in n for n in macross_notes)
     assert not any("signal-bar volume > previous-bar volume" in n for n in macross_notes)
+    pair_slope = load_config("config/ema9_trend_bracket_nobe_pair_slope.example.yaml")
+    assert session_gate_suffix(pair_slope) == (
+        " (cutoff 12:00, flat 15:55, MA-cross close, pair-cross SMA flat/rising)"
+    )
+    slope_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, pair_slope)
+    assert any("EMA(9) crosses above SMA(20) close-to-close" in n for n in slope_notes)
+    assert any("SMA20[curr] >= SMA20[prev]" in n for n in slope_notes)
+    assert any("No RSI" in n and "No price-cross-" in n for n in slope_notes)
+    assert any("Fill at the next bar open" in n for n in slope_notes)
+    assert not any("close crosses above EMA(9)" in n for n in slope_notes)
+    pair_ema = load_config("config/ema9_trend_bracket_nobe_pair_ema_slope.example.yaml")
+    assert session_gate_suffix(pair_ema) == (
+        " (cutoff 12:00, flat 15:55, MA-cross close, pair-cross EMA flat/rising)"
+    )
+    ema_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, pair_ema)
+    assert any("EMA(9) crosses above SMA(20) close-to-close" in n for n in ema_notes)
+    assert any("EMA9[curr] >= EMA9[prev]" in n for n in ema_notes)
+    assert any("No SMA20 slope filter" in n for n in ema_notes)
+    assert not any("SMA20[curr] >= SMA20[prev]" in n for n in ema_notes)
+    assert any("Fill at the next bar open" in n for n in ema_notes)
+    assert not any("close crosses above EMA(9)" in n for n in ema_notes)
     combo = load_config("config/ema9_trend_bracket_nobe_lock1_macross.example.yaml")
     assert session_gate_suffix(combo) == (
         " (cutoff 12:00, flat 15:55, MA-cross close, lock +1.0%)"

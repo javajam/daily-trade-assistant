@@ -407,8 +407,37 @@ class MaPairCrossCond(BaseModel):
         return normalize(v)
 
 
+class MaSlopeCond(BaseModel):
+    """Signal-bar MA vs previous-bar MA (SMA20[curr] >= SMA20[prev], etc.)."""
+
+    kind: Literal["ma_slope"] = "ma_slope"
+    ma: Literal["sma", "ema"] = "sma"
+    period: int = Field(..., ge=2)
+    timeframe: str
+    compare: Literal["flat_or_rising", "rising", "falling", "flat_or_falling", "flat"] = (
+        "flat_or_rising"
+    )
+
+    @field_validator("timeframe")
+    @classmethod
+    def _tf(cls, v: str) -> str:
+        return normalize(v)
+
+    @field_validator("compare", mode="before")
+    @classmethod
+    def _compare(cls, v: Any) -> str:
+        return _normalize_slope_compare(v)
+
+
 LeafCondition = Union[
-    PatternCond, MaCond, RsiCond, VolumeCond, VolumePrevCond, MaCrossCond, MaPairCrossCond
+    PatternCond,
+    MaCond,
+    RsiCond,
+    VolumeCond,
+    VolumePrevCond,
+    MaCrossCond,
+    MaPairCrossCond,
+    MaSlopeCond,
 ]
 
 
@@ -593,10 +622,28 @@ def _normalize_cross_direction(raw: Any, default: str = "bullish") -> str:
     return direction
 
 
+def _normalize_slope_compare(raw: Any, default: str = "flat_or_rising") -> str:
+    if raw is None:
+        return default
+    compare = str(raw).strip().lower().replace("-", "_").replace(" ", "_")
+    if compare in {"flat_or_rising", "rising_or_flat", "ge", "gte", "not_falling"}:
+        return "flat_or_rising"
+    if compare in {"rising", "gt", "up", "above"}:
+        return "rising"
+    if compare in {"falling", "lt", "down", "below"}:
+        return "falling"
+    if compare in {"flat_or_falling", "falling_or_flat", "le", "lte", "not_rising"}:
+        return "flat_or_falling"
+    if compare in {"flat", "eq", "unchanged"}:
+        return "flat"
+    return default
+
+
 _PAIR_CROSS_KEYS = ("ema_sma_cross", "ma_pair_cross", "ema_cross_sma")
 _RSI_LEAF_KEYS = ("rsi", "rsi_below", "rsi_above")
 _VOLUME_PREV_KEYS = ("volume_gt_prev", "volume_vs_prev", "volume_above_prev")
 _VOLUME_PREV_VS = frozenset({"prev", "previous", "prior", "last"})
+_SLOPE_KEYS = ("sma_slope", "ema_slope", "ma_slope")
 
 
 def _volume_prev_compare(raw: dict[str, Any], default: str = "above") -> str:
@@ -667,6 +714,52 @@ def has_pair_cross(cond: AnyCondition) -> bool:
     if isinstance(cond, GroupCond):
         return any(has_pair_cross(child) for child in cond.conditions)
     return False
+
+
+def find_ma_slope_condition(cond: AnyCondition) -> Optional[MaSlopeCond]:
+    """First MA-slope leaf in a condition tree, if any."""
+    if isinstance(cond, MaSlopeCond):
+        return cond
+    if isinstance(cond, GroupCond):
+        for child in cond.conditions:
+            found = find_ma_slope_condition(child)
+            if found is not None:
+                return found
+    return None
+
+
+def has_sma_flat_or_rising(cond: AnyCondition) -> bool:
+    """True when the tree requires SMA[curr] >= SMA[prev] on the signal bar."""
+    return any(
+        isinstance(leaf, MaSlopeCond) and leaf.ma == "sma" and leaf.compare == "flat_or_rising"
+        for leaf in _flatten_conditions(cond)
+    )
+
+
+def has_ema_flat_or_rising(cond: AnyCondition) -> bool:
+    """True when the tree requires EMA[curr] >= EMA[prev] on the signal bar."""
+    return any(
+        isinstance(leaf, MaSlopeCond) and leaf.ma == "ema" and leaf.compare == "flat_or_rising"
+        for leaf in _flatten_conditions(cond)
+    )
+
+
+def has_pair_cross_slope_entry(cond: AnyCondition) -> bool:
+    """Bullish EMA/SMA pair-cross plus SMA flat-or-rising (no price×EMA9 / RSI)."""
+    leaves = _flatten_conditions(cond)
+    has_cross = any(
+        isinstance(leaf, MaPairCrossCond) and leaf.direction == "bullish" for leaf in leaves
+    )
+    return has_cross and has_sma_flat_or_rising(cond)
+
+
+def has_pair_cross_ema_slope_entry(cond: AnyCondition) -> bool:
+    """Bullish EMA/SMA pair-cross plus EMA flat-or-rising (no SMA-slope / price×EMA9 / RSI)."""
+    leaves = _flatten_conditions(cond)
+    has_cross = any(
+        isinstance(leaf, MaPairCrossCond) and leaf.direction == "bullish" for leaf in leaves
+    )
+    return has_cross and has_ema_flat_or_rising(cond) and not has_sma_flat_or_rising(cond)
 
 
 def _flatten_conditions(cond: AnyCondition) -> list[AnyCondition]:
@@ -817,6 +910,32 @@ def _parse_ma_cross(raw: dict[str, Any], default_timeframe: Optional[str] = None
     )
 
 
+def _parse_ma_slope(raw: dict[str, Any], default_timeframe: Optional[str] = None) -> MaSlopeCond:
+    block: dict[str, Any] = {}
+    ma = "sma"
+    if "ema_slope" in raw:
+        ma = "ema"
+        block = raw.get("ema_slope") if isinstance(raw.get("ema_slope"), dict) else {}
+    elif "sma_slope" in raw:
+        ma = "sma"
+        block = raw.get("sma_slope") if isinstance(raw.get("sma_slope"), dict) else {}
+    elif "ma_slope" in raw:
+        block = raw.get("ma_slope") if isinstance(raw.get("ma_slope"), dict) else {}
+    if not isinstance(block, dict):
+        block = {}
+    skip = {*_SLOPE_KEYS}
+    merged = {**block, **{k: v for k, v in raw.items() if k not in skip}}
+    kind = merged.get("ma") or merged.get("kind") or ma
+    if kind not in {"sma", "ema"}:
+        kind = ma
+    return MaSlopeCond(
+        ma=kind,
+        period=int(merged.get("period", 20)),
+        timeframe=_condition_timeframe(merged, raw, default=default_timeframe),
+        compare=merged.get("compare", merged.get("slope", "flat_or_rising")),
+    )
+
+
 def _parse_leaf(raw: dict[str, Any], default_timeframe: Optional[str] = None) -> LeafCondition:
     """Accept several human-friendly YAML shapes for a single condition."""
     if "pattern" in raw:
@@ -831,6 +950,8 @@ def _parse_leaf(raw: dict[str, Any], default_timeframe: Optional[str] = None) ->
         return _parse_ma_pair_cross(raw, default_timeframe=default_timeframe)
     if any(key in raw for key in ("ema_cross", "sma_cross", "ma_cross", "cross")):
         return _parse_ma_cross(raw, default_timeframe=default_timeframe)
+    if any(key in raw for key in _SLOPE_KEYS):
+        return _parse_ma_slope(raw, default_timeframe=default_timeframe)
     if "sma" in raw or "ema" in raw or "price_vs_ma" in raw:
         block = raw.get("sma") or raw.get("ema") or raw.get("price_vs_ma") or {}
         if not isinstance(block, dict):

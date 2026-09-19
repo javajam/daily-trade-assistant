@@ -13,6 +13,8 @@ from dta_bot.config import (
     BotConfig,
     condition_timeframes,
     find_rsi_condition,
+    has_ema_flat_or_rising,
+    has_sma_flat_or_rising,
     has_volume_gt_prev,
     load_config,
     restrict_universe,
@@ -263,10 +265,16 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 bits.append(f"> {rsi_cond.above:g}")
             rsi_txt = f" rsi=RSI{rsi_cond.period} {' '.join(bits)}" if bits else f" rsi=RSI{rsi_cond.period}"
         vol_txt = " volume_gt_prev" if has_volume_gt_prev(rule.when) else ""
+        if has_ema_flat_or_rising(rule.when):
+            slope_txt = " ema_slope=flat_or_rising"
+        elif has_sma_flat_or_rising(rule.when):
+            slope_txt = " sma_slope=flat_or_rising"
+        else:
+            slope_txt = ""
         print(
             f"    - {rule.id}: enabled={rule.enabled} symbols={syms} "
             f"action={rule.action.type} exit={rule.action.exit} "
-            f"cooldown={rule.cooldown_minutes}m tf={tfs}{size_txt}{stop_txt}{be_txt}{ma_txt}{rsi_txt}{vol_txt}"
+            f"cooldown={rule.cooldown_minutes}m tf={tfs}{size_txt}{stop_txt}{be_txt}{ma_txt}{rsi_txt}{vol_txt}{slope_txt}"
         )
     return 0
 
