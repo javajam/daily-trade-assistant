@@ -61,6 +61,7 @@ class Broker(Protocol):
     def cancel_order(self, order_id: str) -> None: ...
     def cancel_all_orders(self) -> None: ...
     def close_position(self, symbol: str) -> dict[str, Any]: ...
+    def list_orders(self) -> list[dict[str, Any]]: ...
 
 
 class AlpacaBroker:
@@ -178,11 +179,31 @@ class AlpacaBroker:
         data = self._request("DELETE", f"/v2/positions/{symbol}")
         return data if isinstance(data, dict) else {}
 
+    def list_orders(self) -> list[dict[str, Any]]:
+        data = self._request("GET", "/v2/orders")
+        rows = data if isinstance(data, list) else []
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            out.append(
+                {
+                    "id": str(row.get("id") or ""),
+                    "symbol": str(row.get("symbol") or "").upper(),
+                    "side": str(row.get("side") or ""),
+                    "qty": row.get("qty"),
+                    "status": str(row.get("status") or ""),
+                    "type": str(row.get("type") or row.get("order_type") or ""),
+                    "raw": row,
+                }
+            )
+        return out
+
 
 class DryRunBroker:
     """Satisfies Broker but never sends orders. Used for --dry-run."""
 
-    def __init__(self, inner: Optional[AlpacaBroker] = None, equity: float = 100_000.0) -> None:
+    def __init__(self, inner: Optional[Broker] = None, equity: float = 100_000.0) -> None:
         self.inner = inner
         self.mode = f"dry-run/{inner.mode if inner else 'offline'}"
         self._equity = equity
@@ -220,19 +241,61 @@ class DryRunBroker:
         log.info("DRY-RUN would close position %s", symbol)
         return {"dry_run": True, "symbol": symbol}
 
+    def list_orders(self) -> list[dict[str, Any]]:
+        if self.inner:
+            return self.inner.list_orders()
+        return []
 
-def build_broker(*, allow_live: bool, dry_run: bool) -> Broker:
+
+def build_broker(
+    *,
+    allow_live: bool,
+    dry_run: bool,
+    name: str = "alpaca",
+    tradier_endpoint: Optional[str] = None,
+    tradier_base_url: Optional[str] = None,
+    tradier_preview: bool = True,
+) -> Broker:
+    broker_name = (name or "alpaca").strip().lower()
+    if broker_name in {"tradier", "sandbox.tradier", "tradier_sandbox"}:
+        from dta_bot.tradier import TradierBroker, resolve_tradier_creds, resolve_tradier_url
+
+        url, mode = resolve_tradier_url(
+            allow_live=allow_live,
+            endpoint=tradier_endpoint,
+            base_url=tradier_base_url,
+        )
+        token, account = resolve_tradier_creds()
+        inner: Optional[Broker] = None
+        if token and account:
+            inner = TradierBroker(
+                access_token=token,
+                account_id=account,
+                base_url=url,
+                mode=mode,
+                preview=tradier_preview,
+            )
+        elif not dry_run:
+            raise RuntimeError(
+                "TRADIER_ACCESS_TOKEN and TRADIER_ACCOUNT_ID are required to place orders. "
+                "Use --dry-run or a --fixture file to evaluate without credentials."
+            )
+        if dry_run:
+            return DryRunBroker(inner=inner)
+        assert inner is not None
+        return inner
+
     url, mode = resolve_trading_url(allow_live=allow_live)
     key, secret = resolve_api_keys()
-    inner: Optional[AlpacaBroker] = None
+    alpaca: Optional[AlpacaBroker] = None
     if key and secret:
-        inner = AlpacaBroker(api_key=key, api_secret=secret, base_url=url, mode=mode)
+        alpaca = AlpacaBroker(api_key=key, api_secret=secret, base_url=url, mode=mode)
     elif not dry_run:
         raise RuntimeError(
             "ALPACA_API_KEY / ALPACA_API_SECRET are required to place orders. "
             "Use --dry-run or a --fixture file to evaluate without credentials."
         )
     if dry_run:
-        return DryRunBroker(inner=inner)
-    assert inner is not None
-    return inner
+        return DryRunBroker(inner=alpaca)
+    assert alpaca is not None
+    return alpaca

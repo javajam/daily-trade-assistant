@@ -476,6 +476,20 @@ class Settings(BaseModel):
     max_open_positions: int = Field(default=10, ge=1)
     data_feed: str = "iex"
     lookback_bars: int = Field(default=80, ge=20)
+    # alpaca (default) | tradier. tradier uses TRADIER_* env + sandbox URL
+    # unless the live triple-gate is set.
+    broker: str = "alpaca"
+    # Bars for `run` / `evaluate` (not backtest --source).
+    # alpaca = Alpaca IEX (needs ALPACA_*). yahoo = Yahoo chart (no broker keys).
+    # tradier = Tradier timesales/history (needs TRADIER_ACCESS_TOKEN; sandbox
+    # tape is often empty — prefer yahoo when only routing orders to Tradier).
+    data_source: str = "alpaca"
+    # sandbox (default) | production. Production still needs the live gates.
+    tradier_endpoint: str = "sandbox"
+    # Optional full REST prefix, e.g. https://sandbox.tradier.com/v1
+    tradier_base_url: Optional[str] = None
+    # POST /accounts/{id}/orders/preview before each live place.
+    tradier_preview: bool = True
     # If set, every rule condition is rewritten to this bar size on load.
     # Per-condition timeframe still documents the default; cooldown stays minutes.
     timeframe: Optional[str] = None
@@ -486,6 +500,60 @@ class Settings(BaseModel):
     session_timezone: str = "America/New_York"
     entry_cutoff: Optional[str] = None
     flatten_by: Optional[str] = None
+
+    @field_validator("broker", mode="before")
+    @classmethod
+    def _broker(cls, v: Any) -> str:
+        if v is None or str(v).strip() == "":
+            return "alpaca"
+        key = str(v).strip().lower().replace("-", "_")
+        aliases = {
+            "alpaca": "alpaca",
+            "tradier": "tradier",
+            "sandbox.tradier": "tradier",
+            "tradier_sandbox": "tradier",
+            "tradier_paper": "tradier",
+        }
+        if key not in aliases:
+            raise ValueError("broker must be 'alpaca' or 'tradier'")
+        return aliases[key]
+
+    @field_validator("data_source", mode="before")
+    @classmethod
+    def _data_source(cls, v: Any) -> str:
+        if v is None or str(v).strip() == "":
+            return "alpaca"
+        key = str(v).strip().lower().replace("-", "_")
+        aliases = {
+            "alpaca": "alpaca",
+            "iex": "alpaca",
+            "yahoo": "yahoo",
+            "yfinance": "yahoo",
+            "tradier": "tradier",
+            "tradier_timesales": "tradier",
+        }
+        if key not in aliases:
+            raise ValueError("data_source must be 'alpaca', 'yahoo', or 'tradier'")
+        return aliases[key]
+
+    @field_validator("tradier_endpoint", mode="before")
+    @classmethod
+    def _tradier_endpoint(cls, v: Any) -> str:
+        if v is None or str(v).strip() == "":
+            return "sandbox"
+        key = str(v).strip().lower()
+        if key in {"sandbox", "paper"}:
+            return "sandbox"
+        if key in {"production", "live", "prod"}:
+            return "production"
+        raise ValueError("tradier_endpoint must be 'sandbox' or 'production'")
+
+    @field_validator("tradier_base_url", mode="before")
+    @classmethod
+    def _tradier_base_url(cls, v: Any) -> Optional[str]:
+        if v is None or str(v).strip() == "":
+            return None
+        return str(v).strip().rstrip("/")
 
     @field_validator("timeframe")
     @classmethod

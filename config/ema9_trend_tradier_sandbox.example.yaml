@@ -1,0 +1,76 @@
+# Locked EMA9 noon book → Tradier *sandbox* paper.
+#
+# Same rules as config/ema9_trend.example.yaml:
+#   AAPL+MSFT long-only 15m
+#   Entry: price cross above EMA9, close > SMA20, RSI(14)<70
+#   Exit: range > max prior 3 at close OR stop fill×0.99, whichever first
+#   entry_cutoff 12:00 ET, flatten_by 15:55 ET
+#
+# Orders go to https://sandbox.tradier.com/v1 (never production unless the
+# live triple-gate is set). Bars default to Yahoo so you do not need Alpaca
+# keys and do not depend on sandbox timesales (often empty/delayed).
+#
+#   cp .env.example .env   # set TRADIER_ACCESS_TOKEN + TRADIER_ACCOUNT_ID
+#   python -m dta_bot validate --config config/ema9_trend_tradier_sandbox.example.yaml
+#   python -m dta_bot status  --config config/ema9_trend_tradier_sandbox.example.yaml
+#   python -m dta_bot run --config config/ema9_trend_tradier_sandbox.example.yaml --once --dry-run
+#   python -m dta_bot run --config config/ema9_trend_tradier_sandbox.example.yaml --live-orders
+#
+# --live-orders still hits *sandbox* unless allow_live + TRADIER_LIVE_TRADING
+# + TRADIER_ALLOW_LIVE=I_UNDERSTAND and tradier_endpoint: production.
+# This repo never ships real tokens. Credentials are not verified here.
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"
+  flatten_by: "15:55"
+  broker: tradier
+  tradier_endpoint: sandbox
+  tradier_preview: true
+  # Yahoo bars + Tradier sandbox orders. Set tradier to use timesales instead.
+  data_source: yahoo
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Tradier sandbox paper of the locked noon book. 10 shares, hard 1% fill stop plus range>last-3 at close."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      exit: range_expansion
+      exit_range_bars: 3
+      stop_mode: entry_pct
+      stop_loss_pct: 1.0

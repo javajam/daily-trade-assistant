@@ -936,6 +936,28 @@ def test_ema9_trend_range3_fixed1_configs_load():
     assert has_noon_stack(risk.rules[0].when)
 
 
+def test_ema9_trend_tradier_sandbox_config_loads():
+    cfg = load_config("config/ema9_trend_tradier_sandbox.example.yaml")
+    assert cfg.settings.broker == "tradier"
+    assert cfg.settings.tradier_endpoint == "sandbox"
+    assert cfg.settings.tradier_preview is True
+    assert cfg.settings.data_source == "yahoo"
+    assert cfg.settings.allow_live is False
+    assert cfg.settings.dry_run is True
+    assert cfg.settings.paper is True
+    assert cfg.settings.entry_cutoff == "12:00"
+    assert cfg.settings.flatten_by == "15:55"
+    assert cfg.universe == ["AAPL", "MSFT"]
+    rule = cfg.rules[0]
+    assert rule.id == "ema9_trend"
+    assert has_noon_stack(rule.when)
+    assert rule.action.exit == "range_expansion"
+    assert rule.action.exit_range_bars == 3
+    assert rule.action.stop_mode == "entry_pct"
+    assert rule.action.stop_loss_pct == 1.0
+    assert rule.action.size and rule.action.size.value == 10
+
+
 def test_ema9_trend_lower_high_vol_configs_load():
     ten = load_config("config/ema9_trend_bracket_nobe_lh_vol.example.yaml")
     rule = ten.rules[0]
