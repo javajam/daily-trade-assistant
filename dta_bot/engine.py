@@ -13,6 +13,7 @@ from dta_bot.config import (
     MaCond,
     MaCrossCond,
     MaPairCrossCond,
+    MaSlopeCond,
     PatternCond,
     RsiCond,
     RuleSpec,
@@ -123,6 +124,47 @@ def eval_leaf(cond: AnyCondition, symbol: str, bars_by_key: BarMap) -> Condition
                 "direction": cond.direction,
                 "ema_period": cond.ema_period,
                 "sma_period": cond.sma_period,
+            },
+        )
+
+    if isinstance(cond, MaSlopeCond):
+        bars = bars_by_key.get((symbol, cond.timeframe), [])
+        closes = _closes(bars)
+        pair = last_two_ma(closes, cond.period, cond.ma)
+        need = cond.period + 1
+        if pair is None:
+            return ConditionResult(
+                False,
+                f"{cond.ma}_slope {cond.compare} @{cond.timeframe}: "
+                f"need {need} closes, have {len(closes)}",
+            )
+        _, prev_ma, _, curr_ma = pair
+        if cond.compare == "rising":
+            ok = curr_ma > prev_ma
+            cmp = ">"
+        elif cond.compare == "falling":
+            ok = curr_ma < prev_ma
+            cmp = "<"
+        elif cond.compare == "flat_or_falling":
+            ok = curr_ma <= prev_ma
+            cmp = "<="
+        elif cond.compare == "flat":
+            ok = curr_ma == prev_ma
+            cmp = "=="
+        else:
+            ok = curr_ma >= prev_ma
+            cmp = ">="
+        verb = "matched" if ok else "not found"
+        return ConditionResult(
+            ok,
+            f"{cond.ma}_slope {verb} ({cond.compare}): "
+            f"{cond.ma.upper()}{cond.period} curr {curr_ma:.4f} {cmp} prev {prev_ma:.4f} "
+            f"@{cond.timeframe} → {ok}",
+            {
+                "prev_ma": prev_ma,
+                "ma": curr_ma,
+                "compare": cond.compare,
+                "period": cond.period,
             },
         )
 

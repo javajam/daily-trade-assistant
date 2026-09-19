@@ -128,3 +128,29 @@ def ma_pair_cross(
     if direction == "bearish":
         return prev_ema >= prev_sma and curr_ema < curr_sma
     return prev_ema <= prev_sma and curr_ema > curr_sma
+
+
+def ma_slope(
+    values: Sequence[float],
+    period: int,
+    *,
+    kind: str = "sma",
+    compare: str = "flat_or_rising",
+) -> Optional[bool]:
+    """Signal-bar MA vs previous-bar MA. Needs ``period + 1`` values.
+
+    ``flat_or_rising`` is curr MA >= prev MA (the noon pair-cross slope gate).
+    """
+    pair = last_two_ma(values, period, kind)
+    if pair is None:
+        return None
+    _, prev_ma, _, curr_ma = pair
+    if compare in {"rising", "gt", "up"}:
+        return curr_ma > prev_ma
+    if compare in {"falling", "lt", "down"}:
+        return curr_ma < prev_ma
+    if compare in {"flat_or_falling", "falling_or_flat", "le", "not_rising"}:
+        return curr_ma <= prev_ma
+    if compare in {"flat", "eq"}:
+        return curr_ma == prev_ma
+    return curr_ma >= prev_ma
