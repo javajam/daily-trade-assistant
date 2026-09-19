@@ -1,16 +1,22 @@
 # Refined EMA9 day-trade — 1% equity-risk on 5-minute bars.
 #
-# Same noon long-only range-expansion as config/ema9_trend_risk.example.yaml.
+# Same locked noon range-expansion as config/ema9_trend_risk.example.yaml.
 # 1% equity risk sized off a 1.0% reference R (no live percent stop).
-# every indicator on 5m. flatten_by 15:55 ET maps to the 15:50 ET 5m bar close.
-# Cooldown stays 60 wall-clock minutes.
+# Every indicator is computed on 5m bars with the same lengths as 15m
+# (EMA 9, SMA 20, RSI 14). Not resampled from 15m.
+# flatten_by 15:55 ET maps to the 15:50 ET 5m bar close.
+# Same-bar range_expansion + flatten → range_expansion. Cooldown stays
+# 60 wall-clock minutes.
 #
 #   python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml \
 #     --compare-config config/ema9_trend_risk_5m.example.yaml \
 #     --source yahoo --start 2026-08-01 --end 2026-08-31 --combined-only \
-#     --symbols AAPL,MSFT
+#     --symbols AAPL,MSFT \
+#     --output artifacts/ema9_aug2026_risk_range3_5m_vs_15m.json \
+#     --report artifacts/ema9_aug2026_risk_range3_5m_vs_15m.md
 #
 # Equivalent: --config config/ema9_trend_risk.example.yaml --timeframe 5m
+# Writeup: artifacts/ema9_range3_5m_vs_15m.md
 
 settings:
   paper: true
