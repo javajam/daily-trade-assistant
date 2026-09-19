@@ -5,6 +5,7 @@
 # locked MA-cross-at-close 1% risk book:
 #   shares = floor((0.01 * equity) / (0.01 * price))
 # Fill at the next bar open.
+# Writeup: artifacts/ema9_pair_slope.md
 #
 #   python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml \
 #     --compare-config config/ema9_trend_risk_nobe_pair_slope.example.yaml \

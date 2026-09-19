@@ -12,6 +12,7 @@
 #      ma_cross_close exit convention).
 #   2. SMA(20) flat or rising: SMA20[curr] >= SMA20[prev].
 # Fill at the next bar open (same as the locked book).
+# Writeup: artifacts/ema9_pair_slope.md
 #
 #   python -m dta_bot backtest --config config/ema9_trend.example.yaml \
 #     --compare-config config/ema9_trend_bracket_nobe_pair_slope.example.yaml \
