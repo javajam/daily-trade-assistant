@@ -269,7 +269,7 @@ python -m dta_bot backtest --config config/ema9_trend.example.yaml --timeframe 5
 python -m dta_bot backtest --config config/ema9_trend.example.yaml \
   --compare-config config/ema9_trend_5m.example.yaml --source yahoo \
   --combined-only --symbols AAPL,MSFT \
-  --output artifacts/ema9_lock_5m_vs_15m.json --report artifacts/ema9_lock_5m_vs_15m.md
+  --output artifacts/ema9_range3_5m_vs_15m.json --report artifacts/ema9_range3_5m_vs_15m.md
 ```
 
 ```bash

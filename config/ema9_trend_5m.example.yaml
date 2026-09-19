@@ -1,18 +1,24 @@
-# Refined EMA9 day-trade on 5-minute bars — same long-only range-expansion
+# Refined EMA9 day-trade on 5-minute bars — same locked range-expansion
 # as ema9_trend.example.yaml.
 #
-# Identical except settings.timeframe / every condition is 5m. Cooldown stays
-# 60 wall-clock minutes. Yahoo 5m history is capped at ~60 days.
+# Identical rules; every indicator is computed on 5m bars with the same
+# lengths as 15m (EMA 9, SMA 20, RSI 14). Not resampled from 15m.
+# Range-expansion exit uses 5m high−low vs the prior three 5m bars.
+# Cooldown stays 60 wall-clock minutes. Yahoo 5m history is capped at ~60 days.
 #
 # flatten_by 15:55 ET force-flats at the 15:50 ET 5m bar close (last 5m bar
-# that completes at/before 15:55).
+# that completes at/before 15:55). Same-bar range_expansion + flatten →
+# range_expansion (close-fill wins). Not armed on the entry/fill bar.
 #
 #   python -m dta_bot validate --config config/ema9_trend_5m.example.yaml
 #   python -m dta_bot backtest --config config/ema9_trend.example.yaml \
 #     --compare-config config/ema9_trend_5m.example.yaml --source yahoo \
-#     --combined-only --symbols AAPL,MSFT
+#     --combined-only --symbols AAPL,MSFT \
+#     --output artifacts/ema9_range3_5m_vs_15m.json \
+#     --report artifacts/ema9_range3_5m_vs_15m.md
 #
 # Equivalent: --config config/ema9_trend.example.yaml --timeframe 5m
+# Writeup: artifacts/ema9_range3_5m_vs_15m.md
 
 settings:
   paper: true
