@@ -54,9 +54,8 @@ def test_ema9_trend_config_loads():
     assert any(isinstance(c, MaCrossCond) for c in rule.when.conditions)
     rsi = find_rsi_condition(rule.when)
     assert rsi is not None and rsi.below == 70
-    assert rule.action.exit == "ma_cross_close"
-    assert rule.action.exit_ema_period == 9
-    assert rule.action.exit_sma_period == 20
+    assert rule.action.exit == "range_expansion"
+    assert rule.action.exit_range_bars == 3
     assert rule.action.stop_loss_pct is None
     assert rule.action.take_profit_pct is None
     assert rule.action.breakeven_after_bars == 0
@@ -85,9 +84,8 @@ def test_ema9_trend_risk_config_loads():
     assert cfg.universe == ["AAPL", "MSFT"]
     assert [r.id for r in cfg.rules] == ["ema9_trend"]
     rule = cfg.rules[0]
-    assert rule.action.exit == "ma_cross_close"
-    assert rule.action.exit_ema_period == 9
-    assert rule.action.exit_sma_period == 20
+    assert rule.action.exit == "range_expansion"
+    assert rule.action.exit_range_bars == 3
     assert rule.action.stop_loss_pct is None
     assert rule.action.take_profit_pct is None
     assert rule.action.size is not None
@@ -103,7 +101,8 @@ def test_ema9_trend_risk_config_loads():
     five = load_config("config/ema9_trend_risk_5m.example.yaml")
     assert five.settings.timeframe == "5Min"
     assert [r.id for r in five.rules] == ["ema9_trend"]
-    assert five.rules[0].action.exit == "ma_cross_close"
+    assert five.rules[0].action.exit == "range_expansion"
+    assert five.rules[0].action.exit_range_bars == 3
     assert five.rules[0].action.stop_loss_pct is None
     assert five.rules[0].action.size is not None
     assert five.rules[0].action.size.type == "risk_pct"
@@ -117,9 +116,8 @@ def test_ema9_trend_bracket_config_keeps_ten_shares():
     assert cfg.universe == ["AAPL", "MSFT"]
     assert cfg.rules[0].action.size and cfg.rules[0].action.size.type == "shares"
     assert cfg.rules[0].action.size.value == 10
-    assert cfg.rules[0].action.exit == "ma_cross_close"
-    assert cfg.rules[0].action.exit_ema_period == 9
-    assert cfg.rules[0].action.exit_sma_period == 20
+    assert cfg.rules[0].action.exit == "range_expansion"
+    assert cfg.rules[0].action.exit_range_bars == 3
     assert cfg.rules[0].action.stop_loss_pct is None
     assert cfg.rules[0].action.take_profit_pct is None
     assert cfg.rules[0].action.breakeven_after_bars == 0
@@ -364,9 +362,8 @@ def test_ema9_trend_5m_config_loads():
     cfg = load_config("config/ema9_trend_5m.example.yaml")
     assert [r.id for r in cfg.rules] == ["ema9_trend"]
     assert cfg.rules[0].cooldown_minutes == 60
-    assert cfg.rules[0].action.exit == "ma_cross_close"
-    assert cfg.rules[0].action.exit_ema_period == 9
-    assert cfg.rules[0].action.exit_sma_period == 20
+    assert cfg.rules[0].action.exit == "range_expansion"
+    assert cfg.rules[0].action.exit_range_bars == 3
     assert cfg.rules[0].action.stop_loss_pct is None
     assert cfg.rules[0].action.take_profit_pct is None
     assert has_noon_stack(cfg.rules[0].when)
@@ -388,11 +385,12 @@ def test_with_timeframe_rewrites_ema9_conditions_and_keeps_cooldown():
     assert [r.cooldown_minutes for r in five.rules] == [60]
     assert [r.id for r in five.rules] == [r.id for r in cfg.rules]
     assert has_noon_stack(five.rules[0].when)
-    assert five.rules[0].action.exit == "ma_cross_close"
+    assert five.rules[0].action.exit == "range_expansion"
+    assert five.rules[0].action.exit_range_bars == 3
     assert condition_timeframes(five.rules[0].when) == {"5Min"}
     loaded_5m = load_config("config/ema9_trend.example.yaml", timeframe="5m")
     assert loaded_5m.all_symbol_timeframes() == five.all_symbol_timeframes()
-    assert loaded_5m.rules[0].action.exit == "ma_cross_close"
+    assert loaded_5m.rules[0].action.exit == "range_expansion"
     assert loaded_5m.rules[0].action.stop_loss_pct is None
 
 
@@ -1030,9 +1028,8 @@ def test_cli_validate_timeframe_override(capsys):
     out = capsys.readouterr().out
     assert "tf=5Min" in out
     assert "cooldown=60m" in out
-    assert "exit=ma_cross_close" in out
-    assert "ema_period=9" in out
-    assert "sma_period=20" in out
+    assert "exit=range_expansion" in out
+    assert "range_bars=3" in out
     assert "stop=off" in out
     assert "stop_mode=lock_plus" not in out
     assert "rsi=RSI14 < 70" in out

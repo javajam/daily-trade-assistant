@@ -112,11 +112,11 @@ def test_assumptions_rules_mention_ma_cross():
     assert any("noon day-trade stack" in n and "EMA(9)" in n and "SMA(20)" in n for n in ema_notes)
     assert not any("Short: close crosses below EMA(9)" in n for n in ema_notes)
     assert not any("RSI(14) > 30" in n for n in ema_notes)
-    assert any("ma_cross_close" in n and "close-to-close" in n for n in ema_notes)
+    assert any("range_expansion" in n and "high − low" in n for n in ema_notes)
     assert any("entry_cutoff=12:00" in n and "flatten_by=15:55" in n for n in ema_notes)
     assert not any("breakeven_after_bars: 1" in n for n in ema_notes)
     assert not any("stop_mode: lock_plus" in n for n in ema_notes)
-    assert session_gate_suffix(cfg) == " (cutoff 12:00, flat 15:55, MA-cross close)"
+    assert session_gate_suffix(cfg) == " (cutoff 12:00, flat 15:55, range>last-3)"
     pair = load_config("config/ema9_trend_pair.example.yaml")
     pair_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, pair)
     assert any("ma_cross" in n and "EMA(9)" in n and "SMA(20)" in n for n in pair_notes)

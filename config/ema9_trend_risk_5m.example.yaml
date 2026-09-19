@@ -1,6 +1,6 @@
 # Refined EMA9 day-trade — 1% equity-risk on 5-minute bars.
 #
-# Same noon long-only MA-cross as config/ema9_trend_risk.example.yaml.
+# Same noon long-only range-expansion as config/ema9_trend_risk.example.yaml.
 # 1% equity risk sized off a 1.0% reference R (no live percent stop).
 # every indicator on 5m. flatten_by 15:55 ET maps to the 15:50 ET 5m bar close.
 # Cooldown stays 60 wall-clock minutes.
@@ -36,7 +36,7 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "Noon book risk: 5m price crosses above EMA(9) while above SMA20 and RSI < 70. 1% equity risk sized off a 1.0% reference R (no live percent stop); EMA9×below SMA20 exit at that bar's close."
+    notes: "Noon book risk: 5m price crosses above EMA(9) while above SMA20 and RSI < 70. 1% equity risk sized off a 1.0% reference R (no live percent stop); exit when bar range > max of previous 3, fill at that close."
     when:
       all:
         - ema_cross:
@@ -58,6 +58,5 @@ rules:
         equity_risk: 0.01
         stop_pct: 1.0
       order: market
-      exit: ma_cross_close
-      exit_ema_period: 9
-      exit_sma_period: 20
+      exit: range_expansion
+      exit_range_bars: 3

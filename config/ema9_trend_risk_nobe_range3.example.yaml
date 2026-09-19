@@ -1,12 +1,12 @@
-# Same as the 10-share range-expansion (bigger than last 3) book, 1% equity-risk.
+# Named copy of the default 1% risk range-expansion book.
 #
 # No live percent stop (exit is range_expansion / session_flatten). Share
 # count uses a reference R of 1% of entry price so sizing stays comparable
-# to the locked MA-cross 1% risk book:
+# to the prior MA-cross 1% risk book:
 #   shares = floor((0.01 * equity) / (0.01 * price))
-# Fill at the next bar open. Writeup: artifacts/ema9_range3.md
+# Fill at the next bar open. Writeup: artifacts/ema9_range3_adopted.md
 #
-#   python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml \
+#   python -m dta_bot backtest --config config/ema9_trend_risk_nobe_macross.example.yaml \
 #     --compare-config config/ema9_trend_risk_nobe_range3.example.yaml \
 #     --source yahoo --start 2026-08-01 --end 2026-08-31 --combined-only \
 #     --symbols AAPL,MSFT \

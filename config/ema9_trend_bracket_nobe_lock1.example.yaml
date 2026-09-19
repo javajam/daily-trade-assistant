@@ -1,7 +1,8 @@
 # Prior default / comparison — lock-+1% (not the locked day-trade book).
 #
-# Default product is now MA-cross at close: config/ema9_trend.example.yaml
-# Writeup: artifacts/ema9_macross_adopted.md
+# Default product is now range>last-3: config/ema9_trend.example.yaml
+# Writeup: artifacts/ema9_range3_adopted.md
+# Prior MA-cross at close: config/ema9_trend_bracket_nobe_macross.example.yaml
 #
 # Named sibling so A/B/C stop-manage compares stay explicit:
 #   A fixed 1%: config/ema9_trend_bracket_nobe_fixed1.example.yaml
