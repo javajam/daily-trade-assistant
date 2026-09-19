@@ -187,6 +187,7 @@ rules:
         - ema_cross: { period: 9, timeframe: 15m, direction: bullish }  # or sma_cross
         - ema_sma_cross: { ema_period: 9, sma_period: 20, timeframe: 15m, direction: bullish }
         - sma_slope: { period: 20, timeframe: 15m, compare: flat_or_rising }  # SMA[curr] >= SMA[prev]
+        - ema_slope: { period: 9, timeframe: 15m, compare: flat_or_rising }   # EMA[curr] >= EMA[prev]
         - rsi: { period: 14, timeframe: 15m, below: 70 }        # above and/or below
         - volume: { period: 20, timeframe: 15m, multiplier: 1.2 }
         - volume_gt_prev: { timeframe: 15m }  # signal vol > previous bar (alias: volume: { vs: prev })

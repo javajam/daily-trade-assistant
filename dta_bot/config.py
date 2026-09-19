@@ -730,8 +730,18 @@ def find_ma_slope_condition(cond: AnyCondition) -> Optional[MaSlopeCond]:
 
 def has_sma_flat_or_rising(cond: AnyCondition) -> bool:
     """True when the tree requires SMA[curr] >= SMA[prev] on the signal bar."""
-    found = find_ma_slope_condition(cond)
-    return found is not None and found.ma == "sma" and found.compare == "flat_or_rising"
+    return any(
+        isinstance(leaf, MaSlopeCond) and leaf.ma == "sma" and leaf.compare == "flat_or_rising"
+        for leaf in _flatten_conditions(cond)
+    )
+
+
+def has_ema_flat_or_rising(cond: AnyCondition) -> bool:
+    """True when the tree requires EMA[curr] >= EMA[prev] on the signal bar."""
+    return any(
+        isinstance(leaf, MaSlopeCond) and leaf.ma == "ema" and leaf.compare == "flat_or_rising"
+        for leaf in _flatten_conditions(cond)
+    )
 
 
 def has_pair_cross_slope_entry(cond: AnyCondition) -> bool:
@@ -741,6 +751,15 @@ def has_pair_cross_slope_entry(cond: AnyCondition) -> bool:
         isinstance(leaf, MaPairCrossCond) and leaf.direction == "bullish" for leaf in leaves
     )
     return has_cross and has_sma_flat_or_rising(cond)
+
+
+def has_pair_cross_ema_slope_entry(cond: AnyCondition) -> bool:
+    """Bullish EMA/SMA pair-cross plus EMA flat-or-rising (no SMA-slope / price×EMA9 / RSI)."""
+    leaves = _flatten_conditions(cond)
+    has_cross = any(
+        isinstance(leaf, MaPairCrossCond) and leaf.direction == "bullish" for leaf in leaves
+    )
+    return has_cross and has_ema_flat_or_rising(cond) and not has_sma_flat_or_rising(cond)
 
 
 def _flatten_conditions(cond: AnyCondition) -> list[AnyCondition]:
