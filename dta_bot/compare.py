@@ -330,6 +330,22 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
                 "bar and the stop did not hit, ma_cross at that close wins over "
                 "session_flatten. No half-take. No pyramid."
             )
+        if action.stop_mode == "entry_pct" and action.stop_loss_pct:
+            return (
+                f"Exit is a hard {action.stop_loss_pct:g}% fill stop plus MA-cross at close "
+                f"(stop_mode: entry_pct and action.exit: ma_cross_close): after entry, leave "
+                f"when EMA({action.exit_ema_period}) crosses SMA({action.exit_sma_period}) "
+                "against the position and fill at that bar's close — the same fill convention "
+                "as ema_invalid / lower_high. Cross is EMA vs SMA close-to-close (not price vs MA). "
+                "Long: prev EMA >= prev SMA and curr EMA < curr SMA (cross-under). "
+                f"Hard {action.stop_loss_pct:g}% stop is also live (stop_mode: entry_pct): "
+                f"initial stop is fill × (1 − {action.stop_loss_pct:g}/100); it never moves "
+                "(not lock_plus). Whichever hits first wins: stop on this bar beats the "
+                "pair-cross (stop is checked first). If the cross bar is also the flatten "
+                "bar and the stop did not hit, ma_cross at that close wins over "
+                "session_flatten. Percent take-profit is ignored. No lock-at-+1%. "
+                "No half-take. No pyramid."
+            )
         return (
             f"Exit is MA-cross at close (action.exit: ma_cross_close): after entry, on "
             f"each completed signal-timeframe bar, leave when EMA({action.exit_ema_period}) "
