@@ -1,8 +1,10 @@
-# Named copy of the default 1% risk range-expansion book.
+# Prior locked 1% risk range-expansion book (no live percent stop).
+# Kept as a comparison example after the range3 + hard 1% fill-stop adoption.
+# Default 1% product is now config/ema9_trend_risk.example.yaml.
 #
 # No live percent stop (exit is range_expansion / session_flatten). Share
 # count uses a reference R of 1% of entry price so sizing stays comparable
-# to the prior MA-cross 1% risk book:
+# to the live-stop 1% risk book:
 #   shares = floor((0.01 * equity) / (0.01 * price))
 # Fill at the next bar open. Writeup: artifacts/ema9_range3_adopted.md
 #

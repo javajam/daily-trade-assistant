@@ -1,6 +1,8 @@
 # Noon EMA9 long-only AAPL+MSFT: range-expansion exit (bar bigger than last 3).
 #
-# Named copy of the locked day-trade book (config/ema9_trend.example.yaml).
+# Prior locked noon book: range-expansion only (no percent stop).
+# Kept as a comparison example after the range3 + hard 1% fill-stop adoption.
+# Default product is now config/ema9_trend.example.yaml (range + entry_pct).
 # No MA-cross. No percent stop. No lock_plus. No half-take. No pyramid.
 # No volume filter.
 #

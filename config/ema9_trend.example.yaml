@@ -1,34 +1,40 @@
 # Refined EMA9 day-trade — long-only (paper / dry_run). Default product.
 #
-# Universe AAPL / MSFT (not TSLA/MU). Chosen exit after the range>last-3 vs
-# MA-cross head-to-head: bar range (high − low) strictly greater than max of
-# the previous 3 bars (action.exit: range_expansion). Fill at that close.
-# Not armed on the entry/fill bar. No MA-cross, no lock_plus, no percent stop,
-# no half-take, no pyramid, no volume filter.
-# Writeup: artifacts/ema9_range3_adopted.md
+# Universe AAPL / MSFT (not TSLA/MU). Chosen after the range>last-3 + hard 1%
+# fill-stop vs pure range3 head-to-head: bar range (high − low) strictly
+# greater than max of the previous 3 bars (action.exit: range_expansion),
+# plus a fixed 1% protective stop at fill × 0.99 (stop_mode: entry_pct).
+# Fill range at that close. Not armed on the entry/fill bar. The stop never
+# moves — not lock_plus. No MA-cross, no half-take, no pyramid, no volume
+# filter.
+# Writeup: artifacts/ema9_range3_fixed1_adopted.md
 #
 # Long (ema9_trend):
 #   close crosses above EMA(9) AND close > SMA(20) AND RSI(14) < 70
-#   Exit: completed bar after fill with range > max of previous 3 → flatten
-#   at that bar's close. Session flatten still applies; if the expansion bar
-#   is also the flatten bar, range_expansion at that close wins.
+#   Exit (whichever first):
+#     1. Hard stop: bar low ≤ fill × 0.99
+#     2. Completed bar after fill with range > max of previous 3 → flatten
+#        at that bar's close
+#     3. Session flatten 15:55
+#   Same-bar stop + range → stop. Same-bar range + flatten (no stop) →
+#   range_expansion at that close.
 #
-# Fill at the next bar open. No fixed take-profit. No live percent stop.
-# Exits = range_expansion / session_flatten.
+# Fill at the next bar open. No fixed take-profit.
+# Exits = stop / range_expansion / session_flatten.
 #
 # Session gates (America/New_York) — toggle either to null / off:
 #   entry_cutoff: "12:00"   # skip fills at/after this clock; null = off
 #   flatten_by: "15:55"     # force-flat at flatten-bar close; null = off
 #
-# Named copy of this default: config/ema9_trend_bracket_nobe_range3.example.yaml
+# Named copy of this default: config/ema9_trend_bracket_nobe_range3_fixed1.example.yaml
+# Prior pure range>last-3 (no percent stop, same entry / session):
+#   config/ema9_trend_bracket_nobe_range3.example.yaml
 # Prior MA-cross at close (same entry / session):
 #   config/ema9_trend_bracket_nobe_macross.example.yaml
 # Prior lock-+1% comparison (same entry / session):
 #   config/ema9_trend_bracket_nobe_lock1.example.yaml
 #   config/ema9_trend_risk_nobe_lock1.example.yaml
 # Optional stop siblings (same entry / session):
-#   range>last-3 + hard 1% fill stop (never moves):
-#     config/ema9_trend_bracket_nobe_range3_fixed1.example.yaml
 #   fixed 1% from fill only:  config/ema9_trend_bracket_nobe_fixed1.example.yaml
 #   trail 1% from peak:  config/ema9_trend_bracket_nobe_trail1.example.yaml
 # Lower-high + vol>prev (no lock-+1%): config/ema9_trend_bracket_nobe_lh_vol.example.yaml
@@ -45,10 +51,10 @@
 #
 #   python -m dta_bot validate --config config/ema9_trend.example.yaml
 #   python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yahoo \
-#     --compare-config config/ema9_trend_bracket_nobe_macross.example.yaml \
+#     --compare-config config/ema9_trend_bracket_nobe_range3.example.yaml \
 #     --combined-only --symbols AAPL,MSFT \
-#     --output artifacts/ema9_range3.json \
-#     --report artifacts/ema9_range3.md
+#     --output artifacts/ema9_range3_fixed1.json \
+#     --report artifacts/ema9_range3_fixed1.md
 
 settings:
   paper: true
@@ -74,7 +80,7 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "Noon book: 15m price crosses above EMA(9) while above SMA20 and RSI < 70. 10 shares, exit when bar range > max of previous 3, fill at that close. No percent stop."
+    notes: "Noon book: 15m price crosses above EMA(9) while above SMA20 and RSI < 70. 10 shares, hard 1% fill stop plus exit when bar range > max of previous 3, fill at that close. Not lock_plus."
     when:
       all:
         - ema_cross:
@@ -97,3 +103,5 @@ rules:
       order: market
       exit: range_expansion
       exit_range_bars: 3
+      stop_mode: entry_pct
+      stop_loss_pct: 1.0

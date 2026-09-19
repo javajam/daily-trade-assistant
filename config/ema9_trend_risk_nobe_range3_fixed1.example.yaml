@@ -1,4 +1,4 @@
-# Same as the 10-share hard 1% fill stop + range>last-3 book, 1% equity-risk.
+# Named copy of the default 1% risk range>last-3 + hard 1% fill-stop book.
 #
 # Live 1% fill stop is on (stop_mode: entry_pct, never moves). Share count
 # uses a matching 1.0% R so sizing matches a real 1% stop:

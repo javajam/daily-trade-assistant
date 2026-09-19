@@ -1,10 +1,8 @@
-# Noon EMA9 long-only AAPL+MSFT: hard 1% fill stop + range > last 3.
+# Named copy of the locked day-trade book (config/ema9_trend.example.yaml).
 #
-# Same entry, gates, universe, and range-expansion exit as the locked
-# day-trade book (config/ema9_trend.example.yaml). Adds a fixed 1%
-# protective stop at fill × 0.99 (stop_mode: entry_pct). The stop never
-# moves — this is not lock_plus. No lock-at-+1%. No half-take. No pyramid.
-# No volume filter. No MA-cross.
+# Hard 1% fill stop + range > last 3. The stop never moves — this is not
+# lock_plus. No lock-at-+1%. No half-take. No pyramid. No volume filter.
+# No MA-cross.
 #
 # Exits (whichever first):
 #   1. Hard stop: bar low ≤ fill × 0.99 (gap-through fills at that bar's open).
