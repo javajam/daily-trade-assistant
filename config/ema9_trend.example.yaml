@@ -23,6 +23,7 @@
 #   config/ema9_trend_bracket_nobe_lock1.example.yaml
 #   config/ema9_trend_risk_nobe_lock1.example.yaml
 # Named copy of this default: config/ema9_trend_bracket_nobe_macross.example.yaml
+# Hard 1% fill stop + same MA-cross exit: config/ema9_trend_bracket_nobe_macross_stop1.example.yaml
 # Optional stop siblings (same entry / session):
 #   fixed 1% from fill:  config/ema9_trend_bracket_nobe_fixed1.example.yaml
 #   trail 1% from peak:  config/ema9_trend_bracket_nobe_trail1.example.yaml

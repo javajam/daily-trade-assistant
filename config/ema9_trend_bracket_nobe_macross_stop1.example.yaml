@@ -1,0 +1,74 @@
+# Noon EMA9 long-only AAPL+MSFT: hard 1% fill stop + EMA9×below SMA20 at close.
+#
+# Same entry, gates, and universe as the locked day-trade book
+# (config/ema9_trend.example.yaml). Same ma_cross_close exit. Adds a
+# fixed 1% protective stop at fill × 0.99 (stop_mode: entry_pct). The
+# stop never moves — this is not lock_plus. No lock-at-+1%. No half-take.
+# No pyramid. No volume filter.
+#
+# Exits (whichever first):
+#   1. Hard stop: bar low ≤ fill × 0.99 (gap-through fills at that bar's open).
+#   2. ma_cross_close: EMA(9) crosses below SMA(20) close-to-close; fill at
+#      that completed bar's close.
+#   3. session_flatten at 15:55 (15:45 ET 15m bar close).
+# Same-bar stop + pair-cross → stop (stop is checked first). Flatten-bar
+# pair-cross with no stop hit → ma_cross at that close over session_flatten.
+# Fill at the next bar open (same as the locked book).
+# Writeup: artifacts/ema9_macross_stop1.md
+#
+#   python -m dta_bot backtest --config config/ema9_trend.example.yaml \
+#     --compare-config config/ema9_trend_bracket_nobe_macross_stop1.example.yaml \
+#     --source yahoo --combined-only --symbols AAPL,MSFT \
+#     --output artifacts/ema9_macross_stop1.json \
+#     --report artifacts/ema9_macross_stop1.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"
+  flatten_by: "15:55"
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Noon book: 15m price crosses above EMA(9) while above SMA20 and RSI < 70. 10 shares, hard 1% fill stop plus EMA9×below SMA20 exit at that bar's close. Not lock_plus."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      exit: ma_cross_close
+      exit_ema_period: 9
+      exit_sma_period: 20
+      stop_mode: entry_pct
+      stop_loss_pct: 1.0

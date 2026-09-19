@@ -971,6 +971,77 @@ def test_lock_plus_and_ma_cross_close_lock_stop_beats_later_cross():
     assert trade.exit_price == pytest.approx(100.5 * 1.01)
 
 
+def test_entry_pct_and_ma_cross_close_stop_beats_cross_on_same_bar():
+    # Hard 1% fill stop + ma_cross_close: bar 22 low tags fill×0.99 and the
+    # close is also a pair-cross. Stop is checked first.
+    warmup = _pair_cross_warmup()
+    fill = Bar(bar(21, 100.5, 100.7, 100.4, 100.5).timestamp, 100.5, 100.7, 100.4, 100.5, 1000)
+    drop = Bar(bar(22, 100.5, 100.6, 99.2, 99.2).timestamp, 100.5, 100.6, 99.2, 99.2, 1000)
+    after = Bar(bar(23, 99.2, 99.3, 99.1, 99.2).timestamp, 99.2, 99.3, 99.1, 99.2, 1000)
+    result = run_backtest(
+        _cfg(
+            _ma_cross_rule(
+                exit="ma_cross_close",
+                stop_mode="entry_pct",
+                stop_loss_pct=1.0,
+            )
+        ),
+        {("AAPL", "15Min"): warmup + [fill, drop, after]},
+    )
+    assert result.trades[0].exit_reason == "stop"
+    assert result.trades[0].exit_price == pytest.approx(100.5 * 0.99)
+    assert result.trades[0].lock_armed is False
+    assert any("never moves" in n and "ma_cross_close" in n for n in result.report.notes)
+
+
+def test_entry_pct_and_ma_cross_close_cross_when_stop_not_hit():
+    # Wider 3% fill stop so the 99.2 pair-cross stays above it. Exit is
+    # ma_cross at that close; the stop never moves.
+    warmup = _pair_cross_warmup()
+    fill = Bar(bar(21, 100.5, 100.7, 100.4, 100.5).timestamp, 100.5, 100.7, 100.4, 100.5, 1000)
+    cross_under = Bar(bar(22, 100.5, 100.6, 99.2, 99.2).timestamp, 100.5, 100.6, 99.2, 99.2, 1000)
+    after = Bar(bar(23, 99.15, 99.3, 99.1, 99.2).timestamp, 99.15, 99.3, 99.1, 99.2, 1000)
+    result = run_backtest(
+        _cfg(
+            _ma_cross_rule(
+                exit="ma_cross_close",
+                stop_mode="entry_pct",
+                stop_loss_pct=3.0,
+            )
+        ),
+        {("AAPL", "15Min"): warmup + [fill, cross_under, after]},
+    )
+    trade = result.trades[0]
+    assert trade.exit_reason == "ma_cross"
+    assert trade.exit_price == 99.2
+    assert trade.lock_armed is False
+
+
+def test_entry_pct_ma_cross_close_plus_one_does_not_lock():
+    # Rally tags fill×1.01. lock_plus would arm and the next-bar low 100.0
+    # would be a lock_stop at fill×1.01. Hard entry_pct stop stays at
+    # fill×0.99, so the pullback does not exit.
+    warmup = _pair_cross_warmup()
+    fill = Bar(bar(21, 100.5, 100.7, 100.4, 100.5).timestamp, 100.5, 100.7, 100.4, 100.5, 1000)
+    arm = Bar(bar(22, 100.5, 101.7, 100.4, 101.2).timestamp, 100.5, 101.7, 100.4, 101.2, 1000)
+    pull = Bar(bar(23, 101.2, 101.3, 100.0, 100.1).timestamp, 101.2, 101.3, 100.0, 100.1, 1000)
+    result = run_backtest(
+        _cfg(
+            _ma_cross_rule(
+                exit="ma_cross_close",
+                stop_mode="entry_pct",
+                stop_loss_pct=1.0,
+            )
+        ),
+        {("AAPL", "15Min"): warmup + [fill, arm, pull]},
+    )
+    trade = result.trades[0]
+    assert trade.lock_armed is False
+    assert trade.exit_reason != "lock_stop"
+    assert trade.exit_reason != "stop"
+    assert trade.exit_price == pytest.approx(100.1)
+
+
 def test_ema_sma_cross_close_optional_stop_still_fires_first():
     warmup = _pair_cross_warmup()
     fill = Bar(bar(21, 100.5, 100.7, 100.4, 100.5).timestamp, 100.5, 100.7, 100.4, 100.5, 1000)
