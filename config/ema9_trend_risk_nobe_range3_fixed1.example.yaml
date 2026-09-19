@@ -1,0 +1,66 @@
+# Same as the 10-share hard 1% fill stop + range>last-3 book, 1% equity-risk.
+#
+# Live 1% fill stop is on (stop_mode: entry_pct, never moves). Share count
+# uses a matching 1.0% R so sizing matches a real 1% stop:
+#   shares = floor((0.01 * equity) / (0.01 * price))
+# Exit is whichever hits first: stop / range_expansion / flatten.
+# Not lock_plus. Fill at the next bar open.
+# Writeup: artifacts/ema9_range3_fixed1.md
+#
+#   python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml \
+#     --compare-config config/ema9_trend_risk_nobe_range3_fixed1.example.yaml \
+#     --source yahoo --start 2026-08-01 --end 2026-08-31 --combined-only \
+#     --symbols AAPL,MSFT \
+#     --output artifacts/ema9_aug2026_risk_range3_fixed1.json \
+#     --report artifacts/ema9_aug2026_risk_range3_fixed1.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"
+  flatten_by: "15:55"
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Noon book risk: 15m price crosses above EMA(9) while above SMA20 and RSI < 70. 1% equity risk at a live 1.0% fill stop; also exit when bar range > max of previous 3, fill at that close. Not lock_plus."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: risk_pct
+        equity_risk: 0.01
+        stop_pct: 1.0
+      order: market
+      exit: range_expansion
+      exit_range_bars: 3
+      stop_mode: entry_pct
+      stop_loss_pct: 1.0

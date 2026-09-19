@@ -10,6 +10,8 @@
 # stays valid. Session flatten 15:55 still applies; if the expansion bar is
 # also the flatten bar, range_expansion at that close wins over session_flatten.
 # Writeup: artifacts/ema9_range3_adopted.md
+# Protective 1% fill-stop sibling (same range exit):
+#   config/ema9_trend_bracket_nobe_range3_fixed1.example.yaml
 #
 #   python -m dta_bot backtest --config config/ema9_trend_bracket_nobe_macross.example.yaml \
 #     --compare-config config/ema9_trend_bracket_nobe_range3.example.yaml \

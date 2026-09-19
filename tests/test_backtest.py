@@ -364,6 +364,64 @@ def test_range_expansion_optional_stop_still_fires_first():
     assert result.trades[0].exit_price == pytest.approx(12.0 * 0.98)
 
 
+def test_entry_pct_and_range_expansion_stop_beats_range_on_same_bar():
+    # Hard 1% fill stop + range_expansion: after the fill bar, a wide bar
+    # both expands vs the prior 3 and tags fill×0.99. Stop is checked first.
+    bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(12)]
+    bars[-2] = Bar(bars[-2].timestamp, 10.0, 10.1, 9.9, 10.0, 1000)
+    bars[-1] = Bar(bars[-1].timestamp, 10.0, 12.5, 9.9, 12.0, 1000)
+    fill = Bar(bar(12, 12.0, 12.15, 11.90, 12.1).timestamp, 12.0, 12.15, 11.90, 12.1, 1000)
+    wide = Bar(bar(13, 12.1, 14.0, 11.0, 12.4).timestamp, 12.1, 14.0, 11.0, 12.4, 1000)
+    result = run_backtest(
+        _cfg(_range_rule(stop_mode="entry_pct", stop_loss_pct=1.0)),
+        {("AAPL", "15Min"): bars + [fill, wide]},
+    )
+    trade = result.trades[0]
+    assert trade.exit_reason == "stop"
+    assert trade.exit_price == pytest.approx(12.0 * 0.99)
+    assert trade.lock_armed is False
+    assert any("never moves" in n and "range_expansion" in n for n in result.report.notes)
+
+
+def test_entry_pct_and_range_expansion_range_when_stop_not_hit():
+    # Wider 10% fill stop so the expanding bar's 11.0 low stays above it.
+    # Exit is range_expansion at that close; the stop never moves.
+    bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(12)]
+    bars[-2] = Bar(bars[-2].timestamp, 10.0, 10.1, 9.9, 10.0, 1000)
+    bars[-1] = Bar(bars[-1].timestamp, 10.0, 12.5, 9.9, 12.0, 1000)
+    fill = Bar(bar(12, 12.0, 12.15, 11.90, 12.1).timestamp, 12.0, 12.15, 11.90, 12.1, 1000)
+    wide = Bar(bar(13, 12.1, 14.0, 11.0, 12.4).timestamp, 12.1, 14.0, 11.0, 12.4, 1000)
+    result = run_backtest(
+        _cfg(_range_rule(stop_mode="entry_pct", stop_loss_pct=10.0)),
+        {("AAPL", "15Min"): bars + [fill, wide]},
+    )
+    trade = result.trades[0]
+    assert trade.exit_reason == "range_expansion"
+    assert trade.exit_price == 12.4
+    assert trade.lock_armed is False
+
+
+def test_entry_pct_range_expansion_plus_one_does_not_lock():
+    # Rally tags fill×1.01. lock_plus would arm and the next-bar low 12.01
+    # would be a lock_stop at fill×1.01. Hard entry_pct stop stays at
+    # fill×0.99, so the pullback does not exit; the later wide bar is range.
+    bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(12)]
+    bars[-2] = Bar(bars[-2].timestamp, 10.0, 10.1, 9.9, 10.0, 1000)
+    bars[-1] = Bar(bars[-1].timestamp, 10.0, 12.5, 9.9, 12.0, 1000)
+    fill = Bar(bar(12, 12.0, 12.15, 11.90, 12.1).timestamp, 12.0, 12.15, 11.90, 12.1, 1000)
+    arm = Bar(bar(13, 12.1, 12.20, 12.05, 12.12).timestamp, 12.1, 12.20, 12.05, 12.12, 1000)
+    pull = Bar(bar(14, 12.12, 12.15, 12.01, 12.05).timestamp, 12.12, 12.15, 12.01, 12.05, 1000)
+    wide = Bar(bar(15, 12.05, 15.0, 12.00, 12.30).timestamp, 12.05, 15.0, 12.00, 12.30, 1000)
+    result = run_backtest(
+        _cfg(_range_rule(stop_mode="entry_pct", stop_loss_pct=1.0)),
+        {("AAPL", "15Min"): bars + [fill, arm, pull, wide]},
+    )
+    trade = result.trades[0]
+    assert trade.lock_armed is False
+    assert trade.exit_reason == "range_expansion"
+    assert trade.exit_price == 12.30
+
+
 def test_range_expansion_wins_over_flatten_on_same_bar():
     bars = []
     t = datetime(2026, 9, 11, 9, 30, tzinfo=NY)

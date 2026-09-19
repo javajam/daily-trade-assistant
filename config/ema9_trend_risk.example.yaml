@@ -14,7 +14,8 @@
 #   config/ema9_trend_risk_nobe_macross.example.yaml
 # Prior lock-+1% 1% risk comparison:
 #   config/ema9_trend_risk_nobe_lock1.example.yaml
-# Optional stop siblings: config/ema9_trend_risk_nobe_fixed1.example.yaml
+# Optional stop siblings: config/ema9_trend_risk_nobe_range3_fixed1.example.yaml
+# (range>last-3 + live 1% fill stop), config/ema9_trend_risk_nobe_fixed1.example.yaml
 # and config/ema9_trend_risk_nobe_trail1.example.yaml.
 # TSLA / MU 1% sibling: config/ema9_trend_risk_tsla_mu.example.yaml
 # SPY / QQQ long-only 1% sibling: config/ema9_trend_risk_spy_qqq.example.yaml

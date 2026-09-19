@@ -900,6 +900,36 @@ def test_ema9_trend_range3_configs_load():
     assert has_noon_stack(risk.rules[0].when)
 
 
+def test_ema9_trend_range3_fixed1_configs_load():
+    ten = load_config("config/ema9_trend_bracket_nobe_range3_fixed1.example.yaml")
+    rule = ten.rules[0]
+    assert rule.action.exit == "range_expansion"
+    assert rule.action.exit_range_bars == 3
+    assert rule.action.stop_mode == "entry_pct"
+    assert rule.action.stop_loss_pct == 1.0
+    assert rule.action.lock_trigger_pct is None
+    assert rule.action.lock_stop_pct is None
+    assert rule.action.partial_take_on_lock is False
+    assert rule.action.pyramid_on_lock is False
+    assert rule.action.take_profit_pct is None
+    assert rule.action.size and rule.action.size.type == "shares"
+    assert rule.action.size.value == 10
+    assert has_noon_stack(rule.when)
+    assert not has_volume_gt_prev(rule.when)
+    assert ten.settings.entry_cutoff == "12:00"
+    assert ten.settings.flatten_by == "15:55"
+    risk = load_config("config/ema9_trend_risk_nobe_range3_fixed1.example.yaml")
+    assert risk.rules[0].action.exit == "range_expansion"
+    assert risk.rules[0].action.exit_range_bars == 3
+    assert risk.rules[0].action.stop_mode == "entry_pct"
+    assert risk.rules[0].action.stop_loss_pct == 1.0
+    assert risk.rules[0].action.size is not None
+    assert risk.rules[0].action.size.type == "risk_pct"
+    assert risk.rules[0].action.size.equity_risk == 0.01
+    assert risk.rules[0].action.size.stop_pct == 1.0
+    assert has_noon_stack(risk.rules[0].when)
+
+
 def test_ema9_trend_lower_high_vol_configs_load():
     ten = load_config("config/ema9_trend_bracket_nobe_lh_vol.example.yaml")
     rule = ten.rules[0]
@@ -1120,6 +1150,17 @@ def test_cli_validate_timeframe_override(capsys):
     assert "range_bars=3" in range_out
     assert "stop=off" in range_out
     assert "volume_gt_prev" not in range_out
+    range_stop_rc = main(
+        ["validate", "--config", "config/ema9_trend_bracket_nobe_range3_fixed1.example.yaml"]
+    )
+    assert range_stop_rc == 0
+    range_stop_out = capsys.readouterr().out
+    assert "exit=range_expansion" in range_stop_out
+    assert "range_bars=3" in range_stop_out
+    assert "stop_mode=entry_pct" in range_stop_out
+    assert "stop_loss_pct=1" in range_stop_out
+    assert "lock_trigger_pct" not in range_stop_out
+    assert "volume_gt_prev" not in range_stop_out
 
 
 def test_ema_cross_yaml_parses_and_does_not_steal_level_ema():

@@ -27,7 +27,9 @@
 #   config/ema9_trend_bracket_nobe_lock1.example.yaml
 #   config/ema9_trend_risk_nobe_lock1.example.yaml
 # Optional stop siblings (same entry / session):
-#   fixed 1% from fill:  config/ema9_trend_bracket_nobe_fixed1.example.yaml
+#   range>last-3 + hard 1% fill stop (never moves):
+#     config/ema9_trend_bracket_nobe_range3_fixed1.example.yaml
+#   fixed 1% from fill only:  config/ema9_trend_bracket_nobe_fixed1.example.yaml
 #   trail 1% from peak:  config/ema9_trend_bracket_nobe_trail1.example.yaml
 # Lower-high + vol>prev (no lock-+1%): config/ema9_trend_bracket_nobe_lh_vol.example.yaml
 # TSLA / MU 10-share sibling: config/ema9_trend_tsla_mu.example.yaml
