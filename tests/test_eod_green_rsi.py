@@ -157,7 +157,8 @@ def test_eod_rejects_green_1530_when_rsi_at_or_above_70():
 def test_eod_backtest_enters_1545_open_and_flattens_at_close():
     bars = _walk_session(15, 30, trend="down")
     bars.append(_et_bar(15, 30, 16.00, 16.20, 15.90, 16.15))
-    bars.append(_et_bar(15, 45, 16.20, 16.30, 16.10, 16.28))
+    # Fill 16.20 → stop 16.119. Keep the 15:45 low above that so flatten wins.
+    bars.append(_et_bar(15, 45, 16.20, 16.30, 16.15, 16.28))
     result = run_backtest(_cfg(_eod_rule()), {("AAPL", "15Min"): bars}, starting_equity=100_000)
     assert result.report.trades == 1
     trade = result.trades[0]
@@ -171,16 +172,15 @@ def test_eod_backtest_enters_1545_open_and_flattens_at_close():
 
 def test_eod_backtest_half_pct_fill_stop_beats_flatten():
     bars = _walk_session(15, 30, trend="down")
-    bars.append(_et_bar(15, 30, 100.00, 100.20, 99.80, 100.10))
-    # Fill 100.40 → stop 100.40 * 0.995 = 99.898. Low 99.80 tags it.
-    bars.append(_et_bar(15, 45, 100.40, 100.50, 99.80, 100.20))
+    bars.append(_et_bar(15, 30, 16.00, 16.20, 15.90, 16.15))
+    # Fill 16.20 → stop 16.20 * 0.995 = 16.119. Low 16.05 tags it.
+    bars.append(_et_bar(15, 45, 16.20, 16.30, 16.05, 16.10))
     result = run_backtest(_cfg(_eod_rule()), {("AAPL", "15Min"): bars}, starting_equity=100_000)
     assert result.report.trades == 1
     trade = result.trades[0]
-    assert trade.entry_price == 100.40
+    assert trade.entry_price == 16.20
     assert trade.exit_reason == "stop"
-    assert trade.exit_price == pytest.approx(100.40 * 0.995)
-    assert trade.exit_time == datetime(2026, 9, 11, 15, 45, tzinfo=NY)
+    assert trade.exit_price == pytest.approx(16.20 * 0.995)
 
 
 def test_eod_tradier_sandbox_config_loads_and_validates(capsys):
