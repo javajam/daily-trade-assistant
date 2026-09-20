@@ -31,25 +31,32 @@ F does **not** beat A on P&L ($14.34 behind on 10-share). It only slightly costs
 
 ## Paper / live adapters already in the repo
 
-Inventory only — no new broker was built for this adoption.
+Updated when the Tradier sandbox path landed (`config/ema9_trend_tradier_sandbox.example.yaml`).
 
 | Piece | What exists | What does not |
 | --- | --- | --- |
-| Broker | `AlpacaBroker` in `dta_bot/broker.py` — paper URL `https://paper-api.alpaca.markets` by default; live only if `allow_live` + `ALPACA_LIVE_TRADING` + `ALPACA_ALLOW_LIVE=I_UNDERSTAND`. Account, positions, market/limit, optional Alpaca **bracket** stop/take, cancel, `close_position`. | **No Tradier.** No IBKR, Schwab, or other brokers. |
-| Dry-run | `DryRunBroker` wraps Alpaca (or runs offline) and never sends orders. `build_broker()` is the only factory. | — |
-| Keys | `ALPACA_API_KEY` / `ALPACA_API_SECRET` (or `APCA_*`). | No Tradier / other env keys. |
-| Live bars | `AlpacaMarketData` (`dta_bot/market_data.py`) — IEX by default (`settings.data_feed: iex`). `FixtureMarketData` for local JSON. | Yahoo is **backtest/history only** (`dta_bot/history.py`), not the paper `run` loop. |
-| Runner | `dta_bot run` / `evaluate`: noon entry, `range_expansion` flatten on the next poll after the expansion bar closes, `session_flatten` at `flatten_by`, kill switch. If `stop_loss_pct` is set, `bracket_prices()` attaches a stop on the entry order and Alpaca holds it. | `lock_plus` / pyramid / half-take are backtest-only (live does not auto-add or scale out). |
+| Broker | `AlpacaBroker` in `dta_bot/broker.py` — paper URL `https://paper-api.alpaca.markets` by default; live only if `allow_live` + `ALPACA_LIVE_TRADING` + `ALPACA_ALLOW_LIVE=I_UNDERSTAND`. Account, positions, market/limit, optional Alpaca **bracket** stop/take, cancel, `close_position`. `TradierBroker` in `dta_bot/tradier.py` — sandbox `https://sandbox.tradier.com/v1` by default; live `https://api.tradier.com/v1` only if `allow_live` + `TRADIER_LIVE_TRADING` + `TRADIER_ALLOW_LIVE=I_UNDERSTAND` + `tradier_endpoint: production`. Account, positions, list/place/cancel equity orders, preview, close. Entry+stop is market then a separate opposite-side `type=stop` (no Tradier bracket). | No IBKR, Schwab, or other brokers. |
+| Dry-run | `DryRunBroker` wraps Alpaca or Tradier (or runs offline) and never sends orders. `build_broker()` is the only factory. | — |
+| Keys | `ALPACA_API_KEY` / `ALPACA_API_SECRET` (or `APCA_*`). `TRADIER_ACCESS_TOKEN` / `TRADIER_ACCOUNT_ID` (placeholders in `.env.example` only). | Repo never ships real tokens. CI does not call Tradier. |
+| Live bars | `AlpacaMarketData` (IEX), `YahooMarketData` (same Yahoo chart as backtest), `TradierMarketData` (timesales 1m/5m/15m + daily history), `FixtureMarketData`. `settings.data_source`: `alpaca` / `yahoo` / `tradier`. | Sandbox timesales is often empty — locked Tradier example uses **Yahoo bars + Tradier orders**. |
+| Runner | `dta_bot run` / `evaluate`: noon entry, `range_expansion` flatten on the next poll after the expansion bar closes, `session_flatten` at `flatten_by`, kill switch. If `stop_loss_pct` is set, `bracket_prices()` attaches a stop on the entry order (Alpaca bracket or Tradier stop). | `lock_plus` / pyramid / half-take are backtest-only (live does not auto-add or scale out). |
 
-## What a paper runner of this locked config would need
+## What a paper runner of this locked config needs
 
-Do **not** build Tradier in this follow-up. To paper the locked book on what is already here:
+**Alpaca paper**
 
 1. Copy `config/ema9_trend.example.yaml` → `config/ema9_trend.yaml` (gitignored). Keep `paper: true`, `allow_live: false`. Set `dry_run: false` or pass `--live-orders` (still Alpaca **paper** unless the live triple-gate is set).
 2. Alpaca **paper** keys in `.env`. IEX feed is the default tape; it will not match the Yahoo backtest cache.
 3. `python -m dta_bot run --config config/ema9_trend.yaml` (or `--once`). Poll is 60s. Kill switch: `data/KILL` or `DTA_KILL_SWITCH=1`.
-4. **Stop gap vs backtest:** the paper order’s stop is `last_price × 0.99` at submit time (`bracket_prices` uses the signal-bar last, not the next-bar fill). Backtest `entry_pct` rebases to fill × 0.99 after the fill. A paper runner that wants exact fill-stop semantics would need to replace/adjust the Alpaca stop after the fill is known. Not done here.
-5. **Range / flatten fill gap vs backtest:** live range exit is a **market** `close_position` on the next poll after the expansion bar closes — not that bar’s close. Session flatten is the same poll/clock path. After a range or flatten close, cancel any leftover Alpaca stop-leg if `close_position` does not clear the bracket.
-6. Risk sibling: `config/ema9_trend_risk.example.yaml` sizes from Alpaca equity at the 1% stop. Same runner, same gaps.
 
-Tradier (or any second broker) would be a new `Broker` implementation plus `build_broker` wiring, keys, and paper/live gates. Out of scope here.
+**Tradier sandbox**
+
+1. Token + account id from [web.tradier.com/user/api](https://web.tradier.com/user/api) into `.env` (`TRADIER_ACCESS_TOKEN`, `TRADIER_ACCOUNT_ID`).
+2. `python -m dta_bot run --config config/ema9_trend_tradier_sandbox.example.yaml --live-orders` (sandbox unless the Tradier live triple-gate is set). Bars are Yahoo.
+3. This repo does not verify that a given token works.
+
+**Gaps vs backtest (both brokers)**
+
+4. **Stop gap:** the paper order’s stop is `last_price × 0.99` at submit time (`bracket_prices` uses the signal-bar last, not the next-bar fill). Backtest `entry_pct` rebases to fill × 0.99 after the fill.
+5. **Range / flatten fill gap:** live range exit is a **market** `close_position` on the next poll after the expansion bar closes — not that bar’s close. Session flatten is the same poll/clock path. Tradier `close_position` cancels open symbol orders (the stop) then markets out.
+6. Risk sibling: `config/ema9_trend_risk.example.yaml` sizes from broker equity at the 1% stop. Same runner, same gaps. No separate Tradier risk YAML — copy and set `broker: tradier`.

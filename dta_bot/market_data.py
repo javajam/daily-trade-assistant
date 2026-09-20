@@ -1,4 +1,4 @@
-"""OHLCV bars from Alpaca market data or a local fixture file."""
+"""OHLCV bars from Alpaca, Yahoo, Tradier timesales, or a local fixture."""
 
 from __future__ import annotations
 
@@ -123,12 +123,63 @@ class FixtureMarketData:
         return list(bars)
 
 
-def build_market_data(*, feed: str, fixture: Optional[str]) -> MarketData:
+class YahooMarketData:
+    """Closed bars from Yahoo v8 chart. No broker keys. Same tape as backtest."""
+
+    def __init__(
+        self,
+        *,
+        client: Optional[httpx.Client] = None,
+        now: Optional[datetime] = None,
+    ) -> None:
+        self._client = client
+        self._now = now
+
+    def get_bars(self, symbol: str, timeframe: str, limit: int = 80) -> list[Bar]:
+        from dta_bot.history import fetch_yahoo_bars
+
+        tf = normalize(timeframe)
+        bars = fetch_yahoo_bars(symbol, tf, client=self._client)
+        bars = drop_incomplete(bars, tf, now=self._now)
+        return bars[-limit:]
+
+
+def build_market_data(
+    *,
+    feed: str,
+    fixture: Optional[str],
+    source: str = "alpaca",
+    allow_live: bool = False,
+    tradier_endpoint: Optional[str] = None,
+    tradier_base_url: Optional[str] = None,
+) -> MarketData:
     if fixture:
         return FixtureMarketData(fixture)
+    src = (source or "alpaca").strip().lower()
+    if src in {"yahoo", "yfinance"}:
+        return YahooMarketData()
+    if src in {"tradier", "tradier_timesales"}:
+        from dta_bot.tradier import (
+            TradierMarketData,
+            resolve_tradier_creds,
+            resolve_tradier_url,
+        )
+
+        token, _account = resolve_tradier_creds()
+        if not token:
+            raise RuntimeError(
+                "Tradier bars need TRADIER_ACCESS_TOKEN, or set settings.data_source: yahoo."
+            )
+        url, _mode = resolve_tradier_url(
+            allow_live=allow_live,
+            endpoint=tradier_endpoint,
+            base_url=tradier_base_url,
+        )
+        return TradierMarketData(access_token=token, base_url=url)
     key, secret = resolve_api_keys()
     if not key or not secret:
         raise RuntimeError(
-            "Market data needs ALPACA_API_KEY / ALPACA_API_SECRET, or pass --fixture."
+            "Market data needs ALPACA_API_KEY / ALPACA_API_SECRET, "
+            "or set settings.data_source: yahoo, or pass --fixture."
         )
     return AlpacaMarketData(api_key=key, api_secret=secret, feed=feed)

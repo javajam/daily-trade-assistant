@@ -3,7 +3,7 @@
 Personal stock trading companion with two parts that share this repo:
 
 1. **Journal (browser)** — pre-market checklist, live session logging, post-market review, and performance stats. Data stays in `localStorage`.
-2. **Paper rules bot (CLI)** — evaluates human-editable YAML rules (including candlestick patterns on specific timeframes) and can place **Alpaca paper** orders. Live trading is off by default and hard to enable by accident.
+2. **Paper rules bot (CLI)** — evaluates human-editable YAML rules (including candlestick patterns on specific timeframes) and can place **Alpaca paper** or **Tradier sandbox** orders. Live trading is off by default and hard to enable by accident.
 
 ---
 
@@ -40,7 +40,8 @@ Python package `dta_bot`. Rules live in YAML (or JSON), not in code. The runner 
 ### Features
 
 - Alpaca **paper** client: account, positions, market/limit orders (optional bracket stop/take), cancel, close.
-- OHLCV bars from Alpaca market data (IEX by default) or a local fixture file.
+- Tradier **sandbox** client: same Broker surface (account, positions, list/place/cancel equity orders, preview, close). Production URL is triple-gated.
+- OHLCV bars from Alpaca IEX, **Yahoo** (no broker keys), Tradier timesales, or a local fixture file.
 - Candlestick detectors on the last N **closed** bars of a timeframe (`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1d`, `1w`):
   bullish/bearish engulfing, hammer, inverted hammer, shooting star, doji, morning star, evening star, three white soldiers, three black crows.
 - Rule engine: nested **AND** (`all`) / **OR** (`any`), pattern + SMA/EMA + EMA/SMA **cross** + RSI + volume, symbol universe, per-symbol cooldown, idempotent (same bar cannot fire twice).
@@ -56,6 +57,43 @@ Python package `dta_bot`. Rules live in YAML (or JSON), not in code. The runner 
 4. Copy `.env.example` to `.env` and set `ALPACA_API_KEY` / `ALPACA_API_SECRET`. Never commit `.env`.
 
 Paper accounts typically receive the **IEX** market-data feed (`settings.data_feed: iex`).
+
+### Tradier sandbox paper (locked EMA9 book)
+
+Same `dta_bot run` loop as Alpaca. Orders go to Tradier; bars default to Yahoo so you do not need Alpaca keys and do not depend on sandbox timesales (often empty or delayed).
+
+1. Create a Tradier brokerage account at [tradier.com](https://www.tradier.com).
+2. Open **API Access** and create a **sandbox** token: [web.tradier.com/user/api](https://web.tradier.com/user/api). Copy the sandbox access token and the sandbox account id.
+3. Copy `.env.example` to `.env` and set `TRADIER_ACCESS_TOKEN` / `TRADIER_ACCOUNT_ID`. Never commit `.env`.
+4. Validate, then paper the locked noon book:
+
+```bash
+python -m dta_bot validate --config config/ema9_trend_tradier_sandbox.example.yaml
+python -m dta_bot status  --config config/ema9_trend_tradier_sandbox.example.yaml
+python -m dta_bot run --config config/ema9_trend_tradier_sandbox.example.yaml --once --dry-run
+# submit sandbox orders (still not production):
+python -m dta_bot run --config config/ema9_trend_tradier_sandbox.example.yaml --live-orders
+```
+
+| Setting | Locked example |
+|------|---------|
+| `settings.broker` | `tradier` |
+| `settings.tradier_endpoint` | `sandbox` → `https://sandbox.tradier.com/v1` |
+| `settings.data_source` | `yahoo` (set `tradier` to use timesales/history instead) |
+| `settings.tradier_preview` | `true` — POST `/accounts/{id}/orders/preview` before each place |
+
+Tradier has no Alpaca-style bracket. An entry with `stop_loss_pct` is a market (or limit) plus a separate opposite-side `type=stop`. Range-expansion and session flatten are a market `close_position` on the next 60s poll after the bar closes — same gap vs backtest as Alpaca. The paper stop is `last × 0.99` at submit time (`bracket_prices` uses the signal-bar last, not the next-bar fill).
+
+Production (`https://api.tradier.com/v1`) stays locked unless **all** of these are set (any missing piece stays on sandbox):
+
+| Gate | Default |
+|------|---------|
+| `settings.allow_live` in YAML | `false` |
+| `settings.tradier_endpoint` | `sandbox` |
+| env `TRADIER_LIVE_TRADING` | unset / false |
+| env `TRADIER_ALLOW_LIVE` | must equal `I_UNDERSTAND` |
+
+This repo does not call Tradier in CI and does not verify that a given token works. Leave that to the operator.
 
 ### Setup
 
@@ -168,6 +206,10 @@ settings:
   max_open_positions: 5
   data_feed: iex
   lookback_bars: 80
+  broker: alpaca                       # or tradier
+  data_source: alpaca                  # alpaca | yahoo | tradier
+  tradier_endpoint: sandbox            # production still needs the live gates
+  tradier_preview: true
   session_timezone: America/New_York   # optional session clock
   entry_cutoff: "12:00"                # skip fills at/after this clock; null = off
   flatten_by: "15:55"                  # force-flat at flatten-bar close; null = off
@@ -279,7 +321,7 @@ python -m dta_bot backtest --config config/ema9_trend.example.yaml --source yaho
   --output artifacts/ema9_range3.json --report artifacts/ema9_range3.md
 ```
 
-Copy to `config/ema9_trend.yaml` or `config/ema9_trend_5m.yaml` (gitignored) to paper the default long-only range>last-3 + hard 1% fill-stop book. Long-only SPY/QQQ (still lock-+1%):
+Copy to `config/ema9_trend.yaml` or `config/ema9_trend_5m.yaml` (gitignored) to paper the default long-only range>last-3 + hard 1% fill-stop book on Alpaca. Tradier sandbox paper of the same locked book: `config/ema9_trend_tradier_sandbox.example.yaml` (Yahoo bars + Tradier orders). Long-only SPY/QQQ (still lock-+1%):
 
 ```bash
 python -m dta_bot validate --config config/ema9_trend_spy_qqq.example.yaml
@@ -327,6 +369,8 @@ python -m dta_bot status --config config/rules.example.yaml
 python -m dta_bot evaluate --config config/rules.example.yaml --fixture config/sample_bars.json
 python -m dta_bot run --once --dry-run
 python -m dta_bot run                    # interval loop; honors yaml dry_run
+python -m dta_bot status --config config/ema9_trend_tradier_sandbox.example.yaml
+python -m dta_bot run --config config/ema9_trend_tradier_sandbox.example.yaml --once --dry-run
 python -m dta_bot pause
 python -m dta_bot resume
 python -m dta_bot patterns
@@ -436,4 +480,4 @@ Yahoo history is short on fast bars: **5m/15m/30m ≈ 60 days**, **1h ≈ 2 year
 
 ---
 
-Built as a private personal tool. The journal has no backend. The bot talks only to Alpaca when you give it keys, and only to the **paper** endpoint unless you deliberately unlock live trading.
+Built as a private personal tool. The journal has no backend. The bot talks only to Alpaca or Tradier when you give it keys, and only to the **paper / sandbox** endpoint unless you deliberately unlock live trading.

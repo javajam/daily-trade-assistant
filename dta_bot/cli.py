@@ -9,6 +9,7 @@ from pathlib import Path
 
 from dta_bot.backtest import format_report_md, write_results_json
 from dta_bot.broker import build_broker, resolve_api_keys, resolve_trading_url
+from dta_bot.tradier import resolve_tradier_creds, resolve_tradier_url
 from dta_bot.config import (
     BotConfig,
     condition_timeframes,
@@ -57,7 +58,7 @@ def _add_shared(p: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dta-bot",
-        description="Alpaca paper-trading rules bot with candlestick pattern support.",
+        description="Paper-trading rules bot (Alpaca paper or Tradier sandbox) with candlestick pattern support.",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -74,7 +75,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Allow submitting orders (still paper unless live gates are set)",
     )
-    run.add_argument("--fixture", help="Evaluate against a local OHLCV JSON fixture instead of Alpaca data")
+    run.add_argument(
+        "--fixture",
+        help="Evaluate against a local OHLCV JSON fixture instead of live bars "
+        "(Alpaca IEX, Yahoo, or Tradier timesales per settings.data_source)",
+    )
 
     ev = sub.add_parser("evaluate", help="Dry-run one cycle (alias for run --once --dry-run)")
     _add_shared(ev)
@@ -165,6 +170,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
     kind, cfg = _load_any(args.config, timeframe=getattr(args, "timeframe", None))
     print(f"Loaded {args.config} ({kind})")
     print(f"  settings.paper={cfg.settings.paper} allow_live={cfg.settings.allow_live} dry_run={cfg.settings.dry_run}")
+    print(
+        f"  broker={cfg.settings.broker} data_source={cfg.settings.data_source} "
+        f"tradier_endpoint={cfg.settings.tradier_endpoint} "
+        f"tradier_preview={cfg.settings.tradier_preview}"
+    )
     print(f"  universe={cfg.universe or '(per-rule)'}")
     if isinstance(cfg, OrbBotConfig):
         print(
@@ -275,16 +285,32 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     kind, cfg = _load_any(args.config, timeframe=getattr(args, "timeframe", None))
-    url, mode = resolve_trading_url(allow_live=cfg.settings.allow_live)
-    key, secret = resolve_api_keys()
+    settings = cfg.settings
+    broker_name = getattr(settings, "broker", "alpaca")
     print(f"config:          {args.config} ({kind})")
-    print(f"trading mode:    {mode} ({url})")
-    print(f"allow_live yaml: {cfg.settings.allow_live}")
-    print(f"yaml dry_run:    {cfg.settings.dry_run}")
-    print(f"api key present: {bool(key)}")
-    print(f"api secret set:  {bool(secret)}")
-    print(f"kill switch:     {kill_reason(cfg.settings.kill_switch_file) or 'off'}")
-    print(f"state file:      {cfg.settings.state_file}")
+    print(f"broker:          {broker_name}")
+    print(f"data_source:     {getattr(settings, 'data_source', 'alpaca')}")
+    print(f"allow_live yaml: {settings.allow_live}")
+    print(f"yaml dry_run:    {settings.dry_run}")
+    if broker_name == "tradier":
+        url, mode = resolve_tradier_url(
+            allow_live=settings.allow_live,
+            endpoint=getattr(settings, "tradier_endpoint", None),
+            base_url=getattr(settings, "tradier_base_url", None),
+        )
+        token, account = resolve_tradier_creds()
+        print(f"trading mode:    {mode} ({url})")
+        print(f"tradier token:   {'present' if token else 'missing'}")
+        print(f"tradier account: {'present' if account else 'missing'}")
+        print(f"tradier preview: {getattr(settings, 'tradier_preview', True)}")
+    else:
+        url, mode = resolve_trading_url(allow_live=settings.allow_live)
+        key, secret = resolve_api_keys()
+        print(f"trading mode:    {mode} ({url})")
+        print(f"api key present: {bool(key)}")
+        print(f"api secret set:  {bool(secret)}")
+    print(f"kill switch:     {kill_reason(settings.kill_switch_file) or 'off'}")
+    print(f"state file:      {settings.state_file}")
     print(f"patterns:        {', '.join(PATTERN_NAMES)}")
     if isinstance(cfg, OrbBotConfig):
         print(
@@ -502,10 +528,23 @@ def cmd_run(args: argparse.Namespace) -> int:
     _kind, cfg = _load_any(args.config, timeframe=getattr(args, "timeframe", None))
     dry = _dry_run_flag(args, cfg.settings.dry_run)
     fixture = getattr(args, "fixture", None)
+    settings = cfg.settings
     data = FixtureMarketData(fixture) if fixture else build_market_data(
-        feed=cfg.settings.data_feed, fixture=None
+        feed=settings.data_feed,
+        fixture=None,
+        source=getattr(settings, "data_source", "alpaca"),
+        allow_live=settings.allow_live,
+        tradier_endpoint=getattr(settings, "tradier_endpoint", None),
+        tradier_base_url=getattr(settings, "tradier_base_url", None),
     )
-    broker = build_broker(allow_live=cfg.settings.allow_live, dry_run=dry)
+    broker = build_broker(
+        allow_live=settings.allow_live,
+        dry_run=dry,
+        name=getattr(settings, "broker", "alpaca"),
+        tradier_endpoint=getattr(settings, "tradier_endpoint", None),
+        tradier_base_url=getattr(settings, "tradier_base_url", None),
+        tradier_preview=getattr(settings, "tradier_preview", True),
+    )
     state = load_state(cfg.settings.state_file)
     once = bool(getattr(args, "once", False) or args.cmd == "evaluate")
     if isinstance(cfg, OrbBotConfig):

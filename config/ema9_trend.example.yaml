@@ -26,6 +26,8 @@
 #   entry_cutoff: "12:00"   # skip fills at/after this clock; null = off
 #   flatten_by: "15:55"     # force-flat at flatten-bar close; null = off
 #
+# Tradier sandbox paper of this same locked book (Yahoo bars + Tradier orders):
+#   config/ema9_trend_tradier_sandbox.example.yaml
 # Named copy of this default: config/ema9_trend_bracket_nobe_range3_fixed1.example.yaml
 # Prior pure range>last-3 (no percent stop, same entry / session):
 #   config/ema9_trend_bracket_nobe_range3.example.yaml
