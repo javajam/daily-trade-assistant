@@ -1,8 +1,9 @@
 # Prior 1% risk default / comparison — lock-+1% (not the locked day-trade book).
 #
-# Default 1% risk product is now MA-cross at close:
+# Default 1% risk product is now range>last-3:
 #   config/ema9_trend_risk.example.yaml
-# Writeup: artifacts/ema9_macross_adopted.md
+# Writeup: artifacts/ema9_range3_adopted.md
+# Prior MA-cross at close: config/ema9_trend_risk_nobe_macross.example.yaml
 #
 # Named sibling of the 10-share lock-+1% comparison. Same entry / session / lock.
 # Size: risk 1% of current equity at the 1.0% initial stop (stop_pct matches).

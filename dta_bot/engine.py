@@ -271,6 +271,53 @@ def lower_high_flatten_bar(
     return None
 
 
+def bar_range(bar: Bar) -> float:
+    """High − low. Used by the range-expansion exit."""
+    return bar.high - bar.low
+
+
+def range_expansion_exit(curr: Bar, prior: list[Bar]) -> bool:
+    """True when curr range is strictly greater than max(range of prior bars)."""
+    if not prior:
+        return False
+    ceiling = max(bar_range(b) for b in prior)
+    return bar_range(curr) > ceiling
+
+
+def range_expansion_flatten_bar(
+    position: Position,
+    signal_bars: list[Bar],
+    *,
+    after: Optional[datetime],
+    lookback: int = 3,
+) -> Optional[Bar]:
+    """Latest closed bar after the entry bar whose range > max of the prior ``lookback`` bars.
+
+    ``after`` is the signal timestamp (entry is the next bar). The entry/fill
+    bar is never an exit bar. Fill at that completed bar's close — the same
+    convention as ``ema_invalid`` / ``lower_high``. Equal range stays valid.
+    ``position`` is unused (range is side-agnostic) but kept for the same
+    signature as the other flatten helpers.
+    """
+    del position
+    if after is None or not signal_bars or lookback < 1:
+        return None
+    later = [b for b in signal_bars if _aware_ts(b.timestamp) > _aware_ts(after)]
+    if len(later) < 2:
+        return None
+    last = max(later, key=lambda b: _aware_ts(b.timestamp))
+    entry = min(later, key=lambda b: _aware_ts(b.timestamp))
+    if _aware_ts(last.timestamp) == _aware_ts(entry.timestamp):
+        return None
+    window = [b for b in signal_bars if _aware_ts(b.timestamp) <= _aware_ts(last.timestamp)]
+    if len(window) < lookback + 1:
+        return None
+    prior = window[-(lookback + 1) : -1]
+    if range_expansion_exit(last, prior):
+        return last
+    return None
+
+
 def fire_key(rule_id: str, symbol: str, signal_ts: datetime) -> str:
     return f"{rule_id}:{symbol}:{fmt_ts(signal_ts)}"
 

@@ -1,4 +1,6 @@
-# Same as the default 1% risk product (config/ema9_trend_risk.example.yaml).
+# Prior locked 1% risk exit (MA-cross at close), kept for comparison.
+# Default 1% risk product is now range_expansion
+# (config/ema9_trend_risk.example.yaml).
 #
 # No live percent stop (exit is ma_cross at that bar's close / session_flatten).
 # Share count uses a reference R of 1% of entry price so sizing stays
@@ -6,7 +8,7 @@
 #   shares = floor((0.01 * equity) / (0.01 * price)).
 # Writeup: artifacts/ema9_macross_adopted.md
 #
-# Named copy of the 1% risk MA-cross default:
+# Comparison sibling of the 1% risk range-expansion default:
 #   default: config/ema9_trend_risk.example.yaml
 #   lock +1% comparison: config/ema9_trend_risk_nobe_lock1.example.yaml
 #   this book: MA-cross at close (no lock / no live % stop)

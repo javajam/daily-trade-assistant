@@ -15,6 +15,7 @@ from dta_bot.engine import (
     fire_key,
     lower_high_flatten_bar,
     ma_pair_cross_flatten_bar,
+    range_expansion_flatten_bar,
 )
 from dta_bot.killswitch import is_active, reason as kill_reason
 from dta_bot.market_data import MarketData
@@ -384,6 +385,59 @@ def _flatten_lower_high(
                 log.info("DRY-RUN: lower-high flatten was not sent to Alpaca")
 
 
+def _flatten_range_expansion(
+    config: BotConfig,
+    broker: Broker,
+    bars,
+    state: BotState,
+    *,
+    dry_run: bool,
+) -> None:
+    """Close paper/live lots when a completed bar after entry expands vs the last N.
+
+    Range = high − low. Exit when that range is strictly greater than the max
+    of the previous exit_range_bars (default 3). The entry/fill bar is never
+    an exit bar. Live fill is a market flatten on the next poll after that bar
+    closes, matching the backtest close-of-bar convention as closely as the
+    loop allows. Optional percent stop stays on the broker when stop_loss_pct
+    is set.
+    """
+    kill_file = config.settings.kill_switch_file
+    if is_active(kill_file):
+        return
+    positions = _position_map(broker.get_positions())
+    for rule in config.rules:
+        if not rule.enabled or rule.action.exit != "range_expansion":
+            continue
+        needed = condition_timeframes(rule.when)
+        if not needed:
+            continue
+        fill_tf = min(needed, key=lambda t: duration(t))
+        for symbol in config.symbols_for(rule):
+            pos = positions.get(symbol.upper())
+            if pos is None:
+                continue
+            series = bars.get((symbol.upper(), fill_tf), []) or []
+            after = last_rule_fire_ts(state, rule.id, symbol)
+            hit = range_expansion_flatten_bar(
+                pos, series, after=after, lookback=rule.action.exit_range_bars
+            )
+            if hit is None:
+                continue
+            log.info(
+                "Range-expansion flatten %s %s entry=%.4f range=%.4f @%s rule=%s",
+                pos.side,
+                symbol,
+                pos.avg_entry_price,
+                hit.high - hit.low,
+                hit.timestamp.isoformat(),
+                rule.id,
+            )
+            broker.close_position(symbol)
+            if dry_run:
+                log.info("DRY-RUN: range-expansion flatten was not sent to Alpaca")
+
+
 def _signal_sma(rule: RuleSpec, symbol: str, bars) -> Optional[float]:
     """SMA(stop_sma_period) on the finest rule timeframe through the last closed bar."""
     needed = condition_timeframes(rule.when)
@@ -497,6 +551,8 @@ def run_once(
         _flatten_ema_invalid(config, broker, bars, state, dry_run=dry_run)
     if any(rule.enabled and rule.action.exit == "lower_high" for rule in config.rules):
         _flatten_lower_high(config, broker, bars, state, dry_run=dry_run)
+    if any(rule.enabled and rule.action.exit == "range_expansion" for rule in config.rules):
+        _flatten_range_expansion(config, broker, bars, state, dry_run=dry_run)
     if any(
         rule.enabled and rule.action.exit in {"ma_cross", "ma_cross_close"}
         for rule in config.rules

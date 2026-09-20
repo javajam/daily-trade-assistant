@@ -291,6 +291,7 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         and "ma_cross" not in modes
         and "ma_cross_close" not in modes
         and "ema_invalid" not in modes
+        and "range_expansion" not in modes
     ):
         return (
             "Exit is lower-high (action.exit: lower_high): after entry, on each completed "
@@ -301,6 +302,58 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
             "catastrophic stop only (off when omitted). Percent take-profit is ignored. "
             "Same-bar stop + lower-high → stop. If the lower-high bar is also the flatten "
             "bar, lower_high at that close wins over session_flatten."
+        )
+    if modes == {"range_expansion"} or (
+        config is not None
+        and "range_expansion" in modes
+        and "fixed_bracket" not in modes
+        and "ma_cross" not in modes
+        and "ma_cross_close" not in modes
+        and "ema_invalid" not in modes
+        and "lower_high" not in modes
+    ):
+        action = next(
+            (
+                rule.action
+                for rule in (config.rules if config is not None else [])
+                if rule.action.type != "close" and rule.action.exit == "range_expansion"
+            ),
+            None,
+        )
+        n = action.exit_range_bars if action is not None else 3
+        if (
+            action is not None
+            and action.stop_mode == "entry_pct"
+            and action.stop_loss_pct
+        ):
+            return (
+                f"Exit is a hard {action.stop_loss_pct:g}% fill stop plus range expansion "
+                f"(stop_mode: entry_pct and action.exit: range_expansion): after entry, on each "
+                f"completed signal-timeframe bar *after the entry/fill bar*, leave when that "
+                f"bar's range (high − low) is strictly greater than the max range of the "
+                f"previous {n} bars (equivalently larger than each of the last {n}) and exit "
+                "at that bar's close — the same fill convention as ema_invalid / lower_high. "
+                "Do not arm on the entry bar. Need those prior bars in the series. Equal range "
+                "stays valid. "
+                f"Hard {action.stop_loss_pct:g}% stop is also live (stop_mode: entry_pct): "
+                f"initial stop is fill × (1 − {action.stop_loss_pct:g}/100); it never moves "
+                "(not lock_plus). Whichever hits first wins: stop on this bar beats range "
+                "expansion (stop is checked first). If the expansion bar is also the flatten "
+                "bar and the stop did not hit, range_expansion at that close wins over "
+                "session_flatten. Percent take-profit is ignored. No lock-at-+1%. No half-take. "
+                "No pyramid."
+            )
+        return (
+            f"Exit is range expansion (action.exit: range_expansion): after entry, on each "
+            f"completed signal-timeframe bar *after the entry/fill bar*, leave when that "
+            f"bar's range (high − low) is strictly greater than the max range of the "
+            f"previous {n} bars (equivalently larger than each of the last {n}) and exit "
+            "at that bar's close — the same fill convention as ema_invalid / lower_high. "
+            "Do not arm on the entry bar. Need those prior bars in the series. Equal range "
+            "stays valid. Optional stop_loss_pct is a catastrophic stop only (off when "
+            "omitted). Percent take-profit is ignored. Same-bar stop + range expansion → "
+            "stop. If the expansion bar is also the flatten bar, range_expansion at that "
+            "close wins over session_flatten."
         )
     if modes == {"ma_cross_close"} and ma_close_rules:
         action = ma_close_rules[0].action
@@ -397,6 +450,7 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         and "fixed_bracket" not in modes
         and "ma_cross" not in modes
         and "ma_cross_close" not in modes
+        and "range_expansion" not in modes
     ):
         return (
             f"Exit is EMA-invalidation (action.exit: ema_invalid): hold the long until a "
@@ -531,7 +585,10 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         "Set action.exit: ema_invalid "
         "to hold until a signal-timeframe close is on the wrong side of EMA (long: close < EMA; "
         "exit at that close). Set action.exit: lower_high to leave a long when a completed "
-        "bar's high is strictly below the previous bar's high (exit at that close)."
+        "bar's high is strictly below the previous bar's high (exit at that close). "
+        "Set action.exit: range_expansion to leave when a completed bar after entry has "
+        "range (high − low) strictly greater than the max of the previous exit_range_bars "
+        "(default 3); fill at that close."
     )
 
 
@@ -669,9 +726,9 @@ def _session_gate_assumption(config: Optional[BotConfig]) -> Optional[str]:
         "15m RTH bars opening :00,:15,:30,:45 flatten on the 15:45 ET bar close when "
         "flatten_by is 15:55 (last regular 15m bar, aligned with “by 15:55”); "
         "5m flattens on the 15:50 ET bar close (last 5m bar that completes at/before 15:55). "
-        "Stop/take/ema_invalid/lower_high/ma_cross_close/ma_cross-on-this-bar still win "
+        "Stop/take/ema_invalid/lower_high/range_expansion/ma_cross_close/ma_cross-on-this-bar still win "
         "if they hit first (ma_cross fills at the next open, so a same-bar flatten_by "
-        "close wins; ema_invalid, lower_high, and ma_cross_close fill at that close, "
+        "close wins; ema_invalid, lower_high, range_expansion, and ma_cross_close fill at that close, "
         "so the signal exit wins over session_flatten). "
         "Set entry_cutoff / flatten_by to null / off to restore overnight holds."
     )
@@ -817,6 +874,16 @@ def session_gate_suffix(config: BotConfig) -> str:
         bits.append("MA-cross close")
     elif exits == {"lower_high"}:
         bits.append("lower-high")
+    elif exits == {"range_expansion"}:
+        n = next(
+            (
+                r.action.exit_range_bars
+                for r in config.rules
+                if r.enabled and r.action.type != "close" and r.action.exit == "range_expansion"
+            ),
+            3,
+        )
+        bits.append(f"range>last-{n}")
     if bracket:
         bits.append(bracket)
     if rsi_tag:
@@ -843,11 +910,13 @@ def assumptions_rules(
         _breakeven_assumption(config),
         "If stop and take (or EMA-invalidation) both trade in the fill bar, the stop is assumed to fill first.",
         "A gap through stop/take fills at that bar's open. EMA-invalidation, lower-high, "
-        "and ma_cross_close exits fill at that completed bar's close. "
+        "range-expansion, and ma_cross_close exits fill at that completed bar's close. "
         "MA-cross (action.exit: ma_cross) exits fill at the next bar open after the "
         "opposing EMA/SMA pair-cross (long: EMA under SMA; short: EMA over SMA). "
         "ma_cross_close uses the same close-to-close EMA-vs-SMA pair-cross but fills "
-        "at that bar's close.",
+        "at that bar's close. range_expansion leaves when the completed bar's range "
+        "(high − low) is strictly greater than the max of the previous N bars "
+        "(default 3), not on the entry bar.",
         "One open lot per symbol (no pyramiding; long or short, not both). "
         "A second signal while that symbol is already open is skipped "
         "(already_in_position, or opposite_signal_in_trade when the new side is the other way).",
@@ -1187,6 +1256,7 @@ def exit_mix(report: dict[str, Any]) -> str:
     ema_inv = int(reasons.get("ema_invalid") or 0)
     ma_x = int(reasons.get("ma_cross") or 0)
     lh = int(reasons.get("lower_high") or 0)
+    rng = int(reasons.get("range_expansion") or 0)
     sess = int(reasons.get("session_flatten") or 0)
     be_stop = int(reasons.get("breakeven_stop") or 0)
     lock_stop = int(reasons.get("lock_stop") or 0)
@@ -1198,6 +1268,8 @@ def exit_mix(report: dict[str, Any]) -> str:
         parts.append(f"ma_cross {ma_x}")
     if lh:
         parts.append(f"lower_high {lh}")
+    if rng:
+        parts.append(f"range_expansion {rng}")
     parts.extend([f"take {take}", f"stop {stop}"])
     if take_2pct:
         parts.append(f"take_2pct {take_2pct}")
@@ -1223,6 +1295,7 @@ def exit_mix(report: dict[str, Any]) -> str:
             "ema_invalid",
             "ma_cross",
             "lower_high",
+            "range_expansion",
             "session_flatten",
             "breakeven_stop",
             "lock_stop",

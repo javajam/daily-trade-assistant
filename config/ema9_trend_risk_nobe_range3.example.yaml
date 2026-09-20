@@ -1,0 +1,65 @@
+# Prior locked 1% risk range-expansion book (no live percent stop).
+# Kept as a comparison example after the range3 + hard 1% fill-stop adoption.
+# Default 1% product is now config/ema9_trend_risk.example.yaml.
+#
+# No live percent stop (exit is range_expansion / session_flatten). Share
+# count uses a reference R of 1% of entry price so sizing stays comparable
+# to the live-stop 1% risk book:
+#   shares = floor((0.01 * equity) / (0.01 * price))
+# Fill at the next bar open. Writeup: artifacts/ema9_range3_adopted.md
+#
+#   python -m dta_bot backtest --config config/ema9_trend_risk_nobe_macross.example.yaml \
+#     --compare-config config/ema9_trend_risk_nobe_range3.example.yaml \
+#     --source yahoo --start 2026-08-01 --end 2026-08-31 --combined-only \
+#     --symbols AAPL,MSFT \
+#     --output artifacts/ema9_aug2026_risk_range3.json \
+#     --report artifacts/ema9_aug2026_risk_range3.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: "12:00"
+  flatten_by: "15:55"
+
+universe:
+  - AAPL
+  - MSFT
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT]
+    cooldown_minutes: 60
+    notes: "Noon book risk: 15m price crosses above EMA(9) while above SMA20 and RSI < 70. 1% equity risk sized off a 1.0% reference R (no live percent stop); exit when bar range > max of previous 3, fill at that close."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: risk_pct
+        equity_risk: 0.01
+        stop_pct: 1.0
+      order: market
+      exit: range_expansion
+      exit_range_bars: 3

@@ -253,6 +253,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 f" ema_period={rule.action.exit_ema_period}"
                 f" sma_period={rule.action.exit_sma_period}"
             )
+        if rule.action.exit == "range_expansion":
+            ma_txt = f" range_bars={rule.action.exit_range_bars}"
         rsi_txt = ""
         rsi_cond = find_rsi_condition(rule.when)
         if rsi_cond is not None:

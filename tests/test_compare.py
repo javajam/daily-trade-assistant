@@ -112,11 +112,14 @@ def test_assumptions_rules_mention_ma_cross():
     assert any("noon day-trade stack" in n and "EMA(9)" in n and "SMA(20)" in n for n in ema_notes)
     assert not any("Short: close crosses below EMA(9)" in n for n in ema_notes)
     assert not any("RSI(14) > 30" in n for n in ema_notes)
-    assert any("ma_cross_close" in n and "close-to-close" in n for n in ema_notes)
+    assert any("range_expansion" in n and "high − low" in n for n in ema_notes)
+    assert any("entry_pct" in n and "never moves" in n for n in ema_notes)
     assert any("entry_cutoff=12:00" in n and "flatten_by=15:55" in n for n in ema_notes)
     assert not any("breakeven_after_bars: 1" in n for n in ema_notes)
     assert not any("stop_mode: lock_plus" in n for n in ema_notes)
-    assert session_gate_suffix(cfg) == " (cutoff 12:00, flat 15:55, MA-cross close)"
+    assert session_gate_suffix(cfg) == (
+        " (cutoff 12:00, flat 15:55, range>last-3, entry 1.0%)"
+    )
     pair = load_config("config/ema9_trend_pair.example.yaml")
     pair_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, pair)
     assert any("ma_cross" in n and "EMA(9)" in n and "SMA(20)" in n for n in pair_notes)
@@ -419,6 +422,24 @@ def test_run_rule_books_prefixes_and_soxl_breakout():
     assert any("lock-+1%" in n and "ma_cross_close" in n for n in combo_notes)
     assert any("stop is checked first" in n for n in combo_notes)
     assert not any("signal-bar volume > previous-bar volume" in n for n in combo_notes)
+    range3 = load_config("config/ema9_trend_bracket_nobe_range3.example.yaml")
+    assert session_gate_suffix(range3) == " (cutoff 12:00, flat 15:55, range>last-3)"
+    range_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, range3)
+    assert any("range_expansion" in n and "high − low" in n for n in range_notes)
+    assert any("entry/fill bar" in n for n in range_notes)
+    assert any("range_expansion at that close wins" in n for n in range_notes)
+    range3_stop = load_config("config/ema9_trend_bracket_nobe_range3_fixed1.example.yaml")
+    assert session_gate_suffix(range3_stop) == (
+        " (cutoff 12:00, flat 15:55, range>last-3, entry 1.0%)"
+    )
+    range3_stop_notes = assumptions_rules(
+        "commission=$0.00/fill, slippage=0.0%", 100_000.0, range3_stop
+    )
+    assert any("entry_pct" in n and "range_expansion" in n for n in range3_stop_notes)
+    assert any("never moves" in n and "not lock_plus" in n for n in range3_stop_notes)
+    assert any("stop is checked first" in n for n in range3_stop_notes)
+    assert any("No lock-at-+1%" in n for n in range3_stop_notes)
+    assert not any("moves the stop" in n for n in range3_stop_notes)
     lock_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, lock1)
     assert any("stop_mode: lock_plus" in n and "entry×(1+1/100)" in n for n in lock_notes)
     trail_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, trail1)

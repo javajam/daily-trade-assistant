@@ -1,16 +1,18 @@
-# Refined EMA9 day-trade — 1% equity-risk on 5-minute bars.
+# Named copy of the default 1% risk range>last-3 + hard 1% fill-stop book.
 #
-# Same noon long-only range-expansion + live 1% fill stop as
-# config/ema9_trend_risk.example.yaml. 1% equity risk at that matching 1.0% R.
-# every indicator on 5m. flatten_by 15:55 ET maps to the 15:50 ET 5m bar close.
-# Cooldown stays 60 wall-clock minutes.
+# Live 1% fill stop is on (stop_mode: entry_pct, never moves). Share count
+# uses a matching 1.0% R so sizing matches a real 1% stop:
+#   shares = floor((0.01 * equity) / (0.01 * price))
+# Exit is whichever hits first: stop / range_expansion / flatten.
+# Not lock_plus. Fill at the next bar open.
+# Writeup: artifacts/ema9_range3_fixed1.md
 #
 #   python -m dta_bot backtest --config config/ema9_trend_risk.example.yaml \
-#     --compare-config config/ema9_trend_risk_5m.example.yaml \
+#     --compare-config config/ema9_trend_risk_nobe_range3_fixed1.example.yaml \
 #     --source yahoo --start 2026-08-01 --end 2026-08-31 --combined-only \
-#     --symbols AAPL,MSFT
-#
-# Equivalent: --config config/ema9_trend_risk.example.yaml --timeframe 5m
+#     --symbols AAPL,MSFT \
+#     --output artifacts/ema9_aug2026_risk_range3_fixed1.json \
+#     --report artifacts/ema9_aug2026_risk_range3_fixed1.md
 
 settings:
   paper: true
@@ -22,7 +24,7 @@ settings:
   max_open_positions: 5
   data_feed: iex
   lookback_bars: 80
-  timeframe: 5m
+  timeframe: 15m
   session_timezone: America/New_York
   entry_cutoff: "12:00"
   flatten_by: "15:55"
@@ -36,20 +38,20 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "Noon book risk: 5m price crosses above EMA(9) while above SMA20 and RSI < 70. 1% equity risk at a live 1.0% fill stop; also exit when bar range > max of previous 3, fill at that close. Not lock_plus."
+    notes: "Noon book risk: 15m price crosses above EMA(9) while above SMA20 and RSI < 70. 1% equity risk at a live 1.0% fill stop; also exit when bar range > max of previous 3, fill at that close. Not lock_plus."
     when:
       all:
         - ema_cross:
             period: 9
-            timeframe: 5m
+            timeframe: 15m
             direction: bullish
         - sma:
             period: 20
-            timeframe: 5m
+            timeframe: 15m
             compare: above
         - rsi:
             period: 14
-            timeframe: 5m
+            timeframe: 15m
             below: 70
     action:
       type: buy

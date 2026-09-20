@@ -1,17 +1,23 @@
-# Refined EMA9 day-trade — 1% equity-risk book, long-only MA-cross at close.
+# Refined EMA9 day-trade — 1% equity-risk book, long-only range expansion
+# plus a live 1% fill stop.
 #
 # Same noon stack as config/ema9_trend.example.yaml (AAPL / MSFT).
-# Long: RSI(14) < 70, EMA9×below SMA20 at that bar's close, size 1% equity
-# risk at a 1.0% reference R (no live percent stop):
+# Long: RSI(14) < 70, range>last-3 at that bar's close OR hard 1% stop at
+# fill × 0.99 (stop_mode: entry_pct, never moves), size 1% equity risk at
+# that matching 1.0% R:
 #   shares = floor( (0.01 * equity) / (0.01 * entry_price) )
-# No lock_plus / half-take / pyramid / volume filter. Session gates on
-# (toggle to null / off). Both names may be open at once when cash covers
-# the second notional; otherwise the later signal is skipped.
-# Writeup: artifacts/ema9_macross_adopted.md
+# No MA-cross / lock_plus / half-take / pyramid / volume filter. Session
+# gates on (toggle to null / off). Both names may be open at once when cash
+# covers the second notional; otherwise the later signal is skipped.
+# Writeup: artifacts/ema9_range3_fixed1_adopted.md
 #
+# Named copy of this default: config/ema9_trend_risk_nobe_range3_fixed1.example.yaml
+# Prior pure range>last-3 (no live percent stop, same entry / session):
+#   config/ema9_trend_risk_nobe_range3.example.yaml
+# Prior MA-cross at close (same entry / session):
+#   config/ema9_trend_risk_nobe_macross.example.yaml
 # Prior lock-+1% 1% risk comparison:
 #   config/ema9_trend_risk_nobe_lock1.example.yaml
-# Named copy of this default: config/ema9_trend_risk_nobe_macross.example.yaml
 # Optional stop siblings: config/ema9_trend_risk_nobe_fixed1.example.yaml
 # and config/ema9_trend_risk_nobe_trail1.example.yaml.
 # TSLA / MU 1% sibling: config/ema9_trend_risk_tsla_mu.example.yaml
@@ -50,7 +56,7 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "Noon book risk: 15m price crosses above EMA(9) while above SMA20 and RSI < 70. 1% equity risk sized off a 1.0% reference R (no live percent stop); EMA9×below SMA20 exit at that bar's close."
+    notes: "Noon book risk: 15m price crosses above EMA(9) while above SMA20 and RSI < 70. 1% equity risk at a live 1.0% fill stop; also exit when bar range > max of previous 3, fill at that close. Not lock_plus."
     when:
       all:
         - ema_cross:
@@ -72,6 +78,7 @@ rules:
         equity_risk: 0.01
         stop_pct: 1.0
       order: market
-      exit: ma_cross_close
-      exit_ema_period: 9
-      exit_sma_period: 20
+      exit: range_expansion
+      exit_range_bars: 3
+      stop_mode: entry_pct
+      stop_loss_pct: 1.0

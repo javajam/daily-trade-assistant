@@ -22,7 +22,14 @@ from dta_bot.config import (
     GroupCond,
     RuleSpec,
 )
-from dta_bot.engine import BarMap, cooldown_key, evaluate_rule, fire_key, lower_high_exit
+from dta_bot.engine import (
+    BarMap,
+    cooldown_key,
+    evaluate_rule,
+    fire_key,
+    lower_high_exit,
+    range_expansion_exit,
+)
 from dta_bot.models import Account, Bar
 from dta_bot.indicators import ma_pair_cross, sma
 from dta_bot.orb import ema_cross_exit, ema_through
@@ -142,6 +149,7 @@ class OpenLot:
     exit_mode: str = "fixed_bracket"
     exit_ema_period: int = 9
     exit_sma_period: int = 20
+    exit_range_bars: int = 3
     completed_bars: int = 0
     breakeven_after_bars: int = 0
     breakeven_requires_valid: bool = True
@@ -191,6 +199,7 @@ class PendingOrder:
     exit_mode: str = "fixed_bracket"
     exit_ema_period: int = 9
     exit_sma_period: int = 20
+    exit_range_bars: int = 3
     close_reason: str = "close_signal"
     stop_mode: str = "percent"
     stop_loss_pct: Optional[float] = None
@@ -276,6 +285,21 @@ def _next_bar(series: list[Bar], after_ts: datetime) -> Optional[Bar]:
         if _aware(bar.timestamp) > after_ts:
             return bar
     return None
+
+
+def _prev_n_bars(series: list[Bar], ts: datetime, n: int) -> Optional[list[Bar]]:
+    """The ``n`` bars immediately before ``ts``, or None if fewer than ``n`` exist."""
+    if n < 1:
+        return None
+    ts = _aware(ts)
+    prior: list[Bar] = []
+    for bar in series:
+        if _aware(bar.timestamp) >= ts:
+            break
+        prior.append(bar)
+    if len(prior) < n:
+        return None
+    return prior[-n:]
 
 
 def _prev_bar(series: list[Bar], ts: datetime) -> Optional[Bar]:
@@ -1149,6 +1173,7 @@ def run_backtest(
                     exit_mode=order.exit_mode,
                     exit_ema_period=order.exit_ema_period,
                     exit_sma_period=order.exit_sma_period,
+                    exit_range_bars=order.exit_range_bars,
                     breakeven_after_bars=order.breakeven_after_bars,
                     breakeven_requires_valid=order.breakeven_requires_valid,
                     breakeven_valid=order.breakeven_valid,
@@ -1177,6 +1202,9 @@ def run_backtest(
         #    wrong side of EMA (long: close < EMA). Same-bar stop + invalid → stop.
         #    lower_high exits at this bar's close when the completed bar's high is
         #    strictly below the previous bar's high (long). Same fill as ema_invalid.
+        #    range_expansion exits at this bar's close when range (high − low) is
+        #    strictly greater than max(range of the previous N bars). Not armed on
+        #    the entry/fill bar. Same-bar stop + range → stop.
         #    ma_cross_close uses the same EMA-vs-SMA close-to-close pair-cross as
         #    ma_cross (long: prev EMA >= prev SMA and curr EMA < curr SMA) but
         #    fills at this bar's close. Same-bar stop + cross → stop.
@@ -1198,6 +1226,14 @@ def run_backtest(
                     prev = _prev_bar(series, bar.timestamp)
                     if prev is not None and lower_high_exit(lot.side, bar, prev):
                         hit = ("lower_high", bar.close)
+                if (
+                    hit is None
+                    and lot.exit_mode == "range_expansion"
+                    and _aware(bar.timestamp) != _aware(lot.entry_time)
+                ):
+                    prior = _prev_n_bars(series, bar.timestamp, lot.exit_range_bars)
+                    if prior is not None and range_expansion_exit(bar, prior):
+                        hit = ("range_expansion", bar.close)
                 if hit is None and lot.exit_mode == "ma_cross_close" and _ma_pair_cross_exit(
                     lot, bar, series
                 ):
@@ -1292,7 +1328,7 @@ def run_backtest(
 
         # 2b) Session flatten at the close of the bar that contains flatten_by.
         #     15m + 15:55 → 15:45 ET bar close. 5m + 15:55 → 15:50 ET bar close.
-        #     Stop/take/ema_invalid/lower_high/ma_cross_close on this bar already
+        #     Stop/take/ema_invalid/lower_high/range_expansion/ma_cross_close on this bar already
         #     ran; they win if they hit. Next-open ma_cross is still pending, so
         #     flatten at this close wins over that scheduled next-open fill.
         if flatten_by:
@@ -1370,6 +1406,7 @@ def run_backtest(
                                 exit_mode=rule.action.exit,
                                 exit_ema_period=rule.action.exit_ema_period,
                                 exit_sma_period=rule.action.exit_sma_period,
+                                exit_range_bars=rule.action.exit_range_bars,
                                 **_breakeven_fields(rule.action),
                             )
                         )
@@ -1452,6 +1489,7 @@ def run_backtest(
                                     exit_mode=rule.action.exit,
                                     exit_ema_period=rule.action.exit_ema_period,
                                     exit_sma_period=rule.action.exit_sma_period,
+                                    exit_range_bars=rule.action.exit_range_bars,
                                     **_stop_manage_fields(rule.action),
                                     **_breakeven_fields(rule.action),
                                 )
@@ -1638,6 +1676,28 @@ def run_backtest(
             f"{lh_exits} trade(s) exited as lower_high "
             "(completed bar high < previous bar high)."
         )
+    range_rules = [
+        r
+        for r in config.rules
+        if r.enabled and r.action.type != "close" and r.action.exit == "range_expansion"
+    ]
+    if range_rules:
+        sample = range_rules[0].action
+        n = sample.exit_range_bars
+        extra_notes.append(
+            f"Range-expansion exit (action.exit: range_expansion): after entry, on each "
+            f"completed signal-timeframe bar *after the entry/fill bar*, leave when that "
+            f"bar's range (high − low) is strictly greater than the max range of the "
+            f"previous {n} bars and exit at that bar's close (same fill convention as "
+            "ema_invalid / lower_high). Equal range stays valid. Need those prior bars "
+            "in the series. Same-bar stop + range expansion → stop. If the expansion bar "
+            "is also the flatten bar, range_expansion at that close wins over session_flatten."
+        )
+        range_exits = sum(1 for t in trades if t.exit_reason == "range_expansion")
+        extra_notes.append(
+            f"{range_exits} trade(s) exited as range_expansion "
+            f"(bar range > max of previous {n} bars, fill at that close)."
+        )
     pnl_note = _exit_pnl_note(trades)
     if pnl_note:
         extra_notes.append(pnl_note)
@@ -1700,10 +1760,18 @@ def run_backtest(
             "percent still uses the signal close. No percent take when take_profit_pct is omitted."
         )
         if sample.stop_mode == "entry_pct":
-            extra_notes.append(
-                "Fixed entry stop (stop_mode: entry_pct): the initial fill stop never moves. "
-                "Exits are that stop or session_flatten (or eod)."
-            )
+            if sample.exit == "range_expansion":
+                extra_notes.append(
+                    "Fixed entry stop (stop_mode: entry_pct): the initial fill stop never "
+                    "moves (not lock_plus). Exits are that stop, range_expansion, or "
+                    "session_flatten (or eod). Same-bar stop + range expansion → stop "
+                    "(stop is checked first)."
+                )
+            else:
+                extra_notes.append(
+                    "Fixed entry stop (stop_mode: entry_pct): the initial fill stop never moves. "
+                    "Exits are that stop or session_flatten (or eod)."
+                )
         if sample.stop_mode == "lock_plus":
             trig = sample.resolved_lock_trigger_pct()
             lock = sample.resolved_lock_stop_pct()
@@ -1988,6 +2056,7 @@ def format_report_md(payload: dict[str, Any]) -> str:
             or "breakeven_stop" in n
             or "exited as ma_cross" in n
             or "exited as lower_high" in n
+            or "exited as range_expansion" in n
             or "lock_stop" in n
             or "trail_stop" in n
             or "armed the +lock" in n
