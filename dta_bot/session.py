@@ -89,3 +89,20 @@ def wall_clock_at_or_after(
     if not hhmm:
         return False
     return _aware(now) >= session_clock(now, hhmm, tz_name)
+
+
+def bar_opens_at(
+    bar_open: datetime,
+    hhmm: Optional[str],
+    tz_name: str,
+) -> bool:
+    """True when ``bar_open``'s local clock equals ``hhmm`` in ``tz_name``.
+
+    Bar timestamps may be stored in UTC (Yahoo) or already in the session
+    zone; both are converted before the hour:minute compare.
+    """
+    if not hhmm:
+        return False
+    local = _aware(bar_open).astimezone(ZoneInfo(tz_name))
+    clock = parse_hhmm(hhmm)
+    return local.hour == clock.hour and local.minute == clock.minute

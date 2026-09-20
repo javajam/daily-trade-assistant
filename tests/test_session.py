@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from dta_bot.session import (
+    bar_opens_at,
     fill_at_or_after_cutoff,
     is_flatten_bar,
     parse_optional_hhmm,
@@ -69,3 +70,14 @@ def test_wall_clock_at_or_after_flatten():
     assert wall_clock_at_or_after(et(15, 54), "15:55", tz) is False
     assert wall_clock_at_or_after(et(15, 55), "15:55", tz) is True
     assert wall_clock_at_or_after(et(16, 0), "15:55", tz) is True
+
+
+def test_bar_opens_at_session_clock_and_utc():
+    tz = "America/New_York"
+    assert bar_opens_at(et(15, 30), "15:30", tz) is True
+    assert bar_opens_at(et(15, 45), "15:30", tz) is False
+    assert bar_opens_at(et(15, 30), None, tz) is False
+    # Yahoo stores 15:30 EDT as 19:30 UTC (2026-09-11 is EDT, UTC-4).
+    utc = datetime(2026, 9, 11, 19, 30, tzinfo=timezone.utc)
+    assert bar_opens_at(utc, "15:30", tz) is True
+    assert bar_opens_at(utc, "15:45", tz) is False

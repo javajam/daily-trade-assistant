@@ -19,6 +19,9 @@
 # --live-orders still hits *sandbox* unless allow_live + TRADIER_LIVE_TRADING
 # + TRADIER_ALLOW_LIVE=I_UNDERSTAND and tradier_endpoint: production.
 # This repo never ships real tokens. Credentials are not verified here.
+#
+# EOD add-on sleeve (separate process + state_file, same sandbox account):
+#   config/eod_green_rsi_tradier_sandbox.example.yaml
 
 settings:
   paper: true

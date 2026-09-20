@@ -19,6 +19,7 @@ from dta_bot.config import (
     BotConfig,
     entry_sides,
     find_rsi_condition,
+    has_eod_green_rsi,
     has_noon_short_stack,
     has_noon_stack,
     has_volume_gt_prev,
@@ -700,6 +701,19 @@ def _noon_entry_assumption(config: Optional[BotConfig]) -> Optional[str]:
                     "(next bar open) or session_flatten. No percent / lock_plus stop"
                 )
     if not long_txt and not short_txt:
+        for rule in config.rules:
+            if not rule.enabled or rule.action.type == "close":
+                continue
+            if has_eod_green_rsi(rule.when):
+                rsi_cond = find_rsi_condition(rule.when)
+                period = rsi_cond.period if rsi_cond is not None else 14
+                below = rsi_cond.below if rsi_cond is not None and rsi_cond.below is not None else 70
+                return (
+                    "Entry is the EOD add-on on the signal timeframe: the 15:30 ET bar "
+                    f"must close green (close > open) with RSI({period}) < {below:g}. "
+                    "Fill at the next bar open (15:45 ET on 15m). No SMA20, volume, "
+                    "range, or break-of-high filter. One entry per 15:30 signal bar."
+                )
         return None
     parts = [p for p in (long_txt, short_txt) if p]
     return (
@@ -843,6 +857,11 @@ def session_gate_suffix(config: BotConfig) -> str:
         bits.append(f"cutoff {s.entry_cutoff}")
     if s.flatten_by:
         bits.append(f"flat {s.flatten_by}")
+    if any(
+        r.enabled and r.action.type != "close" and has_eod_green_rsi(r.when)
+        for r in config.rules
+    ):
+        bits.append("EOD green+RSI")
     be = next(
         (
             r.action.breakeven_after_bars
