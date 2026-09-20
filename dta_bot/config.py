@@ -104,9 +104,10 @@ TAKE_ANCHOR_ALIASES = {
     "fill": "entry",
     "entry_fill": "entry",
 }
-STOP_MODES = ("percent", "sma20", "entry_pct", "lock_plus", "trail")
+STOP_MODES = ("percent", "sma20", "entry_pct", "lock_plus", "trail", "atr")
 # entry_pct / lock_plus / trail rebase the protective stop to the fill
 # (next-bar open). percent stays on the signal-bar close (legacy).
+# atr is fill-anchored as fill ± k×ATR(period) of the signal bar (not trailed).
 ENTRY_STOP_MODES = frozenset({"entry_pct", "lock_plus", "trail"})
 STOP_MODE_ALIASES = {
     "percent": "percent",
@@ -128,6 +129,10 @@ STOP_MODE_ALIASES = {
     "trail_pct": "trail",
     "trail_1pct": "trail",
     "trailing": "trail",
+    "atr": "atr",
+    "atr14": "atr",
+    "wilder_atr": "atr",
+    "atr_stop": "atr",
 }
 
 
@@ -149,8 +154,14 @@ class ActionSpec(BaseModel):
     #   Short: initial fill×(1 + stop/100); trigger/lock fill×(1 − lock/100).
     # trail = stop = peak_price_since_entry * (1 - trail_pct/100), ratchets
     #   up only; peak updates from each bar high after the stop check.
-    stop_mode: Literal["percent", "sma20", "entry_pct", "lock_plus", "trail"] = "percent"
+    # atr = fill − k×ATR(stop_atr_period) (long) or fill + k×ATR (short).
+    #   ATR is Wilder, computed through the closed signal/entry bar; the
+    #   dollar distance is applied to the *fill* (next-bar open). Never
+    #   trails. Skip when ATR is unavailable or the stop is not beyond fill.
+    stop_mode: Literal["percent", "sma20", "entry_pct", "lock_plus", "trail", "atr"] = "percent"
     stop_sma_period: int = Field(default=20, ge=2)
+    stop_atr_period: int = Field(default=14, ge=2)
+    stop_atr_mult: float = Field(default=1.0, gt=0)
     # lock_plus: trigger and locked-stop distance in percent from entry.
     # Omit to use stop_loss_pct (1.0 → first touch of entry*1.01, lock there).
     lock_trigger_pct: Optional[float] = Field(default=None, gt=0)
@@ -209,9 +220,11 @@ class ActionSpec(BaseModel):
     # bar's close. Do not arm on the entry/fill bar. Need that many prior
     # bars in the series. Optional stop is catastrophic only (off when
     # omitted). stop_mode: entry_pct + stop_loss_pct is a hard fill stop
-    # that never moves (not lock_plus). Same-bar stop + range → stop.
+    # that never moves (not lock_plus). stop_mode: atr is fill ± k×ATR of
+    # the signal bar (also never moves). Same-bar stop + range → stop.
     # Percent take is ignored. Same-bar range expansion + flatten →
-    # range_expansion.
+    # range_expansion. exit_range_skip_doji skips expansion bars whose
+    # body/range is at or below exit_range_doji_frac (default 0.10).
     exit: Literal[
         "fixed_bracket",
         "ema_invalid",
@@ -223,6 +236,8 @@ class ActionSpec(BaseModel):
     exit_ema_period: int = Field(default=9, ge=2)
     exit_sma_period: int = Field(default=20, ge=2)
     exit_range_bars: int = Field(default=3, ge=1)
+    exit_range_skip_doji: bool = False
+    exit_range_doji_frac: float = Field(default=0.10, ge=0, le=1)
     # After this many complete signal-timeframe bars *after the entry bar*,
     # move the stop to entry (break-even). 0 / omitted = off. 1 = next full
     # candle after fill (e.g. the next 15m bar after a 15m fill).
@@ -272,9 +287,23 @@ class ActionSpec(BaseModel):
         key = str(v).strip().lower().replace("-", "_").replace(" ", "_")
         if key not in STOP_MODE_ALIASES:
             raise ValueError(
-                "stop_mode must be 'percent', 'sma20', 'entry_pct', 'lock_plus', or 'trail'"
+                "stop_mode must be 'percent', 'sma20', 'entry_pct', 'lock_plus', 'trail', or 'atr'"
             )
         return STOP_MODE_ALIASES[key]
+
+    @field_validator("exit_range_skip_doji", mode="before")
+    @classmethod
+    def _skip_doji(cls, v: Any) -> bool:
+        if v is None or str(v).strip() == "":
+            return False
+        if isinstance(v, bool):
+            return v
+        key = str(v).strip().lower()
+        if key in {"true", "on", "yes", "1"}:
+            return True
+        if key in {"false", "off", "no", "0"}:
+            return False
+        return v
 
     @field_validator("take_anchor", mode="before")
     @classmethod
@@ -1187,6 +1216,8 @@ def _parse_action(raw: dict[str, Any]) -> ActionSpec:
         take_profit_pct=raw.get("take_profit_pct"),
         stop_mode=raw.get("stop_mode", "percent"),
         stop_sma_period=raw.get("stop_sma_period", raw.get("sma_period", raw.get("exit_sma_period", 20))),
+        stop_atr_period=raw.get("stop_atr_period", raw.get("atr_period", 14)),
+        stop_atr_mult=raw.get("stop_atr_mult", raw.get("atr_mult", 1.0)),
         lock_trigger_pct=raw.get("lock_trigger_pct"),
         lock_stop_pct=raw.get("lock_stop_pct"),
         trail_pct=raw.get("trail_pct"),
@@ -1199,6 +1230,12 @@ def _parse_action(raw: dict[str, Any]) -> ActionSpec:
         exit_ema_period=raw.get("exit_ema_period", raw.get("ema_period", 9)),
         exit_sma_period=raw.get("exit_sma_period", raw.get("sma_period", 20)),
         exit_range_bars=raw.get("exit_range_bars", raw.get("range_bars", 3)),
+        exit_range_skip_doji=raw.get(
+            "exit_range_skip_doji", raw.get("skip_doji", raw.get("range_skip_doji", False))
+        ),
+        exit_range_doji_frac=raw.get(
+            "exit_range_doji_frac", raw.get("doji_frac", raw.get("range_doji_frac", 0.10))
+        ),
         breakeven_after_bars=raw.get("breakeven_after_bars", 0),
         breakeven_requires_valid=raw.get("breakeven_requires_valid", True),
         breakeven_valid=raw.get("breakeven_valid", "above_ema"),

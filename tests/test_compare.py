@@ -440,6 +440,17 @@ def test_run_rule_books_prefixes_and_soxl_breakout():
     assert any("stop is checked first" in n for n in range3_stop_notes)
     assert any("No lock-at-+1%" in n for n in range3_stop_notes)
     assert not any("moves the stop" in n for n in range3_stop_notes)
+    atr1 = load_config("config/ema9_trend_bracket_nobe_range3_atr1.example.yaml")
+    assert session_gate_suffix(atr1) == (
+        " (flat 15:55, range>last-3, skip-doji, ATR14×1)"
+    )
+    atr_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, atr1)
+    assert any("stop_mode: atr" in n and "Wilder ATR" in n for n in atr_notes)
+    assert any("body/range" in n and "doji" in n for n in atr_notes)
+    nocut = load_config("config/ema9_trend_bracket_nobe_range3_fixed1_nocutoff.example.yaml")
+    assert session_gate_suffix(nocut) == (
+        " (flat 15:55, range>last-3, skip-doji, entry 1.0%)"
+    )
     lock_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, lock1)
     assert any("stop_mode: lock_plus" in n and "entry×(1+1/100)" in n for n in lock_notes)
     trail_notes = assumptions_rules("commission=$0.00/fill, slippage=0.0%", 100_000.0, trail1)

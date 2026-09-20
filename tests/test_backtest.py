@@ -449,6 +449,48 @@ def test_range_expansion_wins_over_flatten_on_same_bar():
     assert trade.exit_price == 13.5
 
 
+def test_range_expansion_skip_doji_waits_for_non_doji():
+    bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(12)]
+    bars[-2] = Bar(bars[-2].timestamp, 10.0, 10.1, 9.9, 10.0, 1000)
+    bars[-1] = Bar(bars[-1].timestamp, 10.0, 12.5, 9.9, 12.0, 1000)
+    fill = Bar(bar(12, 12.0, 12.15, 11.85, 12.1).timestamp, 12.0, 12.15, 11.85, 12.1, 1000)
+    doji = Bar(bar(13, 12.1, 14.0, 11.0, 12.2).timestamp, 12.1, 14.0, 11.0, 12.2, 1000)
+    body = Bar(bar(14, 12.2, 14.2, 11.1, 13.6).timestamp, 12.2, 14.2, 11.1, 13.6, 1000)
+    result = run_backtest(
+        _cfg(_range_rule(exit_range_skip_doji=True)),
+        {("AAPL", "15Min"): bars + [fill, doji, body]},
+    )
+    trade = result.trades[0]
+    assert trade.exit_reason == "range_expansion"
+    assert trade.exit_price == 13.6
+
+
+def test_atr_stop_is_fill_minus_k_times_signal_atr():
+    from dta_bot.indicators import atr as wilder_atr
+
+    bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(20)]
+    bars[-2] = Bar(bars[-2].timestamp, 10.0, 10.1, 9.9, 10.0, 1000)
+    bars[-1] = Bar(bars[-1].timestamp, 10.0, 12.5, 9.9, 12.0, 1000)
+    expected_atr = wilder_atr(
+        [b.high for b in bars],
+        [b.low for b in bars],
+        [b.close for b in bars],
+        14,
+    )
+    assert expected_atr is not None and expected_atr > 0
+    fill = Bar(bar(20, 20.0, 20.1, 19.95, 20.05).timestamp, 20.0, 20.1, 19.95, 20.05, 1000)
+    hit = Bar(bar(21, 20.05, 20.10, 18.00, 19.80).timestamp, 20.05, 20.10, 18.00, 19.80, 1000)
+    result = run_backtest(
+        _cfg(_range_rule(stop_mode="atr", stop_atr_period=14, stop_atr_mult=1.0)),
+        {("AAPL", "15Min"): bars + [fill, hit]},
+    )
+    trade = result.trades[0]
+    assert trade.exit_reason == "stop"
+    assert trade.entry_price == 20.0
+    assert trade.stop == pytest.approx(20.0 - expected_atr)
+    assert trade.exit_price == pytest.approx(20.0 - expected_atr)
+
+
 def test_ema_invalid_optional_stop_still_fires_first():
     bars = [bar(i, 10.0, 10.1, 9.9, 10.0) for i in range(12)]
     bars[-2] = Bar(bars[-2].timestamp, 10.0, 10.1, 9.9, 10.0, 1000)

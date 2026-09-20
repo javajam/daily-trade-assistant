@@ -349,6 +349,20 @@ def test_range_expansion_exit_strict_gt():
     assert range_expansion_exit(wide, []) is False
 
 
+def test_range_expansion_skip_doji():
+    prior = [
+        bar(0, 10.0, 10.2, 9.8, 10.0),
+        bar(1, 10.0, 10.3, 9.9, 10.1),
+        bar(2, 10.1, 10.4, 10.0, 10.2),
+    ]
+    # Range 3.0 > 0.4, but body/range = 0.1/3.0 < 0.10
+    doji = bar(3, 12.1, 14.0, 11.0, 12.2)
+    body = bar(3, 12.1, 14.0, 11.0, 13.5)
+    assert range_expansion_exit(doji, prior) is True
+    assert range_expansion_exit(doji, prior, skip_doji=True) is False
+    assert range_expansion_exit(body, prior, skip_doji=True) is True
+
+
 def test_range_expansion_flatten_skips_entry_bar():
     bars = [
         bar(0, 10.0, 10.2, 9.8, 10.0),

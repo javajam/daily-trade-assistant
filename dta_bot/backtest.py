@@ -31,11 +31,11 @@ from dta_bot.engine import (
     range_expansion_exit,
 )
 from dta_bot.models import Account, Bar
-from dta_bot.indicators import ma_pair_cross, sma
+from dta_bot.indicators import atr, ma_pair_cross, sma
 from dta_bot.orb import ema_cross_exit, ema_through
 from dta_bot.period_stats import build_period_stats, format_period_stats_md, session_date
 from dta_bot.session import fill_at_or_after_cutoff, is_flatten_bar
-from dta_bot.sizing import bracket_prices, buy_notional, shares_for, sma_stop_valid
+from dta_bot.sizing import atr_stop_price, bracket_prices, buy_notional, shares_for, sma_stop_valid
 from dta_bot.state import BotState
 from dta_bot.timeframes import duration, normalize
 
@@ -101,6 +101,7 @@ class Trade:
     partial_take_price: Optional[float] = None
     partial_take_pnl: float = 0.0
     partial_take_skipped_size: bool = False
+    stop: Optional[float] = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -150,6 +151,8 @@ class OpenLot:
     exit_ema_period: int = 9
     exit_sma_period: int = 20
     exit_range_bars: int = 3
+    exit_range_skip_doji: bool = False
+    exit_range_doji_frac: float = 0.10
     completed_bars: int = 0
     breakeven_after_bars: int = 0
     breakeven_requires_valid: bool = True
@@ -162,6 +165,9 @@ class OpenLot:
     lock_trigger_pct: Optional[float] = None
     lock_stop_pct: Optional[float] = None
     trail_pct: Optional[float] = None
+    stop_atr_mult: float = 1.0
+    stop_atr_period: int = 14
+    atr_value: Optional[float] = None
     peak_price: Optional[float] = None
     lock_armed: bool = False
     trail_ratcheted: bool = False
@@ -200,12 +206,17 @@ class PendingOrder:
     exit_ema_period: int = 9
     exit_sma_period: int = 20
     exit_range_bars: int = 3
+    exit_range_skip_doji: bool = False
+    exit_range_doji_frac: float = 0.10
     close_reason: str = "close_signal"
     stop_mode: str = "percent"
     stop_loss_pct: Optional[float] = None
     lock_trigger_pct: Optional[float] = None
     lock_stop_pct: Optional[float] = None
     trail_pct: Optional[float] = None
+    stop_atr_mult: float = 1.0
+    stop_atr_period: int = 14
+    atr_value: Optional[float] = None
     breakeven_after_bars: int = 0
     breakeven_requires_valid: bool = True
     breakeven_valid: str = "above_ema"
@@ -421,6 +432,14 @@ def _breakeven_fields(action: ActionSpec) -> dict[str, Any]:
     }
 
 
+def _exit_range_fields(action: ActionSpec) -> dict[str, Any]:
+    return {
+        "exit_range_bars": action.exit_range_bars,
+        "exit_range_skip_doji": action.exit_range_skip_doji,
+        "exit_range_doji_frac": action.exit_range_doji_frac,
+    }
+
+
 def _stop_manage_fields(action: ActionSpec) -> dict[str, Any]:
     return {
         "stop_mode": action.stop_mode,
@@ -428,6 +447,8 @@ def _stop_manage_fields(action: ActionSpec) -> dict[str, Any]:
         "lock_trigger_pct": action.resolved_lock_trigger_pct(),
         "lock_stop_pct": action.resolved_lock_stop_pct(),
         "trail_pct": action.resolved_trail_pct(),
+        "stop_atr_mult": action.stop_atr_mult,
+        "stop_atr_period": action.stop_atr_period,
         "pyramid_on_lock": action.pyramid_on_lock,
         "pyramid_add_pct": action.pyramid_add_pct,
         "take_anchor": action.take_anchor,
@@ -766,6 +787,39 @@ def _signal_sma_stop(
     return _sma_through(series, signal_bar, action.stop_sma_period)
 
 
+def _bars_through(series: list[Bar], bar: Bar) -> Optional[list[Bar]]:
+    out: list[Bar] = []
+    target = _aware(bar.timestamp)
+    for item in series:
+        out.append(item)
+        if _aware(item.timestamp) == target:
+            return out
+    return None
+
+
+def _signal_atr(
+    action: ActionSpec,
+    series: list[Bar],
+    signal_bar_ts: Optional[datetime],
+) -> Optional[float]:
+    """Wilder ATR(stop_atr_period) through the closed signal/entry bar."""
+    if action.stop_mode != "atr" or signal_bar_ts is None:
+        return None
+    target = _aware(signal_bar_ts)
+    signal_bar = next((item for item in series if _aware(item.timestamp) == target), None)
+    if signal_bar is None:
+        return None
+    window = _bars_through(series, signal_bar)
+    if not window:
+        return None
+    return atr(
+        [b.high for b in window],
+        [b.low for b in window],
+        [b.close for b in window],
+        action.stop_atr_period,
+    )
+
+
 def _open_side(lots: list[OpenLot], symbol: str) -> Optional[str]:
     for lot in lots:
         if lot.symbol == symbol:
@@ -901,6 +955,7 @@ def _close_lot(
         partial_take_price=lot.partial_take_price,
         partial_take_pnl=lot.partial_take_pnl,
         partial_take_skipped_size=lot.partial_take_skipped_size,
+        stop=lot.stop,
     )
     return trade, cash
 
@@ -1040,6 +1095,7 @@ def run_backtest(
     cash_skips = 0
     pyramid_add_skips = 0
     sma20_fill_skips = 0
+    atr_fill_skips = 0
     max_concurrent = 0
     both_open_ticks = 0
     window_start = _aware(trade_start) if trade_start is not None else None
@@ -1147,6 +1203,13 @@ def run_backtest(
             fill_stop = order.stop
             if order.stop_mode in ENTRY_STOP_MODES:
                 fill_stop = _entry_anchored_stop(order.side, fill_px, order.stop_loss_pct)
+            if order.stop_mode == "atr":
+                fill_stop = atr_stop_price(
+                    order.side, fill_px, order.atr_value, order.stop_atr_mult
+                )
+                if fill_stop is None:
+                    atr_fill_skips += 1
+                    continue
             fill_take = order.take
             if order.take_anchor == "entry":
                 fill_take = _entry_anchored_take(order.side, fill_px, order.take_profit_pct)
@@ -1174,6 +1237,8 @@ def run_backtest(
                     exit_ema_period=order.exit_ema_period,
                     exit_sma_period=order.exit_sma_period,
                     exit_range_bars=order.exit_range_bars,
+                    exit_range_skip_doji=order.exit_range_skip_doji,
+                    exit_range_doji_frac=order.exit_range_doji_frac,
                     breakeven_after_bars=order.breakeven_after_bars,
                     breakeven_requires_valid=order.breakeven_requires_valid,
                     breakeven_valid=order.breakeven_valid,
@@ -1183,6 +1248,9 @@ def run_backtest(
                     lock_trigger_pct=order.lock_trigger_pct,
                     lock_stop_pct=order.lock_stop_pct,
                     trail_pct=order.trail_pct,
+                    stop_atr_mult=order.stop_atr_mult,
+                    stop_atr_period=order.stop_atr_period,
+                    atr_value=order.atr_value,
                     peak_price=fill_px,
                     pyramid_on_lock=order.pyramid_on_lock,
                     pyramid_add_pct=order.pyramid_add_pct,
@@ -1232,7 +1300,12 @@ def run_backtest(
                     and _aware(bar.timestamp) != _aware(lot.entry_time)
                 ):
                     prior = _prev_n_bars(series, bar.timestamp, lot.exit_range_bars)
-                    if prior is not None and range_expansion_exit(bar, prior):
+                    if prior is not None and range_expansion_exit(
+                        bar,
+                        prior,
+                        skip_doji=lot.exit_range_skip_doji,
+                        doji_frac=lot.exit_range_doji_frac,
+                    ):
                         hit = ("range_expansion", bar.close)
                 if hit is None and lot.exit_mode == "ma_cross_close" and _ma_pair_cross_exit(
                     lot, bar, series
@@ -1431,6 +1504,7 @@ def run_backtest(
                         skip_reason = "no_price"
                     else:
                         sma_stop = _signal_sma_stop(rule.action, series, ev.signal_bar_ts)
+                        atr_val = _signal_atr(rule.action, series, ev.signal_bar_ts)
                         if accepted and rule.action.stop_mode == "sma20":
                             side_probe = "buy" if action == "buy" else "sell"
                             if sma_stop is None:
@@ -1439,9 +1513,27 @@ def run_backtest(
                             elif not sma_stop_valid(side_probe, px, sma_stop):
                                 accepted = False
                                 skip_reason = "sma20_above_entry"
+                        if accepted and rule.action.stop_mode == "atr":
+                            if atr_val is None or atr_val <= 0:
+                                accepted = False
+                                skip_reason = "atr_unavailable"
                         try:
                             qty = (
-                                shares_for(rule.action, account(), px, stop_price=sma_stop)
+                                shares_for(
+                                    rule.action,
+                                    account(),
+                                    px,
+                                    stop_price=sma_stop
+                                    if rule.action.stop_mode == "sma20"
+                                    else atr_stop_price(
+                                        "buy" if action == "buy" else "sell",
+                                        px,
+                                        atr_val,
+                                        rule.action.stop_atr_mult,
+                                    )
+                                    if rule.action.stop_mode == "atr"
+                                    else None,
+                                )
                                 if accepted
                                 else 0.0
                             )
@@ -1472,7 +1564,9 @@ def run_backtest(
                                 skip_reason = "insufficient_cash"
                         if accepted and nxt is not None:
                             side = "buy" if action == "buy" else "sell"
-                            stop, take = bracket_prices(rule.action, px, side, sma_value=sma_stop)
+                            stop, take = bracket_prices(
+                                rule.action, px, side, sma_value=sma_stop, atr_value=atr_val
+                            )
                             pending.append(
                                 PendingOrder(
                                     kind="enter",
@@ -1489,7 +1583,8 @@ def run_backtest(
                                     exit_mode=rule.action.exit,
                                     exit_ema_period=rule.action.exit_ema_period,
                                     exit_sma_period=rule.action.exit_sma_period,
-                                    exit_range_bars=rule.action.exit_range_bars,
+                                    atr_value=atr_val,
+                                    **_exit_range_fields(rule.action),
                                     **_stop_manage_fields(rule.action),
                                     **_breakeven_fields(rule.action),
                                 )
@@ -1684,6 +1779,13 @@ def run_backtest(
     if range_rules:
         sample = range_rules[0].action
         n = sample.exit_range_bars
+        doji_txt = ""
+        if sample.exit_range_skip_doji:
+            doji_txt = (
+                f" Expansion bars with body/range <= {sample.exit_range_doji_frac:g} "
+                "(doji) do not fire the range exit; wait for a later non-doji expansion, "
+                "the protective stop, or flatten."
+            )
         extra_notes.append(
             f"Range-expansion exit (action.exit: range_expansion): after entry, on each "
             f"completed signal-timeframe bar *after the entry/fill bar*, leave when that "
@@ -1692,6 +1794,7 @@ def run_backtest(
             "ema_invalid / lower_high). Equal range stays valid. Need those prior bars "
             "in the series. Same-bar stop + range expansion → stop. If the expansion bar "
             "is also the flatten bar, range_expansion at that close wins over session_flatten."
+            + doji_txt
         )
         range_exits = sum(1 for t in trades if t.exit_reason == "range_expansion")
         extra_notes.append(
@@ -1744,6 +1847,33 @@ def run_backtest(
         extra_notes.append(
             f"{sma20_fill_skips} accepted signal(s) skipped at fill because SMA20 was at/above "
             "the next-bar open (long stop not below entry)."
+        )
+    atr_rules = [
+        r
+        for r in config.rules
+        if r.enabled and r.action.type != "close" and r.action.stop_mode == "atr"
+    ]
+    if atr_rules:
+        sample = atr_rules[0].action
+        extra_notes.append(
+            f"ATR stop (stop_mode: atr): Wilder ATR({sample.stop_atr_period}) is computed "
+            "through the closed signal/entry bar (true range = max(H−L, |H−prev close|, "
+            f"|L−prev close|); seed = SMA of the first {sample.stop_atr_period} TRs, then "
+            f"ATR = (prev_ATR×({sample.stop_atr_period}−1) + TR) / {sample.stop_atr_period}). "
+            f"Protective stop is fill − {sample.stop_atr_mult:g}×ATR (long) or fill + "
+            f"{sample.stop_atr_mult:g}×ATR (short). The dollar distance is taken from the "
+            "signal-bar ATR and applied to the next-bar fill; it never trails. Signals skip "
+            "when ATR is unavailable (atr_unavailable). Fills skip when that stop is not "
+            "beyond the fill. No min/max stop-distance floor."
+        )
+        extra_notes.append(
+            f"{sum(1 for s in signals if s.skip_reason == 'atr_unavailable')} signal(s) "
+            "skipped as atr_unavailable."
+        )
+    if atr_fill_skips:
+        extra_notes.append(
+            f"{atr_fill_skips} accepted signal(s) skipped at fill because the ATR stop "
+            "was not beyond the next-bar open."
         )
     entry_stop_rules = [
         r
@@ -2036,6 +2166,7 @@ def format_report_md(payload: dict[str, Any]) -> str:
             or n.startswith("MA-cross exit")
             or n.startswith("Lower-high exit")
             or n.startswith("SMA20 stop")
+            or n.startswith("ATR stop")
             or n.startswith("Entry-anchored stop")
             or n.startswith("Fixed entry stop")
             or n.startswith("Lock-plus")
@@ -2050,6 +2181,8 @@ def format_report_md(payload: dict[str, Any]) -> str:
             or "entry_cutoff" in n
             or "sma20" in n
             or "SMA20" in n
+            or "ATR stop" in n
+            or "atr_unavailable" in n
             or "session_flatten" in n
             or "armed break-even" in n
             or "armed BE" in n
