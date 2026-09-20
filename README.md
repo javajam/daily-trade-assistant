@@ -44,7 +44,7 @@ Python package `dta_bot`. Rules live in YAML (or JSON), not in code. The runner 
 - OHLCV bars from Alpaca IEX, **Yahoo** (no broker keys), Tradier timesales, or a local fixture file.
 - Candlestick detectors on the last N **closed** bars of a timeframe (`1m`, `5m`, `15m`, `30m`, `1h`, `4h`, `1d`, `1w`):
   bullish/bearish engulfing, hammer, inverted hammer, shooting star, doji, morning star, evening star, three white soldiers, three black crows.
-- Rule engine: nested **AND** (`all`) / **OR** (`any`), pattern + SMA/EMA + EMA/SMA **cross** + RSI + volume, symbol universe, per-symbol cooldown, idempotent (same bar cannot fire twice).
+- Rule engine: nested **AND** (`all`) / **OR** (`any`), pattern + SMA/EMA + EMA/SMA **cross** + RSI + volume + **bar open-at / candle color**, symbol universe, per-symbol cooldown, idempotent (same bar cannot fire twice).
 - CLI scheduler (`run`) or one-shot (`evaluate` / `run --once`).
 - Kill switch that stops **new orders** immediately.
 - Secrets via environment variables only.
@@ -94,6 +94,29 @@ Production (`https://api.tradier.com/v1`) stays locked unless **all** of these a
 | env `TRADIER_ALLOW_LIVE` | must equal `I_UNDERSTAND` |
 
 This repo does not call Tradier in CI and does not verify that a given token works. Leave that to the operator.
+
+### Tradier sandbox — EOD green+RSI add-on (AAPL)
+
+Separate sleeve from the locked noon book. Paper it Monday in a second process (different `state_file`) alongside `config/ema9_trend_tradier_sandbox.example.yaml`.
+
+**Rules**
+
+- Universe: **AAPL**, 10 shares.
+- **Entry** (once per session): after the **15:30 ET 15m** bar closes **green** (`close > open`) **and** **RSI(14) < 70** on that bar, buy market at the **15:45 ET bar open** (next-bar open in backtest; live/paper market once 15:30 is confirmed, ≈15:45).
+- **Exit** (whichever first): hard stop **fill × 0.995 (−0.5%)**, else flatten at the **15:45 bar close (16:00 ET)**. The config uses the bot’s existing `flatten_by: "15:55"` convention (15m bar that contains 15:55 is the 15:45 bar; flatten at that close). Live also flats when wall clock ≥ 15:55 ET.
+- **Not in this sleeve:** SMA20, volume/range filters, break-of-high entry, prior-low stop. No noon `entry_cutoff` — `bar.open_at: "15:30"` is the only entry clock.
+
+```bash
+python -m dta_bot validate --config config/eod_green_rsi_tradier_sandbox.example.yaml
+python -m dta_bot status  --config config/eod_green_rsi_tradier_sandbox.example.yaml
+python -m dta_bot run --config config/eod_green_rsi_tradier_sandbox.example.yaml --once --dry-run
+# submit sandbox orders (still not production):
+python -m dta_bot run --config config/eod_green_rsi_tradier_sandbox.example.yaml --live-orders
+```
+
+`--once --dry-run` (or YAML `dry_run: true` / `tradier_preview: true`) does **not** place sandbox orders. `--live-orders` still hits sandbox unless the live triple-gate is set.
+
+Same paper-vs-backtest gap as the noon book: the live protective stop is `last × 0.995` at submit (`bracket_prices` uses the 15:30 close, not the 15:45 fill). Backtest rebases to the fill. Session flatten is a market `close_position` on the next 60s poll. Writeup: `artifacts/eod_green_rsi_tradier_sandbox.md`.
 
 ### Setup
 
@@ -231,6 +254,8 @@ rules:
         - rsi: { period: 14, timeframe: 15m, below: 70 }        # above and/or below
         - volume: { period: 20, timeframe: 15m, multiplier: 1.2 }
         - volume_gt_prev: { timeframe: 15m }  # signal vol > previous bar (alias: volume: { vs: prev })
+        - bar: { open_at: "15:30", color: green, timeframe: 15m }  # session-clock open + candle color
+        # aliases: bar_open_at: "15:30"  /  bar_color: green  (green=bullish close>open)
       # any: [ ... ]         # OR; groups nest
     action:
       type: buy | sell | close

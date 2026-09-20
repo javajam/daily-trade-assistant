@@ -16,6 +16,8 @@ data/*
 config/rules.yaml
 config/orb_reversal.yaml
 config/ema9_trend.yaml
+config/eod_green_rsi.yaml
+config/eod_green_rsi_tradier_sandbox.yaml
 config/ema9_trend_5m.yaml
 config/ema9_trend_pair.yaml
 config/ema9_trend_5m_pair.yaml

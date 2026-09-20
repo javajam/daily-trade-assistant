@@ -12,6 +12,7 @@ from dta_bot.config import (
     VolumePrevCond,
     condition_timeframes,
     find_rsi_condition,
+    has_eod_green_rsi,
     has_noon_short_stack,
     has_noon_stack,
     has_volume_gt_prev,
@@ -956,6 +957,20 @@ def test_ema9_trend_tradier_sandbox_config_loads():
     assert rule.action.stop_mode == "entry_pct"
     assert rule.action.stop_loss_pct == 1.0
     assert rule.action.size and rule.action.size.value == 10
+
+
+def test_eod_green_rsi_tradier_sandbox_is_not_the_noon_book():
+    noon = load_config("config/ema9_trend_tradier_sandbox.example.yaml")
+    eod = load_config("config/eod_green_rsi_tradier_sandbox.example.yaml")
+    assert has_noon_stack(noon.rules[0].when)
+    assert not has_eod_green_rsi(noon.rules[0].when)
+    assert has_eod_green_rsi(eod.rules[0].when)
+    assert not has_noon_stack(eod.rules[0].when)
+    assert eod.settings.state_file != noon.settings.state_file
+    assert eod.settings.entry_cutoff is None
+    assert noon.settings.entry_cutoff == "12:00"
+    assert eod.rules[0].action.stop_loss_pct == 0.5
+    assert noon.rules[0].action.stop_loss_pct == 1.0
 
 
 def test_ema9_trend_lower_high_vol_configs_load():

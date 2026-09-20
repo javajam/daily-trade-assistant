@@ -13,6 +13,16 @@ from dta_bot.patterns import PATTERN_NAMES
 from dta_bot.session import parse_optional_hhmm, parse_timezone
 from dta_bot.timeframes import normalize
 
+BAR_COLORS = ("green", "red")
+BAR_COLOR_ALIASES = {
+    "green": "green",
+    "bullish": "green",
+    "up": "green",
+    "red": "red",
+    "bearish": "red",
+    "down": "red",
+}
+
 
 class SizeSpec(BaseModel):
     type: Literal["shares", "percent_equity", "risk_pct"] = "shares"
@@ -436,8 +446,63 @@ class MaPairCrossCond(BaseModel):
         return normalize(v)
 
 
+class BarCond(BaseModel):
+    """Last closed bar's session-clock open and/or candle color.
+
+    ``open_at: "15:30"`` matches when that bar's timestamp (the open) is
+    15:30 in ``timezone``. ``color: green`` is close > open; ``red`` is
+    close < open. A doji matches neither color.
+    """
+
+    kind: Literal["bar"] = "bar"
+    timeframe: str
+    open_at: Optional[str] = None
+    color: Optional[Literal["green", "red"]] = None
+    timezone: str = "America/New_York"
+
+    @field_validator("timeframe")
+    @classmethod
+    def _tf(cls, v: str) -> str:
+        return normalize(v)
+
+    @field_validator("open_at", mode="before")
+    @classmethod
+    def _open_at(cls, v: Optional[str]) -> Optional[str]:
+        return parse_optional_hhmm(v)
+
+    @field_validator("color", mode="before")
+    @classmethod
+    def _color(cls, v: Any) -> Optional[str]:
+        if v is None or str(v).strip() == "":
+            return None
+        key = str(v).strip().lower().replace("-", "_")
+        if key not in BAR_COLOR_ALIASES:
+            raise ValueError(
+                f"bar color must be {BAR_COLORS} (aliases: bullish/bearish/up/down)"
+            )
+        return BAR_COLOR_ALIASES[key]
+
+    @field_validator("timezone")
+    @classmethod
+    def _tz(cls, v: str) -> str:
+        return parse_timezone(v)
+
+    @model_validator(mode="after")
+    def _need_one(self) -> "BarCond":
+        if self.open_at is None and self.color is None:
+            raise ValueError("bar condition needs open_at and/or color")
+        return self
+
+
 LeafCondition = Union[
-    PatternCond, MaCond, RsiCond, VolumeCond, VolumePrevCond, MaCrossCond, MaPairCrossCond
+    PatternCond,
+    MaCond,
+    RsiCond,
+    VolumeCond,
+    VolumePrevCond,
+    MaCrossCond,
+    MaPairCrossCond,
+    BarCond,
 ]
 
 
@@ -694,6 +759,7 @@ _PAIR_CROSS_KEYS = ("ema_sma_cross", "ma_pair_cross", "ema_cross_sma")
 _RSI_LEAF_KEYS = ("rsi", "rsi_below", "rsi_above")
 _VOLUME_PREV_KEYS = ("volume_gt_prev", "volume_vs_prev", "volume_above_prev")
 _VOLUME_PREV_VS = frozenset({"prev", "previous", "prior", "last"})
+_BAR_LEAF_KEYS = ("bar", "bar_open_at", "bar_color", "candle")
 
 
 def _volume_prev_compare(raw: dict[str, Any], default: str = "above") -> str:
@@ -804,6 +870,27 @@ def has_noon_short_stack(cond: AnyCondition) -> bool:
     return has_cross and has_sma
 
 
+def find_bar_condition(cond: AnyCondition) -> Optional[BarCond]:
+    """First bar-time / bar-color leaf in a condition tree, if any."""
+    if isinstance(cond, BarCond):
+        return cond
+    if isinstance(cond, GroupCond):
+        for child in cond.conditions:
+            found = find_bar_condition(child)
+            if found is not None:
+                return found
+    return None
+
+
+def has_eod_green_rsi(cond: AnyCondition) -> bool:
+    """15:30 bar-open + green candle + RSI — the EOD add-on long entry."""
+    leaves = _flatten_conditions(cond)
+    has_open = any(isinstance(leaf, BarCond) and leaf.open_at == "15:30" for leaf in leaves)
+    has_green = any(isinstance(leaf, BarCond) and leaf.color == "green" for leaf in leaves)
+    has_rsi = any(isinstance(leaf, RsiCond) and leaf.below is not None for leaf in leaves)
+    return has_open and has_green and has_rsi
+
+
 def entry_sides(config: BotConfig) -> set[str]:
     """Enabled entry action types: ``{'buy'}``, ``{'sell'}``, or both."""
     return {
@@ -878,6 +965,51 @@ def _parse_ma_pair_cross(raw: dict[str, Any], default_timeframe: Optional[str] =
     )
 
 
+def _normalize_bar_color_flag(raw: dict[str, Any]) -> Optional[str]:
+    if raw.get("bullish") is True:
+        return "green"
+    if raw.get("bearish") is True:
+        return "red"
+    color = raw.get("color") or raw.get("bar_color")
+    if color is None:
+        return None
+    return str(color)
+
+
+def _parse_bar(
+    raw: dict[str, Any],
+    default_timeframe: Optional[str] = None,
+    default_timezone: Optional[str] = None,
+) -> BarCond:
+    block: dict[str, Any] = {}
+    for key in ("bar", "candle"):
+        val = raw.get(key)
+        if isinstance(val, dict):
+            block = val
+            break
+    open_raw: Any = None
+    if "bar_open_at" in raw:
+        val = raw["bar_open_at"]
+        if isinstance(val, dict):
+            block = {**val, **block}
+            open_raw = val.get("at") or val.get("open_at") or val.get("time")
+        else:
+            open_raw = val
+    open_raw = open_raw or block.get("open_at") or block.get("at") or block.get("bar_open_at")
+    color = raw.get("bar_color")
+    if color is None:
+        color = _normalize_bar_color_flag(block) or _normalize_bar_color_flag(raw)
+    skip = {*_BAR_LEAF_KEYS, "bullish", "bearish"}
+    merged = {**block, **{k: v for k, v in raw.items() if k not in skip}}
+    tz = merged.get("timezone") or merged.get("session_timezone") or default_timezone
+    return BarCond(
+        timeframe=_condition_timeframe(merged, raw, default=default_timeframe),
+        open_at=open_raw,
+        color=color,
+        timezone=parse_timezone(tz),
+    )
+
+
 def _parse_ma_cross(raw: dict[str, Any], default_timeframe: Optional[str] = None) -> MaCrossCond:
     block = (
         raw.get("ema_cross")
@@ -914,8 +1046,14 @@ def _parse_ma_cross(raw: dict[str, Any], default_timeframe: Optional[str] = None
     )
 
 
-def _parse_leaf(raw: dict[str, Any], default_timeframe: Optional[str] = None) -> LeafCondition:
+def _parse_leaf(
+    raw: dict[str, Any],
+    default_timeframe: Optional[str] = None,
+    default_timezone: Optional[str] = None,
+) -> LeafCondition:
     """Accept several human-friendly YAML shapes for a single condition."""
+    if any(key in raw for key in _BAR_LEAF_KEYS):
+        return _parse_bar(raw, default_timeframe=default_timeframe, default_timezone=default_timezone)
     if "pattern" in raw:
         name = raw["pattern"]
         if isinstance(name, dict):
@@ -969,7 +1107,11 @@ def _parse_leaf(raw: dict[str, Any], default_timeframe: Optional[str] = None) ->
     raise ValueError(f"Unrecognized condition: {raw!r}")
 
 
-def parse_condition(raw: Any, default_timeframe: Optional[str] = None) -> AnyCondition:
+def parse_condition(
+    raw: Any,
+    default_timeframe: Optional[str] = None,
+    default_timezone: Optional[str] = None,
+) -> AnyCondition:
     if not isinstance(raw, dict):
         raise ValueError(f"Condition must be a mapping, got {type(raw).__name__}")
     if "all" in raw and raw["all"] is not None:
@@ -980,7 +1122,12 @@ def parse_condition(raw: Any, default_timeframe: Optional[str] = None) -> AnyCon
             raise ValueError(f"'all' group cannot mix leaf keys: {list(extra)}")
         return GroupCond(
             kind="all",
-            conditions=[parse_condition(c, default_timeframe=default_timeframe) for c in children],
+            conditions=[
+                parse_condition(
+                    c, default_timeframe=default_timeframe, default_timezone=default_timezone
+                )
+                for c in children
+            ],
         )
     if "any" in raw and raw["any"] is not None:
         extra = {k: v for k, v in raw.items() if k != "any"}
@@ -988,7 +1135,12 @@ def parse_condition(raw: Any, default_timeframe: Optional[str] = None) -> AnyCon
             raise ValueError(f"'any' group cannot mix leaf keys: {list(extra)}")
         return GroupCond(
             kind="any",
-            conditions=[parse_condition(c, default_timeframe=default_timeframe) for c in raw["any"]],
+            conditions=[
+                parse_condition(
+                    c, default_timeframe=default_timeframe, default_timezone=default_timezone
+                )
+                for c in raw["any"]
+            ],
         )
     raw = _lift_nested_rsi(raw)
     has_pair_cross = any(key in raw for key in _PAIR_CROSS_KEYS)
@@ -1007,10 +1159,16 @@ def parse_condition(raw: Any, default_timeframe: Optional[str] = None) -> AnyCon
             kind="all",
             conditions=[
                 _parse_ma_pair_cross(cross_raw, default_timeframe=default_timeframe),
-                _parse_leaf(rsi_raw, default_timeframe=pair_tf or default_timeframe),
+                _parse_leaf(
+                    rsi_raw,
+                    default_timeframe=pair_tf or default_timeframe,
+                    default_timezone=default_timezone,
+                ),
             ],
         )
-    return _parse_leaf(raw, default_timeframe=default_timeframe)
+    return _parse_leaf(
+        raw, default_timeframe=default_timeframe, default_timezone=default_timezone
+    )
 
 
 def _parse_action(raw: dict[str, Any]) -> ActionSpec:
@@ -1049,13 +1207,21 @@ def _parse_action(raw: dict[str, Any]) -> ActionSpec:
     )
 
 
-def _parse_rule(raw: dict[str, Any], default_timeframe: Optional[str] = None) -> RuleSpec:
+def _parse_rule(
+    raw: dict[str, Any],
+    default_timeframe: Optional[str] = None,
+    default_timezone: Optional[str] = None,
+) -> RuleSpec:
     return RuleSpec(
         id=raw["id"],
         enabled=raw.get("enabled", True),
         symbols=raw.get("symbols"),
         cooldown_minutes=raw.get("cooldown_minutes", 60),
-        when=parse_condition(raw["when"], default_timeframe=default_timeframe),
+        when=parse_condition(
+            raw["when"],
+            default_timeframe=default_timeframe,
+            default_timezone=default_timezone,
+        ),
         action=_parse_action(raw["action"]),
         notes=raw.get("notes"),
     )
@@ -1077,7 +1243,14 @@ def load_config(path: str | Path, timeframe: Optional[str] = None) -> BotConfig:
     universe = data.get("universe") or []
     if isinstance(universe, dict):
         universe = universe.get("symbols") or []
-    rules = [_parse_rule(r, default_timeframe=settings.timeframe) for r in (data.get("rules") or [])]
+    rules = [
+        _parse_rule(
+            r,
+            default_timeframe=settings.timeframe,
+            default_timezone=settings.session_timezone,
+        )
+        for r in (data.get("rules") or [])
+    ]
     if not rules:
         raise ValueError("Config must define at least one rule")
     ids = [r.id for r in rules]

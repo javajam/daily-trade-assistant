@@ -8,6 +8,7 @@ from typing import Optional
 
 from dta_bot.config import (
     AnyCondition,
+    BarCond,
     BotConfig,
     GroupCond,
     MaCond,
@@ -22,6 +23,7 @@ from dta_bot.config import (
 from dta_bot.indicators import average_volume, ema, last_two_ma, last_two_ma_pair, ma_pair_cross, rsi, sma
 from dta_bot.models import Bar, ConditionResult, EvalResult, Position
 from dta_bot.patterns import detect
+from dta_bot.session import bar_opens_at
 from dta_bot.state import BotState, fmt_ts
 
 log = logging.getLogger("dta_bot.engine")
@@ -183,6 +185,35 @@ def eval_leaf(cond: AnyCondition, symbol: str, bars_by_key: BarMap) -> Condition
             f"volume {last:.0f} {cmp} prev {prev:.0f} @{cond.timeframe} → {ok}",
             {"volume": last, "prev_volume": prev},
         )
+
+    if isinstance(cond, BarCond):
+        bars = bars_by_key.get((symbol, cond.timeframe), [])
+        if not bars:
+            return ConditionResult(False, f"bar @{cond.timeframe}: no bars")
+        last = bars[-1]
+        parts = [f"bar @{cond.timeframe}"]
+        ok = True
+        details: dict[str, object] = {
+            "open": last.open,
+            "close": last.close,
+            "timestamp": last.timestamp.isoformat(),
+        }
+        if cond.open_at:
+            hit = bar_opens_at(last.timestamp, cond.open_at, cond.timezone)
+            parts.append(f"open_at {cond.open_at} {cond.timezone} → {hit}")
+            ok = ok and hit
+            details["open_at"] = cond.open_at
+        if cond.color == "green":
+            hit = last.is_bullish()
+            parts.append(f"green close {last.close:.4f} > open {last.open:.4f} → {hit}")
+            ok = ok and hit
+            details["color"] = "green"
+        elif cond.color == "red":
+            hit = last.is_bearish()
+            parts.append(f"red close {last.close:.4f} < open {last.open:.4f} → {hit}")
+            ok = ok and hit
+            details["color"] = "red"
+        return ConditionResult(ok, " ".join(parts), details)
 
     raise TypeError(f"Unknown condition type {type(cond)}")
 

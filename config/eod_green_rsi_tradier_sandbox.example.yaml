@@ -1,0 +1,85 @@
+# EOD add-on sleeve → Tradier *sandbox* paper (AAPL, 10 shares).
+#
+# Run alongside the locked noon book
+# (config/ema9_trend_tradier_sandbox.example.yaml). Use this file's
+# separate state_file so the two processes do not share fire/cooldown keys.
+#
+# Universe: AAPL only.
+#
+# Entry (once per session — only the 15:30 ET 15m bar can signal):
+#   After the 15:30 ET 15m bar closes green (close > open)
+#   AND RSI(14) on that completed bar is < 70
+#   Buy market at the next opportunity = 15:45 ET bar open
+#     backtest: next-bar open
+#     live/paper: market when the 15:30 bar is confirmed (≈15:45 ET)
+#
+# Exit (whichever first):
+#   1. Hard stop: fill × 0.995 (−0.5%), stop_mode: entry_pct
+#   2. Else flatten at the 15:45 bar close (16:00 ET) via flatten_by: "15:55"
+#      — the bot's existing EOD convention on 15m (the 15:45 bar contains
+#      15:55; flatten at that close). Live also flats when wall clock ≥ 15:55.
+#
+# Not in this sleeve: SMA20 filter, volume/range filters, break-of-high
+# entry, prior-low stop. No noon entry_cutoff — bar.open_at 15:30 is the
+# only entry clock.
+#
+#   cp .env.example .env   # set TRADIER_ACCESS_TOKEN + TRADIER_ACCOUNT_ID
+#   python -m dta_bot validate --config config/eod_green_rsi_tradier_sandbox.example.yaml
+#   python -m dta_bot status  --config config/eod_green_rsi_tradier_sandbox.example.yaml
+#   python -m dta_bot run --config config/eod_green_rsi_tradier_sandbox.example.yaml --once --dry-run
+#   python -m dta_bot run --config config/eod_green_rsi_tradier_sandbox.example.yaml --live-orders
+#
+# --live-orders still hits *sandbox* unless allow_live + TRADIER_LIVE_TRADING
+# + TRADIER_ALLOW_LIVE=I_UNDERSTAND and tradier_endpoint: production.
+# Dry-run / preview never place sandbox orders. Writeup:
+# artifacts/eod_green_rsi_tradier_sandbox.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state_eod_green_rsi.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  # Off: the 15:30 bar_open_at condition is the entry clock (not noon).
+  entry_cutoff: null
+  flatten_by: "15:55"
+  broker: tradier
+  tradier_endpoint: sandbox
+  tradier_preview: true
+  # Yahoo bars + Tradier sandbox orders. Set tradier to use timesales instead.
+  data_source: yahoo
+
+universe:
+  - AAPL
+
+rules:
+  - id: eod_green_rsi
+    enabled: true
+    symbols: [AAPL]
+    cooldown_minutes: 60
+    notes: "EOD add-on: 15:30 ET 15m green + RSI(14)<70, buy 15:45 open, 10 shares, stop fill×0.995 or flatten at 15:45 close (flatten_by 15:55)."
+    when:
+      all:
+        - bar:
+            open_at: "15:30"
+            color: green
+            timeframe: 15m
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      exit: fixed_bracket
+      stop_mode: entry_pct
+      stop_loss_pct: 0.5

@@ -28,6 +28,8 @@
 #
 # Tradier sandbox paper of this same locked book (Yahoo bars + Tradier orders):
 #   config/ema9_trend_tradier_sandbox.example.yaml
+# EOD add-on sleeve (AAPL 15:30 green + RSI<70, 15:45 open, −0.5% or flatten):
+#   config/eod_green_rsi_tradier_sandbox.example.yaml
 # Named copy of this default: config/ema9_trend_bracket_nobe_range3_fixed1.example.yaml
 # Prior pure range>last-3 (no percent stop, same entry / session):
 #   config/ema9_trend_bracket_nobe_range3.example.yaml
