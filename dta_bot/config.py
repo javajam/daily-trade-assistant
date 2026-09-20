@@ -197,8 +197,11 @@ class ActionSpec(BaseModel):
     # the entry bar has range (high − low) strictly greater than the max
     # range of the previous exit_range_bars bars (default 3). Fill at that
     # bar's close. Do not arm on the entry/fill bar. Need that many prior
-    # bars in the series. Optional stop is catastrophic only. Percent take
-    # is ignored. Same-bar range expansion + flatten → range_expansion.
+    # bars in the series. Optional stop is catastrophic only (off when
+    # omitted). stop_mode: entry_pct + stop_loss_pct is a hard fill stop
+    # that never moves (not lock_plus). Same-bar stop + range → stop.
+    # Percent take is ignored. Same-bar range expansion + flatten →
+    # range_expansion.
     exit: Literal[
         "fixed_bracket",
         "ema_invalid",

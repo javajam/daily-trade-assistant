@@ -1,11 +1,15 @@
 # Refined EMA9 day-trade — 10-share book (same as ema9_trend.example.yaml).
 #
 # Default product: price crosses EMA(9) while close > SMA(20) and RSI14 < 70,
-# range>last-3 exit at that bar's close, no MA-cross / no lock / no percent
-# stop, session gates on. Writeup: artifacts/ema9_range3_adopted.md
+# range>last-3 exit at that bar's close plus a hard 1% fill stop
+# (stop_mode: entry_pct, never moves). No MA-cross / no lock_plus / no
+# half-take / no pyramid, session gates on.
+# Writeup: artifacts/ema9_range3_fixed1_adopted.md
 #
+# Prior pure range>last-3 (no percent stop):
+#   config/ema9_trend_bracket_nobe_range3.example.yaml
 # Prior lock-+1% comparison: config/ema9_trend_bracket_nobe_lock1.example.yaml
-# Optional stop siblings: fixed 1% / trail 1% (nobe_fixed1 / nobe_trail1).
+# Optional stop siblings: fixed 1% only / trail 1% (nobe_fixed1 / nobe_trail1).
 # Prior pair-cross 10-share: config/ema9_trend_pair.example.yaml
 #
 # AAPL / MSFT / META 10-share add-on: config/ema9_trend_aapl_msft_meta.example.yaml
@@ -41,7 +45,7 @@ rules:
     enabled: true
     symbols: [AAPL, MSFT]
     cooldown_minutes: 60
-    notes: "Noon book: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 10 shares, exit when bar range > max of previous 3, fill at that close. No percent stop."
+    notes: "Noon book: 15m price crosses EMA(9) while above SMA20 and RSI < 70. 10 shares, hard 1% fill stop plus exit when bar range > max of previous 3, fill at that close. Not lock_plus."
     when:
       all:
         - ema_cross:
@@ -64,3 +68,5 @@ rules:
       order: market
       exit: range_expansion
       exit_range_bars: 3
+      stop_mode: entry_pct
+      stop_loss_pct: 1.0

@@ -321,6 +321,28 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
             None,
         )
         n = action.exit_range_bars if action is not None else 3
+        if (
+            action is not None
+            and action.stop_mode == "entry_pct"
+            and action.stop_loss_pct
+        ):
+            return (
+                f"Exit is a hard {action.stop_loss_pct:g}% fill stop plus range expansion "
+                f"(stop_mode: entry_pct and action.exit: range_expansion): after entry, on each "
+                f"completed signal-timeframe bar *after the entry/fill bar*, leave when that "
+                f"bar's range (high − low) is strictly greater than the max range of the "
+                f"previous {n} bars (equivalently larger than each of the last {n}) and exit "
+                "at that bar's close — the same fill convention as ema_invalid / lower_high. "
+                "Do not arm on the entry bar. Need those prior bars in the series. Equal range "
+                "stays valid. "
+                f"Hard {action.stop_loss_pct:g}% stop is also live (stop_mode: entry_pct): "
+                f"initial stop is fill × (1 − {action.stop_loss_pct:g}/100); it never moves "
+                "(not lock_plus). Whichever hits first wins: stop on this bar beats range "
+                "expansion (stop is checked first). If the expansion bar is also the flatten "
+                "bar and the stop did not hit, range_expansion at that close wins over "
+                "session_flatten. Percent take-profit is ignored. No lock-at-+1%. No half-take. "
+                "No pyramid."
+            )
         return (
             f"Exit is range expansion (action.exit: range_expansion): after entry, on each "
             f"completed signal-timeframe bar *after the entry/fill bar*, leave when that "

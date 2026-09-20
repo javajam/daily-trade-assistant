@@ -1,6 +1,8 @@
 # Locked day-trade book: range > last 3 bars
 
-**Decision:** the primary AAPL+MSFT noon day-trade book is **range expansion** (`action.exit: range_expansion`), not MA-cross at close.
+Superseded as the default: the locked book is now range>last-3 **plus** a hard 1% fill stop. See `artifacts/ema9_range3_fixed1_adopted.md`. This note is the prior adoption (unprotected range3).
+
+**Decision (then):** the primary AAPL+MSFT noon day-trade book is **range expansion** (`action.exit: range_expansion`), not MA-cross at close.
 
 Default configs: `config/ema9_trend.example.yaml` (10-share), `config/ema9_trend_risk.example.yaml` (1% equity risk, `stop_pct: 1.0` as a reference R only). Same book on 5m: `config/ema9_trend_5m.example.yaml` / `config/ema9_trend_risk_5m.example.yaml`. 10-share sibling: `config/ema9_trend_bracket.example.yaml`. Named copies: `config/ema9_trend_bracket_nobe_range3.example.yaml` / `config/ema9_trend_risk_nobe_range3.example.yaml`.
 

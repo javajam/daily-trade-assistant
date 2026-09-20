@@ -1760,10 +1760,18 @@ def run_backtest(
             "percent still uses the signal close. No percent take when take_profit_pct is omitted."
         )
         if sample.stop_mode == "entry_pct":
-            extra_notes.append(
-                "Fixed entry stop (stop_mode: entry_pct): the initial fill stop never moves. "
-                "Exits are that stop or session_flatten (or eod)."
-            )
+            if sample.exit == "range_expansion":
+                extra_notes.append(
+                    "Fixed entry stop (stop_mode: entry_pct): the initial fill stop never "
+                    "moves (not lock_plus). Exits are that stop, range_expansion, or "
+                    "session_flatten (or eod). Same-bar stop + range expansion → stop "
+                    "(stop is checked first)."
+                )
+            else:
+                extra_notes.append(
+                    "Fixed entry stop (stop_mode: entry_pct): the initial fill stop never moves. "
+                    "Exits are that stop or session_flatten (or eod)."
+                )
         if sample.stop_mode == "lock_plus":
             trig = sample.resolved_lock_trigger_pct()
             lock = sample.resolved_lock_stop_pct()
