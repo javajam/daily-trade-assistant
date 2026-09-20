@@ -937,6 +937,29 @@ def test_ema9_trend_range3_fixed1_configs_load():
     assert has_noon_stack(risk.rules[0].when)
 
 
+def test_ema9_trend_atr_stop_configs_load():
+    a = load_config("config/ema9_trend_bracket_nobe_range3_fixed1_nocutoff.example.yaml")
+    b = load_config("config/ema9_trend_bracket_nobe_range3_atr1.example.yaml")
+    c = load_config("config/ema9_trend_bracket_nobe_range3_atr15.example.yaml")
+    assert a.settings.entry_cutoff is None
+    assert a.settings.flatten_by == "15:55"
+    assert a.universe == ["AAPL", "MSFT", "SOXL"]
+    assert a.rules[0].action.stop_mode == "entry_pct"
+    assert a.rules[0].action.stop_loss_pct == 1.0
+    assert a.rules[0].action.exit_range_skip_doji is True
+    assert a.rules[0].action.exit_range_doji_frac == 0.10
+    assert b.rules[0].action.stop_mode == "atr"
+    assert b.rules[0].action.stop_atr_mult == 1.0
+    assert b.rules[0].action.stop_atr_period == 14
+    assert b.rules[0].action.exit_range_skip_doji is True
+    assert c.rules[0].action.stop_mode == "atr"
+    assert c.rules[0].action.stop_atr_mult == 1.5
+    for cfg in (a, b, c):
+        assert cfg.rules[0].action.exit == "range_expansion"
+        assert cfg.rules[0].action.size and cfg.rules[0].action.size.value == 10
+        assert cfg.settings.entry_cutoff is None
+
+
 def test_ema9_trend_tradier_sandbox_config_loads():
     cfg = load_config("config/ema9_trend_tradier_sandbox.example.yaml")
     assert cfg.settings.broker == "tradier"
@@ -1205,6 +1228,22 @@ def test_cli_validate_timeframe_override(capsys):
     assert "stop_loss_pct=1" in range_stop_out
     assert "lock_trigger_pct" not in range_stop_out
     assert "volume_gt_prev" not in range_stop_out
+    atr_rc = main(["validate", "--config", "config/ema9_trend_bracket_nobe_range3_atr1.example.yaml"])
+    assert atr_rc == 0
+    atr_out = capsys.readouterr().out
+    assert "stop_mode=atr" in atr_out
+    assert "stop_atr_mult=1" in atr_out
+    assert "stop_atr_period=14" in atr_out
+    assert "skip_doji<=0.1" in atr_out
+    assert "entry_cutoff=None" in atr_out
+    nocut_rc = main(
+        ["validate", "--config", "config/ema9_trend_bracket_nobe_range3_fixed1_nocutoff.example.yaml"]
+    )
+    assert nocut_rc == 0
+    nocut_out = capsys.readouterr().out
+    assert "stop_mode=entry_pct" in nocut_out
+    assert "entry_cutoff=None" in nocut_out
+    assert "skip_doji<=0.1" in nocut_out
 
 
 def test_ema_cross_yaml_parses_and_does_not_steal_level_ema():

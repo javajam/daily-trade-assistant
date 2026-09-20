@@ -31,7 +31,7 @@ from dta_bot.orb_engine import (
     position_blocks_entry,
     setup_from_eval,
 )
-from dta_bot.indicators import sma
+from dta_bot.indicators import atr, sma
 from dta_bot.session import fill_at_or_after_cutoff, is_flatten_bar, wall_clock_at_or_after
 from dta_bot.sizing import build_order, sma_stop_valid
 from dta_bot.state import BotState, parse_ts, save_state
@@ -119,6 +119,7 @@ def execute_decision(
         log.error("No last price for %s — cannot size order", ev.symbol)
         return
     sma_value = _signal_sma(rule, ev.symbol, bars)
+    atr_value = _signal_atr(rule, ev.symbol, bars)
     if ev.action_type != "close" and rule.action.stop_mode == "sma20":
         side = "buy" if ev.action_type == "buy" else "sell"
         if sma_value is None:
@@ -137,6 +138,15 @@ def execute_decision(
                 rule.action.stop_sma_period,
                 sma_value,
                 last,
+            )
+            return
+    if ev.action_type != "close" and rule.action.stop_mode == "atr":
+        if atr_value is None or atr_value <= 0:
+            log.info(
+                "[SKIP] %s / %s — stop_mode atr but ATR(%s) unavailable",
+                ev.symbol,
+                ev.rule_id,
+                rule.action.stop_atr_period,
             )
             return
 
@@ -187,6 +197,7 @@ def execute_decision(
             last_price=last,
             position=positions.get(ev.symbol),
             sma_value=sma_value,
+            atr_value=atr_value,
         )
         if order is None:
             log.error("Could not build order for %s / %s", ev.symbol, ev.rule_id)
@@ -420,7 +431,12 @@ def _flatten_range_expansion(
             series = bars.get((symbol.upper(), fill_tf), []) or []
             after = last_rule_fire_ts(state, rule.id, symbol)
             hit = range_expansion_flatten_bar(
-                pos, series, after=after, lookback=rule.action.exit_range_bars
+                pos,
+                series,
+                after=after,
+                lookback=rule.action.exit_range_bars,
+                skip_doji=rule.action.exit_range_skip_doji,
+                doji_frac=rule.action.exit_range_doji_frac,
             )
             if hit is None:
                 continue
@@ -448,6 +464,23 @@ def _signal_sma(rule: RuleSpec, symbol: str, bars) -> Optional[float]:
     if not series:
         return None
     return sma([b.close for b in series], rule.action.stop_sma_period)
+
+
+def _signal_atr(rule: RuleSpec, symbol: str, bars) -> Optional[float]:
+    """Wilder ATR(stop_atr_period) on the finest rule timeframe through the last closed bar."""
+    needed = condition_timeframes(rule.when)
+    if not needed:
+        return None
+    fill_tf = min(needed, key=lambda t: duration(t))
+    series = bars.get((symbol.upper(), fill_tf), []) or []
+    if not series:
+        return None
+    return atr(
+        [b.high for b in series],
+        [b.low for b in series],
+        [b.close for b in series],
+        rule.action.stop_atr_period,
+    )
 
 
 def _entry_blocked_by_cutoff(

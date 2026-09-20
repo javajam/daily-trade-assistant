@@ -2,7 +2,7 @@ import pytest
 
 from dta_bot.config import ActionSpec, SizeSpec
 from dta_bot.models import Account
-from dta_bot.sizing import bracket_prices, build_order, risk_distance, shares_for, sma_stop_valid
+from dta_bot.sizing import atr_stop_price, bracket_prices, build_order, risk_distance, shares_for, sma_stop_valid
 
 
 def _acct(equity: float = 100_000) -> Account:
@@ -205,7 +205,7 @@ def test_risk_pct_sma20_uses_entry_to_sma_distance():
     assert shares_for(action, _acct(100_000), 200.0, stop_price=197.0) == 333
     tighter = shares_for(action, _acct(100_000), 200.0, stop_price=199.0)
     assert tighter == 1000
-    with pytest.raises(ValueError, match="SMA stop"):
+    with pytest.raises(ValueError, match="stop beyond entry"):
         shares_for(action, _acct(100_000), 200.0, stop_price=201.0)
     with pytest.raises(ValueError, match="stop_price"):
         shares_for(action, _acct(100_000), 200.0)
@@ -218,3 +218,21 @@ def test_build_market_buy_order():
     assert order.side == "buy"
     assert order.qty == 5
     assert order.stop_loss_price == pytest.approx(98.0)
+
+
+def test_atr_bracket_from_fill():
+    action = ActionSpec(
+        type="buy",
+        size=SizeSpec(type="shares", value=10),
+        exit="range_expansion",
+        stop_mode="atr",
+        stop_atr_period=14,
+        stop_atr_mult=1.5,
+    )
+    stop, take = bracket_prices(action, 100.0, "buy", atr_value=2.0)
+    assert stop == pytest.approx(97.0)
+    assert take is None
+    assert atr_stop_price("buy", 100.0, 2.0, 1.5) == pytest.approx(97.0)
+    assert atr_stop_price("sell", 100.0, 2.0, 1.5) == pytest.approx(103.0)
+    assert atr_stop_price("buy", 100.0, None, 1.0) is None
+    assert atr_stop_price("buy", 100.0, 0.0, 1.0) is None

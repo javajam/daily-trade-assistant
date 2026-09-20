@@ -322,6 +322,13 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
             None,
         )
         n = action.exit_range_bars if action is not None else 3
+        doji_txt = ""
+        if action is not None and action.exit_range_skip_doji:
+            doji_txt = (
+                f" Expansion bars with body/range <= {action.exit_range_doji_frac:g} "
+                "(doji) do not fire; wait for a later non-doji expansion, the protective "
+                "stop, or flatten."
+            )
         if (
             action is not None
             and action.stop_mode == "entry_pct"
@@ -343,6 +350,25 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
                 "bar and the stop did not hit, range_expansion at that close wins over "
                 "session_flatten. Percent take-profit is ignored. No lock-at-+1%. No half-take. "
                 "No pyramid."
+                + doji_txt
+            )
+        if action is not None and action.stop_mode == "atr":
+            return (
+                f"Exit is a Wilder ATR({action.stop_atr_period})×{action.stop_atr_mult:g} fill "
+                f"stop plus range expansion (stop_mode: atr and action.exit: range_expansion): "
+                "after entry, on each completed signal-timeframe bar *after the entry/fill bar*, "
+                "leave when that bar's range (high − low) is strictly greater than the max range "
+                f"of the previous {n} bars and exit at that bar's close. ATR is computed through "
+                "the closed signal/entry bar (true range = max(H−L, |H−prev close|, |L−prev close|); "
+                f"seed = SMA of the first {action.stop_atr_period} TRs, then "
+                f"ATR = (prev_ATR×({action.stop_atr_period}−1) + TR) / {action.stop_atr_period}). "
+                f"Stop is fill − {action.stop_atr_mult:g}×ATR (long); it never trails. "
+                "Whichever hits first wins: stop on this bar beats range expansion. "
+                "If the expansion bar is also the flatten bar and the stop did not hit, "
+                "range_expansion at that close wins over session_flatten. Percent take-profit "
+                "is ignored. No lock-at-+1%. No half-take. No pyramid. No min/max stop-distance "
+                "floor."
+                + doji_txt
             )
         return (
             f"Exit is range expansion (action.exit: range_expansion): after entry, on each "
@@ -355,6 +381,7 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
             "omitted). Percent take-profit is ignored. Same-bar stop + range expansion → "
             "stop. If the expansion bar is also the flatten bar, range_expansion at that "
             "close wins over session_flatten."
+            + doji_txt
         )
     if modes == {"ma_cross_close"} and ma_close_rules:
         action = ma_close_rules[0].action
@@ -485,6 +512,20 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
             f"action.exit: {action.exit}.{take_txt} "
             "Set stop_mode: percent to restore stop_loss_pct from the signal-bar close."
         )
+    atr_rules = [
+        rule
+        for rule in (config.rules if config is not None else [])
+        if rule.action.type != "close" and rule.action.stop_mode == "atr"
+    ]
+    if atr_rules:
+        action = atr_rules[0].action
+        return (
+            f"Stop is fill − {action.stop_atr_mult:g}×Wilder ATR({action.stop_atr_period}) "
+            f"for a long (fill + k×ATR for a short; stop_mode: atr). ATR is computed through "
+            "the closed signal/entry bar and applied to the next-bar fill; it never trails. "
+            "Signals skip when ATR is unavailable. No min/max stop-distance floor. "
+            f"action.exit: {action.exit}."
+        )
     manage_rules = [
         rule
         for rule in (config.rules if config is not None else [])
@@ -577,7 +618,8 @@ def _rules_exit_assumption(config: Optional[BotConfig]) -> str:
         "Stop/take are computed from the signal-bar close (same as live bracket_prices; "
         "action.exit: fixed_bracket, default; stop_mode: percent). Set action.stop_mode: sma20 "
         "to rest the protective stop at SMA(20) of the signal bar. Set action.stop_mode: entry_pct "
-        "for a fixed percent stop from the fill. Set action.stop_mode: lock_plus to lock the stop "
+        "for a fixed percent stop from the fill. Set action.stop_mode: atr for fill − k×Wilder "
+        "ATR(period) of the signal bar. Set action.stop_mode: lock_plus to lock the stop "
         "to +stop_loss_pct after the first touch of that print. Set action.stop_mode: trail to "
         "ratchet the stop to peak×(1−stop_loss_pct/100). Set action.exit: ma_cross "
         "to flatten at the next bar open after EMA crosses SMA against the position "
@@ -757,7 +799,7 @@ def _fixed_bracket_tag(config: BotConfig) -> Optional[str]:
         and r.action.type != "close"
         and (
             r.action.exit == "fixed_bracket"
-            or r.action.stop_mode in {"entry_pct", "lock_plus", "trail", "sma20"}
+            or r.action.stop_mode in {"entry_pct", "lock_plus", "trail", "sma20", "atr"}
         )
     ]
     if not rules:
@@ -769,6 +811,8 @@ def _fixed_bracket_tag(config: BotConfig) -> Optional[str]:
         if take is None:
             return f"SMA{period} stop"
         return f"SMA{period}/{take:.1f}"
+    if action.stop_mode == "atr":
+        return f"ATR{action.stop_atr_period}×{action.stop_atr_mult:g}"
     stop = action.stop_loss_pct
     if action.stop_mode == "entry_pct":
         if stop is None:
@@ -903,6 +947,16 @@ def session_gate_suffix(config: BotConfig) -> str:
             3,
         )
         bits.append(f"range>last-{n}")
+        skip_doji = next(
+            (
+                r.action.exit_range_skip_doji
+                for r in config.rules
+                if r.enabled and r.action.type != "close" and r.action.exit == "range_expansion"
+            ),
+            False,
+        )
+        if skip_doji:
+            bits.append("skip-doji")
     if bracket:
         bits.append(bracket)
     if rsi_tag:

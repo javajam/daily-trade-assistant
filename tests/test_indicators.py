@@ -1,4 +1,6 @@
-from dta_bot.indicators import ema, last_two_ma, last_two_ma_pair, ma_cross, ma_pair_cross, rsi, sma
+import pytest
+
+from dta_bot.indicators import atr, ema, last_two_ma, last_two_ma_pair, ma_cross, ma_pair_cross, rsi, sma, true_range
 
 
 def test_sma():
@@ -61,3 +63,24 @@ def test_rsi_mixed():
     value = rsi(closes, 14)
     assert value is not None
     assert 50 < value < 80
+
+
+def test_true_range_uses_gap():
+    assert true_range(11.0, 10.0, 10.5) == 1.0
+    # Gap up: prev close 10, high 12, low 11 → TR = max(1, 2, 1) = 2
+    assert true_range(12.0, 11.0, 10.0) == 2.0
+
+
+def test_wilder_atr_seeds_from_sma_then_smooths():
+    # 15 identical TR=1 bars (16 prints: first close seeds TR). ATR(14) = 1.0
+    highs = [11.0] * 16
+    lows = [10.0] * 16
+    closes = [10.5] * 16
+    assert atr(highs, lows, closes, 14) == 1.0
+    assert atr(highs[:14], lows[:14], closes[:14], 14) is None
+    # Next TR = 2.0 → ATR = (1*13 + 2) / 14
+    highs2 = highs + [12.0]
+    lows2 = lows + [10.0]
+    closes2 = closes + [11.0]
+    assert atr(highs2, lows2, closes2, 14) == pytest.approx(15.0 / 14.0)
+

@@ -1,0 +1,60 @@
+# B — no-noon locked book, 1.0× Wilder ATR(14) fill stop.
+#
+# Same entry / range>last-3 / skip-doji / 10-share / flatten 15:55 as A.
+# Only the stop differs: fill − 1.0×ATR(14) of the closed signal bar
+# (stop_mode: atr). Does not trail. No min/max stop-distance floor.
+# Writeup: artifacts/ema9_atr_stop_ab.md
+
+settings:
+  paper: true
+  allow_live: false
+  dry_run: true
+  poll_interval_seconds: 60
+  kill_switch_file: data/KILL
+  state_file: data/state.json
+  max_open_positions: 5
+  data_feed: iex
+  lookback_bars: 80
+  timeframe: 15m
+  session_timezone: America/New_York
+  entry_cutoff: null
+  flatten_by: "15:55"
+
+universe:
+  - AAPL
+  - MSFT
+  - SOXL
+
+rules:
+  - id: ema9_trend
+    enabled: true
+    symbols: [AAPL, MSFT, SOXL]
+    cooldown_minutes: 60
+    notes: "No-noon book: 15m price crosses above EMA(9) while above SMA20 and RSI < 70. 10 shares, 1.0×ATR(14) fill stop plus range>last-3 (skip doji). Not lock_plus."
+    when:
+      all:
+        - ema_cross:
+            period: 9
+            timeframe: 15m
+            direction: bullish
+        - sma:
+            period: 20
+            timeframe: 15m
+            compare: above
+        - rsi:
+            period: 14
+            timeframe: 15m
+            below: 70
+    action:
+      type: buy
+      size:
+        type: shares
+        value: 10
+      order: market
+      exit: range_expansion
+      exit_range_bars: 3
+      exit_range_skip_doji: true
+      exit_range_doji_frac: 0.10
+      stop_mode: atr
+      stop_atr_period: 14
+      stop_atr_mult: 1.0

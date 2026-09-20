@@ -250,6 +250,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
                 stop_txt += f" trail_pct={trail:g}"
         elif rule.action.stop_mode == "entry_pct" and rule.action.stop_loss_pct:
             stop_txt += f" stop_loss_pct={rule.action.stop_loss_pct:g}"
+        elif rule.action.stop_mode == "atr":
+            stop_txt += (
+                f" stop_atr_mult={rule.action.stop_atr_mult:g}"
+                f" stop_atr_period={rule.action.stop_atr_period}"
+            )
         be_txt = ""
         if rule.action.breakeven_after_bars:
             be_txt = (
@@ -265,6 +270,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
             )
         if rule.action.exit == "range_expansion":
             ma_txt = f" range_bars={rule.action.exit_range_bars}"
+            if rule.action.exit_range_skip_doji:
+                ma_txt += f" skip_doji<={rule.action.exit_range_doji_frac:g}"
         rsi_txt = ""
         rsi_cond = find_rsi_condition(rule.when)
         if rsi_cond is not None:

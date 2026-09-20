@@ -27,6 +27,26 @@ def sma_stop_valid(side: Side, entry_price: float, sma_value: Optional[float]) -
     return sma_value > entry_price
 
 
+def atr_stop_price(
+    side: Side,
+    entry_price: float,
+    atr_value: Optional[float],
+    mult: float,
+) -> Optional[float]:
+    """Fill-anchored ATR stop: long fill − k×ATR, short fill + k×ATR.
+
+    Returns None when ATR is missing/non-positive or the stop would not sit
+    beyond the entry (including a non-positive long stop). No min/max floor.
+    """
+    if atr_value is None or atr_value <= 0 or entry_price <= 0 or mult <= 0:
+        return None
+    dist = mult * atr_value
+    if side == "buy":
+        stop = entry_price - dist
+        return stop if stop > 0 else None
+    return entry_price + dist
+
+
 def risk_distance(side: Side, entry_price: float, stop_price: float) -> Optional[float]:
     """Dollars of adverse move from entry to stop (R). None when stop is not beyond entry."""
     if side == "buy":
@@ -60,12 +80,13 @@ def shares_for(
         if risk_frac is None:
             raise ValueError("risk_pct sizing requires equity_risk")
         side: Side = "buy" if action.type == "buy" else "sell"
-        if action.stop_mode == "sma20":
+        if action.stop_mode in {"sma20", "atr"}:
+            label = "sma20" if action.stop_mode == "sma20" else "atr"
             if stop_price is None:
-                raise ValueError("risk_pct + stop_mode sma20 requires stop_price (SMA at signal)")
+                raise ValueError(f"risk_pct + stop_mode {label} requires stop_price")
             dist = risk_distance(side, last_price, stop_price)
             if dist is None:
-                raise ValueError("risk_pct + stop_mode sma20 needs SMA stop beyond entry (R > 0)")
+                raise ValueError(f"risk_pct + stop_mode {label} needs stop beyond entry (R > 0)")
             qty = (risk_frac * account.equity) / dist
         else:
             stop_pct = stop_pct_for(action)
@@ -104,12 +125,15 @@ def bracket_prices(
     side: Side,
     *,
     sma_value: Optional[float] = None,
+    atr_value: Optional[float] = None,
 ) -> tuple[Optional[float], Optional[float]]:
     stop = None
     take = None
     if action.stop_mode == "sma20":
         if sma_stop_valid(side, last_price, sma_value):
             stop = sma_value
+    elif action.stop_mode == "atr":
+        stop = atr_stop_price(side, last_price, atr_value, action.stop_atr_mult)
     elif action.stop_loss_pct:
         if side == "buy":
             stop = last_price * (1.0 - action.stop_loss_pct / 100.0)
@@ -139,11 +163,14 @@ def build_order(
     position: Optional[Position],
     client_order_id: Optional[str] = None,
     sma_value: Optional[float] = None,
+    atr_value: Optional[float] = None,
 ) -> Optional[OrderRequest]:
     if action.type == "close":
         return None  # runner uses close_position()
     side: Side = "buy" if action.type == "buy" else "sell"
-    stop, take = bracket_prices(action, last_price, side, sma_value=sma_value)
+    stop, take = bracket_prices(
+        action, last_price, side, sma_value=sma_value, atr_value=atr_value
+    )
     qty = shares_for(action, account, last_price, stop_price=stop)
     return OrderRequest(
         symbol=symbol,

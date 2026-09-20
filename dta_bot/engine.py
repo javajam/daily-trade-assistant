@@ -307,10 +307,25 @@ def bar_range(bar: Bar) -> float:
     return bar.high - bar.low
 
 
-def range_expansion_exit(curr: Bar, prior: list[Bar]) -> bool:
-    """True when curr range is strictly greater than max(range of prior bars)."""
+def range_expansion_exit(
+    curr: Bar,
+    prior: list[Bar],
+    *,
+    skip_doji: bool = False,
+    doji_frac: float = 0.10,
+) -> bool:
+    """True when curr range is strictly greater than max(range of prior bars).
+
+    When ``skip_doji`` is set, a bar whose body/range is at or below
+    ``doji_frac`` (the same 0.10 default as :func:`detect_doji`) does not
+    count as an expansion exit.
+    """
     if not prior:
         return False
+    if skip_doji:
+        rng = bar_range(curr)
+        if rng <= 0 or curr.body() / rng <= doji_frac:
+            return False
     ceiling = max(bar_range(b) for b in prior)
     return bar_range(curr) > ceiling
 
@@ -321,6 +336,8 @@ def range_expansion_flatten_bar(
     *,
     after: Optional[datetime],
     lookback: int = 3,
+    skip_doji: bool = False,
+    doji_frac: float = 0.10,
 ) -> Optional[Bar]:
     """Latest closed bar after the entry bar whose range > max of the prior ``lookback`` bars.
 
@@ -328,7 +345,8 @@ def range_expansion_flatten_bar(
     bar is never an exit bar. Fill at that completed bar's close — the same
     convention as ``ema_invalid`` / ``lower_high``. Equal range stays valid.
     ``position`` is unused (range is side-agnostic) but kept for the same
-    signature as the other flatten helpers.
+    signature as the other flatten helpers. ``skip_doji`` ignores expansion
+    bars whose body/range is at or below ``doji_frac``.
     """
     del position
     if after is None or not signal_bars or lookback < 1:
@@ -344,7 +362,7 @@ def range_expansion_flatten_bar(
     if len(window) < lookback + 1:
         return None
     prior = window[-(lookback + 1) : -1]
-    if range_expansion_exit(last, prior):
+    if range_expansion_exit(last, prior, skip_doji=skip_doji, doji_frac=doji_frac):
         return last
     return None
 

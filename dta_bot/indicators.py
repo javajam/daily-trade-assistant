@@ -1,4 +1,4 @@
-"""SMA, EMA, RSI, and volume helpers on oldest-first close/volume series."""
+"""SMA, EMA, RSI, ATR, and volume helpers on oldest-first close/volume series."""
 
 from __future__ import annotations
 
@@ -25,6 +25,37 @@ def ema(values: Sequence[float], period: int) -> Optional[float]:
     val = seed
     for price in values[period:]:
         val = price * k + val * (1.0 - k)
+    return val
+
+
+def true_range(high: float, low: float, prev_close: float) -> float:
+    """One-bar true range: max(H−L, |H−prev close|, |L−prev close|)."""
+    return max(high - low, abs(high - prev_close), abs(low - prev_close))
+
+
+def atr(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    period: int = 14,
+) -> Optional[float]:
+    """Wilder ATR. Needs ``period + 1`` bars (first TR uses the prior close).
+
+    Seed is the SMA of the first ``period`` true ranges, then:
+    ``ATR = (prev_ATR * (period − 1) + TR) / period``.
+    Same smoothing as :func:`rsi` in this module. Not a trailing ATR — callers
+    pass the series through the signal/entry bar they want the value of.
+    """
+    n = min(len(highs), len(lows), len(closes))
+    if period <= 0 or n < period + 1:
+        return None
+    trs: list[float] = []
+    for i in range(1, n):
+        trs.append(true_range(highs[i], lows[i], closes[i - 1]))
+    seed = sum(trs[:period]) / period
+    val = seed
+    for tr in trs[period:]:
+        val = (val * (period - 1) + tr) / period
     return val
 
 
